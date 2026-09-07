@@ -1,0 +1,6 @@
+{
+  "name": "Telegram to HN Infotainment Video Agent",
+  "description": "Converts Telegram messages into Hacker News infotainment video plans, scripts, TTS narration, and visual scenes, with built-in IP brand strategist chatbot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
