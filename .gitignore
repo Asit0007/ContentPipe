@@ -9,3 +9,6 @@ coverage/
 
 # AI Studio generates this with real project identifiers — keep it local
 firebase-applet-config.json
+
+# Generated script briefs — local working output
+exports/

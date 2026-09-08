@@ -49,6 +49,29 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [exportResults, setExportResults] = useState<ExportResult[]>([]);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
+  const [isSavingMd, setIsSavingMd] = useState(false);
+  const [mdResult, setMdResult] = useState<{ relativePath: string; bytes: number } | null>(null);
+  const [mdError, setMdError] = useState<string | null>(null);
+
+  const handleSaveMarkdown = async () => {
+    setIsSavingMd(true);
+    setMdError(null);
+    setMdResult(null);
+    try {
+      const res = await fetch('/api/export/markdown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script: videoScript, research, plan }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setMdResult({ relativePath: data.relativePath, bytes: data.bytes });
+    } catch (err: any) {
+      setMdError(err?.message || 'Failed to write markdown file');
+    } finally {
+      setIsSavingMd(false);
+    }
+  };
 
   useEffect(() => {
     if (initialExportType) {
@@ -197,6 +220,51 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
             <span>•</span>
             <span className="text-emerald-400 font-semibold">{videoScript.targetPlatform}</span>
           </div>
+        </div>
+
+        {/* Markdown export — writes to exports/ on the local server, no sign-in */}
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+              <FileText className="h-4 w-4 text-amber-400" /> Markdown Brief
+              <span className="ml-1 text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                No sign-in
+              </span>
+            </span>
+          </div>
+          <p className="text-xs text-zinc-400">
+            Writes the full production brief — character bible, layered image prompts, motion direction and
+            source citations — to <code className="text-amber-400">exports/</code> in the project folder.
+          </p>
+          <button
+            id="export-markdown-button"
+            type="button"
+            onClick={handleSaveMarkdown}
+            disabled={isSavingMd}
+            className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-white font-semibold px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+          >
+            {isSavingMd ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-xs">Writing brief...</span>
+              </>
+            ) : (
+              <>
+                <FileText className="h-4 w-4" />
+                <span className="text-xs">Save Markdown to exports/</span>
+              </>
+            )}
+          </button>
+          {mdResult && (
+            <div className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+              Saved <code className="font-semibold">{mdResult.relativePath}</code> ({(mdResult.bytes / 1024).toFixed(1)} KB)
+            </div>
+          )}
+          {mdError && (
+            <div className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {mdError}
+            </div>
+          )}
         </div>
 
         {/* Google Authentication Section */}

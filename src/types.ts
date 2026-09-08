@@ -16,6 +16,69 @@ export interface TelegramMessage {
   sourceUrl?: string;
 }
 
+export interface RetrievedSource {
+  /** Stable tag used in prompts and citations, e.g. "S1". */
+  id: string;
+  url: string;
+  title: string;
+  wordCount: number;
+  fetchedAt: string;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * A recurring on-screen character, defined once so every scene that features
+ * them can restate the same physical description verbatim. Without this,
+ * generated images drift and the "same" character looks different each scene.
+ */
+export interface CharacterProfile {
+  id: string;
+  name: string;
+  role: string;
+  appearance: string;
+  wardrobe: string;
+  palette: string;
+  expressionRange: string;
+  /** Copy-paste block appended to any image prompt featuring this character. */
+  promptAnchor: string;
+}
+
+/** Global look that every scene inherits, so the set feels like one production. */
+export interface StyleGuide {
+  artDirection: string;
+  colorPalette: string;
+  lighting: string;
+  lensAndFilm: string;
+  negativePrompt: string;
+}
+
+/** The image prompt split into independently usable layers. */
+export interface SceneVisual {
+  /** Who is in frame, referencing a CharacterProfile promptAnchor when applicable. */
+  character: string;
+  /** The environment alone, with no character described. */
+  background: string;
+  /** Full composed scene: staging, framing, depth, focal point. */
+  scene: string;
+  /** Style/quality suffix carried across every scene for consistency. */
+  styleAnchor: string;
+  /** What must NOT appear. */
+  negative: string;
+}
+
+/** Direction for animating the still, for whatever tool does the animating. */
+export interface MotionDirection {
+  shotType: string;
+  cameraMove: string;
+  subjectMotion: string;
+  durationSec: number;
+  easing: string;
+  transitionOut: string;
+  /** Ready-to-paste prompt for an image-to-video model. */
+  motionPrompt: string;
+}
+
 export interface ResearchData {
   topicTitle: string;
   oneLineHook: string;
@@ -44,6 +107,13 @@ export interface ResearchData {
   groundingSources?: Array<{
     title: string;
     url: string;
+  }>;
+  /** Documents actually retrieved and read for this dossier. */
+  retrievedSources?: RetrievedSource[];
+  /** Per-claim attribution: which [S#] each key fact came from. */
+  factCitations?: Array<{
+    fact: string;
+    sourceIds: string[];
   }>;
   isQuotaFallback?: boolean;
   selectedAngle?: string;
@@ -117,7 +187,14 @@ export interface VideoScriptScene {
   actPhase?: string;
   narration: string;
   durationEst: number;
+  /** Flat prompt, kept for the image endpoint and existing UI. */
   visualPrompt: string;
+  /** Layered prompts: character, background, scene, style. */
+  visual?: SceneVisual;
+  /** Camera and subject motion for animating this scene's still. */
+  motion?: MotionDirection;
+  /** Source ids ([S#]) backing the factual claims in this narration. */
+  citations?: string[];
   visualType: 'headline' | 'terminal' | 'meme' | 'cyberpunk' | 'diagram' | 'character';
   cinematography?: string;
   onScreenText: string;
@@ -144,6 +221,10 @@ export interface VideoScript {
   tonePacing?: string;
   signatureIntro: string;
   signatureOutro: string;
+  /** Cast defined once; scenes reference these by id for visual consistency. */
+  characterBible?: CharacterProfile[];
+  /** Look applied across every scene. */
+  styleGuide?: StyleGuide;
   scenes: VideoScriptScene[];
 }
 

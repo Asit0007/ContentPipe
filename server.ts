@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { GoogleGenAI, Modality } from '@google/genai';
@@ -12,13 +13,21 @@ import {
   generateFallbackIpList,
   generateFallbackNotebookLMPodcast,
 } from './server/fallbackGenerators';
+import { researchSchema, planSchema, scriptSchema, visualDirectionSchema, productionBibleSchema } from './server/schemas';
+import { extractUrls, fetchSources, buildSourceContext } from './server/sourceFetcher';
+import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import {
   generateNotebookLMAudioService,
   getCachedNotebookLMAudio,
 } from './server/notebooklmService';
 
+// Text model fallback chain, best-first. gemini-2.5-flash is intentionally
+// absent: Google returns 404 "no longer available to new users" for it, so
+// leading with it burned a guaranteed-failed call on every request.
+const TEXT_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -76,7 +85,8 @@ async function generateGeminiJson<T>(
   ai: GoogleGenAI,
   prompt: string,
   systemInstruction: string,
-  models: string[] = ['gemini-2.5-flash', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']
+  models: string[] = TEXT_MODELS,
+  responseSchema?: unknown
 ): Promise<T> {
   let lastErr: any = null;
   for (const model of models) {
@@ -86,9 +96,15 @@ async function generateGeminiJson<T>(
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
+          // Constrains decoding to the schema, so the model cannot return prose
+          // or a truncated object. Falls back to free-form JSON if unset.
+          ...(responseSchema ? { responseSchema } : {}),
           systemInstruction,
         },
       });
+      const fr = response?.candidates?.[0]?.finishReason;
+      const um: any = response?.usageMetadata;
+      console.log(`[Gemini Pipeline] ${model} finish=${fr} out=${um?.candidatesTokenCount} total=${um?.totalTokenCount}`);
       const raw = response?.text || '{}';
       const clean = raw.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(clean);
@@ -111,7 +127,7 @@ async function generateGeminiText(
   ai: GoogleGenAI,
   contents: any[],
   systemInstruction: string,
-  models: string[] = ['gemini-2.5-flash', 'gemini-3.7-flash', 'gemini-3.1-flash-lite']
+  models: string[] = TEXT_MODELS
 ): Promise<string> {
   let lastErr: any = null;
   for (const model of models) {
@@ -142,14 +158,38 @@ app.get('/api/health', (req, res) => {
 
 // 1. Research Agent: Takes input message, extracts topic, and conducts deep Hacker News & technical research
 app.post('/api/research', async (req, res) => {
-  const { messageText, channelName } = req.body;
+  const { messageText, channelName, sourceUrls } = req.body;
   if (!messageText) {
     return res.status(400).json({ error: 'messageText is required' });
   }
 
+  // Read the sources rather than asking the model to recall them. Explicit
+  // sourceUrls win; otherwise any links in the pasted text are used.
+  const explicit: string[] = Array.isArray(sourceUrls) ? sourceUrls.filter((u: unknown) => typeof u === 'string') : [];
+  const candidateUrls = Array.from(new Set([...explicit, ...extractUrls(messageText)]));
+  const fetched = await fetchSources(candidateUrls);
+  const usable = fetched.filter((f) => f.ok);
+  console.log(`[Research Agent] ${usable.length}/${fetched.length} source(s) retrieved (${usable.reduce((n, f) => n + f.wordCount, 0)} words)`);
+  for (const f of fetched.filter((x) => !x.ok)) {
+    console.warn(`[Research Agent] source unavailable: ${f.url} -> ${f.error}`);
+  }
+  const sourceContext = buildSourceContext(fetched);
+  const retrievedSources = fetched.map((f, i) => ({
+    id: `S${i + 1}`,
+    url: f.url,
+    title: f.title || f.url,
+    wordCount: f.wordCount,
+    fetchedAt: f.fetchedAt,
+    ok: f.ok,
+    ...(f.error ? { error: f.error } : {}),
+  }));
+
   try {
     const ai = getAIClient();
     const prompt = `You are an elite investigative tech journalist and Hacker News deep-researcher agent.
+
+${sourceContext || 'NOTE: No source documents could be retrieved. Work only from the input text below and do NOT fabricate specific figures, dates, CVE numbers, or quotes.'}
+
 Analyze the following input text / story forwarded from a tech community, Telegram channel, or news wire:
 
 Source Channel / Origin: "${channelName || 'Telegram HackerNews Radar'}"
@@ -159,6 +199,7 @@ ${messageText}
 """
 
 CRITICAL INSTRUCTIONS:
+0. SOURCE DISCIPLINE: Every specific figure, date, CVE id, version number, company name and direct quote must come from the PRIMARY SOURCE DOCUMENTS above. Populate "factCitations" mapping each entry of "keyFacts" to the [S#] ids that support it. If the sources do not cover a detail, omit it rather than inventing it. If no sources were retrieved, keep claims general and leave factCitations empty.
 1. Ground your entire research directly in the exact topic, technologies, vulnerabilities, tools, or events described in the Input Content above (e.g. if it is about JFrog Artifactory auth bypass or token minting, research and explain THAT exact story in detail; do NOT substitute generic frontend or framework topics).
 2. Synthesize the key facts, technical context, how the vulnerability or technology works under the hood, Hacker News community reactions/debates, and viral infotainment angles suitable for short/long video content.
 
@@ -202,31 +243,26 @@ Return strictly a valid JSON object matching this schema:
 
     let parsedData: any = null;
     try {
-      parsedData = await generateGeminiJson(ai, prompt, systemInstruction, [
-        'gemini-2.5-flash',
-        'gemini-3.7-flash',
-        'gemini-3.1-flash-lite',
-      ]);
+      parsedData = await generateGeminiJson(ai, prompt, systemInstruction, TEXT_MODELS, researchSchema);
     } catch (aiErr: any) {
       console.warn('[Research Agent] Live AI tiers unavailable, utilizing dynamic research synthesizer:', aiErr?.message || aiErr);
       parsedData = generateFallbackResearch(messageText, channelName);
     }
 
-    if (!parsedData.groundingSources || !Array.isArray(parsedData.groundingSources) || parsedData.groundingSources.length === 0) {
-      const urlMatch = messageText.match(/https?:\/\/[^\s]+/);
-      parsedData.groundingSources = [
-        {
-          title: parsedData.topicTitle || 'Hacker News Thread',
-          url: urlMatch ? urlMatch[0] : 'https://news.ycombinator.com',
-        },
-      ];
+    // Report the documents actually read. Previously this regex-scraped a URL
+    // out of the input (or hardcoded news.ycombinator.com) and presented it as
+    // a source the agent had consulted, which it never had.
+    parsedData.retrievedSources = retrievedSources;
+    parsedData.groundingSources = usable.map((f) => ({ title: f.title || f.url, url: f.url }));
+    if (parsedData.groundingSources.length === 0) {
+      parsedData.sourcesUnavailable = true;
     }
 
     res.json(parsedData);
   } catch (error: any) {
     console.error('[Research Agent] Exception caught, providing synthesized dossier:', error);
     const fallback = generateFallbackResearch(messageText, channelName);
-    res.json(fallback);
+    res.json({ ...fallback, retrievedSources });
   }
 });
 
@@ -312,11 +348,7 @@ Output strictly a JSON object matching this schema:
 
     let plan: any = null;
     try {
-      plan = await generateGeminiJson(ai, prompt, systemInstruction, [
-        'gemini-2.5-flash',
-        'gemini-3.7-flash',
-        'gemini-3.1-flash-lite',
-      ]);
+      plan = await generateGeminiJson(ai, prompt, systemInstruction, TEXT_MODELS, planSchema);
     } catch (aiErr: any) {
       console.warn('[Plan Agent] Live AI tiers unavailable, utilizing dynamic plan generator:', aiErr?.message || aiErr);
       plan = generateFallbackPlan(researchData, targetFormat, targetTone);
@@ -330,6 +362,144 @@ Output strictly a JSON object matching this schema:
   }
 });
 
+/**
+ * First pass: lock the cast and the look before a single scene is written.
+ * Its own call with a small schema, because on the combined script schema both
+ * fields were routinely omitted despite being required.
+ */
+async function generateProductionBible(
+  ai: GoogleGenAI,
+  videoPlan: any,
+  researchData: any,
+  channelBrandName?: string
+): Promise<{ characterBible: any[]; styleGuide: any }> {
+  const prompt = `You are the production designer for a short infotainment video.
+Show: "${channelBrandName || 'The Orange Thread'}"
+Story: "${videoPlan?.title || researchData?.topicTitle || 'the story'}"
+Tone: ${videoPlan?.tone || 'Witty Tech & Sarcastic'}
+Summary: ${researchData?.summary || ''}
+Core conflict: ${videoPlan?.coreConflict || ''}
+
+Define the production's visual foundation.
+
+A. "characterBible": 1 to 3 recurring characters who carry this story (e.g. the Narrator-Analyst, the Attacker, the On-Call Engineer). For EACH:
+   - "id": short slug, e.g. "analyst"
+   - "name", "role": who they are and their narrative function
+   - "appearance": IMMUTABLE physical description — apparent age, build, hair, facial structure, skin tone, distinguishing features. Be specific and unambiguous; vagueness is exactly what makes a character morph between shots.
+   - "wardrobe": exact clothing, never varying between scenes
+   - "palette": the 2-3 colours bound to this character
+   - "expressionRange": their emotional register
+   - "promptAnchor": ONE dense clause restating appearance + wardrobe + palette, written to be pasted verbatim into any image prompt featuring them. This exact string is the consistency mechanism — it will be reused unchanged in every scene.
+
+B. "styleGuide": "artDirection", "colorPalette", "lighting", "lensAndFilm", "negativePrompt".`;
+
+  try {
+    const bible: any = await generateGeminiJson(
+      ai,
+      prompt,
+      'You are a precise production designer. Output strictly valid JSON matching the schema.',
+      TEXT_MODELS,
+      productionBibleSchema
+    );
+    console.log(`[Production Bible] ${bible?.characterBible?.length || 0} character(s) defined`);
+    return { characterBible: bible?.characterBible || [], styleGuide: bible?.styleGuide || {} };
+  } catch (err: any) {
+    console.warn('[Production Bible] failed, continuing without a locked cast:', err?.message || err);
+    return { characterBible: [], styleGuide: {} };
+  }
+}
+
+/**
+ * Second pass over a finished script: produces the layered image prompts and
+ * motion direction for every scene, then merges them in. Falls back to leaving
+ * the scenes as-is (they still carry visualPrompt) if the call fails.
+ */
+async function applyVisualDirection(ai: GoogleGenAI, script: any, researchData: any): Promise<any> {
+  const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
+  if (scenes.length === 0) return script;
+
+  const bible = script.characterBible || [];
+  const style = script.styleGuide || {};
+  const sourceIds = (researchData?.retrievedSources || [])
+    .filter((r: any) => r.ok)
+    .map((r: any) => `${r.id} = ${r.title} (${r.url})`);
+
+  const prompt = `You are the art director and cinematographer for this video. The script is written; your job is the visual layer only.
+
+CHARACTER BIBLE (immutable — reuse promptAnchor strings VERBATIM):
+${JSON.stringify(bible, null, 2)}
+
+STYLE GUIDE (every scene inherits this):
+${JSON.stringify(style, null, 2)}
+
+AVAILABLE SOURCE IDS for citations:
+${sourceIds.length ? sourceIds.join('\n') : '(none retrieved — return [] for every citations field)'}
+
+SCENES:
+${JSON.stringify(
+  scenes.map((s: any) => ({
+    sceneNumber: s.sceneNumber,
+    title: s.title,
+    actPhase: s.actPhase,
+    narration: s.narration,
+    durationEst: s.durationEst,
+    cinematography: s.cinematography,
+    visualType: s.visualType,
+    onScreenText: s.onScreenText,
+  })),
+  null,
+  2
+)}
+
+For EVERY scene above return an object with:
+- "sceneNumber": matching integer
+- "visual":
+  - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "No characters in frame."
+  - "background": ONLY the environment — location, architecture, depth, atmosphere, time of day. Mention no people.
+  - "scene": the composed shot — how character and background combine, staging, focal point, foreground/midground/background layering, composition rule.
+  - "styleAnchor": the style guide restated compactly. This string MUST be byte-identical across every scene.
+  - "negative": what must not appear in this image.
+- "motion": "shotType", "cameraMove", "subjectMotion", "durationSec" (match durationEst), "easing", "transitionOut", and "motionPrompt" — one ready-to-paste sentence for an image-to-video model.
+- "citations": source ids backing the factual claims in that scene's narration; [] for purely rhetorical scenes. Never invent an id that is not listed above.
+
+Return one entry per scene, in order.`;
+
+  try {
+    const direction: any = await generateGeminiJson(
+      ai,
+      prompt,
+      'You are a precise art director. Output strictly valid JSON matching the schema. Reuse character promptAnchor strings verbatim so characters stay identical between scenes.',
+      TEXT_MODELS,
+      visualDirectionSchema
+    );
+    const byNumber = new Map<number, any>();
+    for (const d of direction?.scenes || []) byNumber.set(Number(d.sceneNumber), d);
+
+    // A single styleAnchor wins across the set even if the model varied it.
+    const anchors = (direction?.scenes || []).map((d: any) => d?.visual?.styleAnchor).filter(Boolean);
+    const canonicalAnchor = anchors[0];
+
+    script.scenes = scenes.map((s: any, i: number) => {
+      const d = byNumber.get(Number(s.sceneNumber)) || (direction?.scenes || [])[i];
+      if (!d) return s;
+      const visual = d.visual ? { ...d.visual, styleAnchor: canonicalAnchor || d.visual.styleAnchor } : undefined;
+      return {
+        ...s,
+        ...(visual ? { visual } : {}),
+        ...(d.motion ? { motion: d.motion } : {}),
+        ...(Array.isArray(d.citations) ? { citations: d.citations } : {}),
+        // Keep the flat prompt consistent with the layered one.
+        visualPrompt: visual ? [visual.scene, visual.styleAnchor].filter(Boolean).join(' ') : s.visualPrompt,
+      };
+    });
+    const covered = script.scenes.filter((s: any) => s.visual).length;
+    console.log(`[Art Director] visual direction applied to ${covered}/${scenes.length} scenes`);
+  } catch (err: any) {
+    console.warn('[Art Director] visual direction pass failed, keeping flat prompts:', err?.message || err);
+  }
+  return script;
+}
+
 // 3. Scriptwriting Agent: Converts plan into scene-by-scene script with voiceover and image prompts
 app.post('/api/script', async (req, res) => {
   const { videoPlan, researchData, channelBrandName } = req.body;
@@ -339,6 +509,7 @@ app.post('/api/script', async (req, res) => {
 
   try {
     const ai = getAIClient();
+    const productionBible = await generateProductionBible(ai, videoPlan, researchData, channelBrandName);
     const prompt = `You are an elite, award-winning infotainment video scriptwriter & creative director for top-tier YouTube Shorts, TikTok, and video essays (in the style of Veritasium, Fireship, and ColdFusion).
 Brand Identity / Show Name: "${channelBrandName || 'The Orange Thread'}"
 
@@ -348,12 +519,20 @@ ${JSON.stringify(videoPlan, null, 2)}
 Original Research Dossier:
 ${JSON.stringify(researchData || {}, null, 2)}
 
+Production Bible (cast and look are already locked — write scenes that fit them):
+${JSON.stringify(productionBible, null, 2)}
+
 CRITICAL REQUIREMENT:
 The script narration, cinematography, visual prompts, and onScreenText for EVERY SINGLE SCENE must be 100% focused on this specific topic: "${videoPlan.title || researchData?.topicTitle || 'the story'}".
 If the topic is a security vulnerability (e.g. JFrog Artifactory auth bypass or token minting), EVERY scene must discuss that specific vulnerability, exploit mechanism, supply chain risks, and community panic.
 Do NOT output generic text about unrelated topics.
 
-Write an extraordinary, high-octane scene-by-scene script (5 to 6 scenes).
+FACTUAL DISCIPLINE: every figure, date, CVE id, version number and quoted comment in the narration must trace to the research dossier. The dossier lists what was actually retrieved under "retrievedSources" and per-fact attribution under "factCitations". Do not introduce specifics the dossier does not contain.
+
+The production bible and style guide are already fixed (given above). Write to them.
+
+Write an extraordinary, high-octane scene-by-scene script.
+The "scenes" array MUST contain either 5 or 6 scene objects — never fewer. Every narrative beat in the plan needs its own scene.
 For EACH scene, you MUST craft:
 1. "sceneNumber": integer index (1..N)
 2. "title": Punchy scene title
@@ -361,7 +540,7 @@ For EACH scene, you MUST craft:
 4. "narration": Spoken-word voiceover script. Must sound natural, electrifying, conversational, witty, and incisive. Use rhetorical questions, crisp pacing, contrast, and clever technical humor directly about this story. (approx 22-38 words per scene).
 5. "durationEst": Realistic speaking duration in seconds (8 to 15s).
 6. "cinematography": Precise visual director cues (camera framing e.g., 'Slow dynamic push-in on macro CRT monitor with anamorphic lens flare and volumetric neon haze').
-7. "visualPrompt": An exquisitely detailed image prompt designed for gemini-3-pro-image-preview. Must be cinematic, atmospheric, stylish, stylized cyberpunk or high-tech isometric.
+7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt — it must equal the concatenation of visual.scene + visual.styleAnchor below.
 8. "visualType": One of "headline", "terminal", "meme", "cyberpunk", "diagram", "character"
 9. "onScreenText": 3 to 5 high-impact kinetic typography words for the viewer's eye.
 10. "soundEffect": Specific audio/SFX cue (e.g. "[SFX: Deep sub-bass riser + rapid keyboard clatter]").
@@ -398,7 +577,7 @@ Return strictly a JSON object matching this schema:
       "narration": "Electrifying 3-second hook voiceover tailored specifically to this story...",
       "durationEst": 9,
       "cinematography": "Camera and lighting direction for scene 1",
-      "visualPrompt": "Detailed cinematic prompt for AI image generator matching the scene",
+      "visualPrompt": "Detailed cinematic prompt for AI image generator matching the scene (equals visual.scene + visual.styleAnchor)",
       "visualType": "headline",
       "onScreenText": "3-5 KINETIC WORDS",
       "soundEffect": "Specific SFX cue",
@@ -419,11 +598,7 @@ Return strictly a JSON object matching this schema:
 
     let script: any = null;
     try {
-      script = await generateGeminiJson(ai, prompt, systemInstruction, [
-        'gemini-2.5-flash',
-        'gemini-3.7-flash',
-        'gemini-3.1-flash-lite',
-      ]);
+      script = await generateGeminiJson(ai, prompt, systemInstruction, TEXT_MODELS, scriptSchema);
     } catch (aiErr: any) {
       console.warn('[Script Agent] Live AI tiers unavailable, utilizing dynamic script generator:', aiErr?.message || aiErr);
       script = generateFallbackScript(videoPlan, researchData, channelBrandName);
@@ -464,6 +639,14 @@ Return strictly a JSON object matching this schema:
     script.targetWpm = Math.round((script.totalWordCount / (script.estimatedTotalDuration / 60))) || 150;
     script.viralityScore = script.viralityScore || 96;
 
+    // --- Pass 2: art direction ---------------------------------------------
+    // Kept separate from the narrative pass on purpose. The combined schema was
+    // large enough that models returned finishReason STOP while silently
+    // omitting `visual` and `motion`; a small focused schema is honoured.
+    script.characterBible = productionBible.characterBible;
+    script.styleGuide = productionBible.styleGuide;
+    script = await applyVisualDirection(ai, script, researchData);
+
     res.json(script);
   } catch (error: any) {
     console.error('[Script Agent] Exception caught, providing synthesized script:', error);
@@ -472,7 +655,7 @@ Return strictly a JSON object matching this schema:
   }
 });
 
-// 4. Text-To-Speech (TTS): Uses model 'gemini-2.5-flash' / 'gemini-3.1-flash-tts-preview' with fallback
+// 4. Text-To-Speech (TTS): Uses 'gemini-3.1-flash-tts-preview' with a 2.5 TTS fallback
 app.post('/api/tts', async (req, res) => {
   const { text, voice = 'Puck' } = req.body;
   if (!text || typeof text !== 'string') {
@@ -486,7 +669,7 @@ app.post('/api/tts', async (req, res) => {
     const ai = getAIClient();
     let base64Audio: string | null = null;
 
-    const ttsModels = ['gemini-2.5-flash', 'gemini-3.1-flash-tts-preview'];
+    const ttsModels = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'];
     for (const model of ttsModels) {
       try {
         const response = await ai.models.generateContent({
@@ -548,7 +731,7 @@ app.post('/api/generate-image', async (req, res) => {
     const ai = getAIClient();
     let imageUrl: string | null = null;
 
-    const imgModels = ['imagen-3.0-generate-002', 'gemini-2.5-flash-image', 'gemini-3.1-flash-image'];
+    const imgModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'];
     for (const model of imgModels) {
       try {
         const response = await ai.models.generateContent({
@@ -591,6 +774,46 @@ app.post('/api/generate-image', async (req, res) => {
   }
 });
 
+// 5b. Markdown export: writes the finished script to exports/ as a production brief
+app.post('/api/export/markdown', async (req, res) => {
+  const { script, research, plan, channelBrandName } = req.body;
+  if (!script || !Array.isArray(script.scenes)) {
+    return res.status(400).json({ error: 'script with a scenes array is required' });
+  }
+  try {
+    const result = await writeScriptMarkdown({ script, research, plan, channelBrandName });
+    console.log(`[Export] wrote ${result.relativePath} (${result.bytes} bytes)`);
+    res.json({ ok: true, ...result });
+  } catch (err: any) {
+    console.error('[Export] failed:', err);
+    res.status(500).json({ error: err?.message || 'Failed to write markdown export' });
+  }
+});
+
+// 5c. List previously exported briefs
+app.get('/api/export/list', async (_req, res) => {
+  try {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    let names: string[] = [];
+    try {
+      names = (await fs.readdir(EXPORTS_DIR)).filter((n) => n.endsWith('.md'));
+    } catch {
+      return res.json({ exports: [] });
+    }
+    const stats = await Promise.all(
+      names.map(async (name) => {
+        const st = await fs.stat(path.join(EXPORTS_DIR, name));
+        return { filename: name, bytes: st.size, modified: st.mtime.toISOString() };
+      })
+    );
+    stats.sort((a, b) => b.modified.localeCompare(a.modified));
+    res.json({ exports: stats });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to list exports' });
+  }
+});
+
 // 6. Gemini Multi-Turn Chatbot with Role Selection & Model Selection
 app.post('/api/chat', async (req, res) => {
   const { message, history = [], rolePreset = 'ip_strategist', customModel } = req.body;
@@ -601,23 +824,23 @@ app.post('/api/chat', async (req, res) => {
   try {
     const ai = getAIClient();
 
-    let preferredModel = 'gemini-2.5-flash';
+    let preferredModel = 'gemini-3.7-flash';
     let systemInstruction = '';
 
     if (rolePreset === 'ip_strategist') {
-      preferredModel = customModel || 'gemini-2.5-flash';
+      preferredModel = customModel || 'gemini-3.7-flash';
       systemInstruction = `You are the Lead IP Brand Strategist & Showrunner for viral tech & Hacker News infotainment channels.
 Your mission is to help the creator brainstorm memorable IP names, media brand identities, show formats, catchy handles, merch lore, signature catchphrases, and visual aesthetics (e.g., retro-orange YCombinator cybernetic themes, high-contrast terminal minimalism).
 Give structured, punchy, actionable advice with ready-to-use names, taglines, and show concepts.`;
     } else if (rolePreset === 'script_doctor') {
-      preferredModel = customModel || 'gemini-2.5-flash';
+      preferredModel = customModel || 'gemini-3.7-flash';
       systemInstruction = `You are a world-class Infotainment Script Doctor and Viral Video Retention Editor.
 You help refine voiceover scripts, inject developer humor, punch up hooks, sharpen technical explanations, and optimize scene pacing for maximum viewer retention on YouTube, Shorts, and TikTok.`;
     } else if (rolePreset === 'fast_brainstorm') {
       preferredModel = customModel || 'gemini-3.1-flash-lite';
       systemInstruction = `You are a lightning-fast idea sparker. Deliver punchy bullet-point ideas, rapid-fire title variants, hook alternatives, and thumbnail concepts in seconds.`;
     } else {
-      preferredModel = customModel || 'gemini-2.5-flash';
+      preferredModel = customModel || 'gemini-3.7-flash';
       systemInstruction = 'You are an expert AI assistant for tech infotainment creators.';
     }
 
@@ -639,7 +862,7 @@ You help refine voiceover scripts, inject developer humor, punch up hooks, sharp
     try {
       replyText = await generateGeminiText(ai, contents, systemInstruction, [
         preferredModel,
-        'gemini-2.5-flash',
+        'gemini-3.7-flash',
         'gemini-3.7-flash',
         'gemini-3.1-flash-lite',
       ]);
@@ -701,7 +924,7 @@ Return strictly a JSON array of 5 IP brand identity objects:
     let ipList: any = null;
     try {
       ipList = await generateGeminiJson(ai, prompt, systemInstruction, [
-        'gemini-2.5-flash',
+        'gemini-3.7-flash',
         'gemini-3.1-pro-preview',
         'gemini-3.1-flash-lite',
       ]);
@@ -782,11 +1005,7 @@ Output STRICTLY valid JSON adhering to this schema:
 
     let podcast: any = null;
     try {
-      podcast = await generateGeminiJson(ai, prompt, systemInstruction, [
-        'gemini-2.5-flash',
-        'gemini-3.7-flash',
-        'gemini-3.1-flash-lite',
-      ]);
+      podcast = await generateGeminiJson(ai, prompt, systemInstruction, TEXT_MODELS);
     } catch (aiErr: any) {
       console.warn('[NotebookLM] Live AI tiers unavailable, returning dynamic podcast dialogue:', aiErr?.message || aiErr);
       podcast = generateFallbackNotebookLMPodcast(researchData, topicText);

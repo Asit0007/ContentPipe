@@ -162,7 +162,7 @@ export async function generateNotebookLMAudioService(
     try {
       console.log('[NotebookLM Service] Requesting multi-voice audio synthesis from Google Gemini Audio Modality...');
       const response = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3.1-flash-tts-preview',
         contents: `Read this NotebookLM technical deep dive podcast discussion with energetic pacing and clear articulation: "${combinedText.substring(0, 1200)}"`,
         config: {
           responseModalities: [Modality.AUDIO],
