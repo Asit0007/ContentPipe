@@ -6,6 +6,7 @@ import { PlanStage } from './components/PlanStage';
 import { ScriptEditor } from './components/ScriptEditor';
 import { VideoStudio } from './components/VideoStudio';
 import { IPBrandingChatbot } from './components/IPBrandingChatbot';
+import { GoogleWorkspaceExportModal } from './components/GoogleWorkspaceExportModal';
 import { SAMPLE_TELEGRAM_MESSAGES } from './data/sampleMessages';
 import { TelegramMessage, ResearchData, VideoPlan, VideoScript, IPBranding, WorkflowStep } from './types';
 import { AlertCircle } from 'lucide-react';
@@ -29,6 +30,7 @@ export default function App() {
   });
 
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
+  const [isGlobalGoogleExportOpen, setIsGlobalGoogleExportOpen] = useState(false);
   const [isResearchLoading, setIsResearchLoading] = useState(false);
   const [isPlanLoading, setIsPlanLoading] = useState(false);
   const [isScriptLoading, setIsScriptLoading] = useState(false);
@@ -127,6 +129,8 @@ export default function App() {
         onSelectStep={(step) => setCurrentStep(step)}
         activeIp={activeIp}
         onOpenIpModal={() => setIsIpModalOpen(true)}
+        onOpenGoogleExport={() => setIsGlobalGoogleExportOpen(true)}
+        hasScript={!!videoScript}
       />
 
       {/* Global Error Banner */}
@@ -184,6 +188,8 @@ export default function App() {
             onUpdateScript={(updated) => setVideoScript(updated)}
             onProceedToStudio={() => setCurrentStep('studio')}
             onRegenerateScript={handleProceedToScript}
+            plan={videoPlan}
+            research={researchData}
           />
         )}
 
@@ -214,6 +220,18 @@ export default function App() {
         }}
         topicContext={researchData?.topicTitle || currentMessage.text}
       />
+
+      {/* Global Google Workspace Export Modal (accessible from Header or anywhere) */}
+      {videoScript && (
+        <GoogleWorkspaceExportModal
+          isOpen={isGlobalGoogleExportOpen}
+          onClose={() => setIsGlobalGoogleExportOpen(false)}
+          videoScript={videoScript}
+          plan={videoPlan}
+          research={researchData}
+          initialExportType="both"
+        />
+      )}
     </div>
   );
 }

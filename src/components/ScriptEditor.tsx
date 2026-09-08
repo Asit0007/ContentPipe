@@ -18,6 +18,7 @@ import {
   Copy,
   Check,
   FileText,
+  Table,
   Radio,
   Clock,
   Zap,
@@ -27,8 +28,9 @@ import {
   Camera,
   MessageSquare
 } from 'lucide-react';
-import { VideoScript, VideoScriptScene, ImageResolution, VoiceName } from '../types';
+import { VideoScript, VideoScriptScene, ImageResolution, VoiceName, VideoPlan, ResearchData } from '../types';
 import { playAudioFromBase64, pcmBase64ToWavDataUrl, speakWithBrowserSpeech, stopAllSpeechAndAudio, playWebAudioSFX } from '../utils/audioUtils';
+import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -36,6 +38,8 @@ interface ScriptEditorProps {
   onUpdateScript: (script: VideoScript) => void;
   onProceedToStudio: () => void;
   onRegenerateScript: () => void;
+  plan?: VideoPlan | null;
+  research?: ResearchData | null;
 }
 
 export const ScriptEditor: React.FC<ScriptEditorProps> = ({
@@ -44,6 +48,8 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   onUpdateScript,
   onProceedToStudio,
   onRegenerateScript,
+  plan,
+  research,
 }) => {
   const [viewMode, setViewMode] = useState<'director' | 'document' | 'teleprompter'>('director');
   const [selectedVoice, setSelectedVoice] = useState<VoiceName>('Puck');
@@ -56,6 +62,10 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
     total: 0,
     message: '',
   });
+
+  // Google Workspace Export Modal State
+  const [isGoogleExportModalOpen, setIsGoogleExportModalOpen] = useState(false);
+  const [googleExportType, setGoogleExportType] = useState<'doc' | 'sheet' | 'both'>('both');
 
   // Export / Copy Feedback States
   const [copiedType, setCopiedType] = useState<'all' | 'voiceover' | null>(null);
@@ -343,6 +353,18 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              id="export-google-workspace-top-button"
+              type="button"
+              onClick={() => {
+                setGoogleExportType('both');
+                setIsGoogleExportModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 px-3 py-1.5 rounded-lg shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              <span>Export to Docs & Sheets</span>
+            </button>
+            <button
               onClick={onRegenerateScript}
               className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors bg-zinc-800/60 px-2.5 py-1.5 rounded-lg border border-zinc-700/50"
             >
@@ -503,13 +525,41 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
         {/* Export & Copy Action Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-800/80">
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Google Workspace Export Buttons */}
+            <button
+              id="export-google-doc-action-button"
+              type="button"
+              onClick={() => {
+                setGoogleExportType('doc');
+                setIsGoogleExportModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-500/30 transition-all cursor-pointer shadow-sm shadow-blue-500/10"
+              title="Export script to a new Google Doc"
+            >
+              <FileText className="h-3.5 w-3.5 text-blue-400" />
+              <span>Export Google Doc</span>
+            </button>
+            <button
+              id="export-google-sheet-action-button"
+              type="button"
+              onClick={() => {
+                setGoogleExportType('sheet');
+                setIsGoogleExportModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-all cursor-pointer shadow-sm shadow-emerald-500/10"
+              title="Export script to a new Google Sheet"
+            >
+              <Table className="h-3.5 w-3.5 text-emerald-400" />
+              <span>Export Google Sheet</span>
+            </button>
+
             <button
               type="button"
               onClick={handleCopyMarkdown}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-all"
             >
               {copiedType === 'all' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
-              <span>{copiedType === 'all' ? 'Copied Full Script!' : 'Copy Production Script (Markdown)'}</span>
+              <span>{copiedType === 'all' ? 'Copied Full Script!' : 'Copy Markdown'}</span>
             </button>
             <button
               type="button"
@@ -517,7 +567,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition-all"
             >
               {copiedType === 'voiceover' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-sky-400" />}
-              <span>{copiedType === 'voiceover' ? 'Copied Voiceover!' : 'Copy Voiceover Only'}</span>
+              <span>{copiedType === 'voiceover' ? 'Copied Voiceover!' : 'Copy VO Only'}</span>
             </button>
           </div>
 
@@ -1074,6 +1124,18 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
           <ArrowRight className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Google Workspace Export Modal */}
+      {videoScript && (
+        <GoogleWorkspaceExportModal
+          isOpen={isGoogleExportModalOpen}
+          onClose={() => setIsGoogleExportModalOpen(false)}
+          videoScript={videoScript}
+          plan={plan}
+          research={research}
+          initialExportType={googleExportType}
+        />
+      )}
     </div>
   );
 };

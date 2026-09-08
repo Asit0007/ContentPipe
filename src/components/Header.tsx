@@ -7,6 +7,8 @@ interface HeaderProps {
   onSelectStep: (step: WorkflowStep) => void;
   activeIp: IPBranding | null;
   onOpenIpModal: () => void;
+  onOpenGoogleExport?: () => void;
+  hasScript?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -14,6 +16,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectStep,
   activeIp,
   onOpenIpModal,
+  onOpenGoogleExport,
+  hasScript,
 }) => {
   const steps: { id: WorkflowStep; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'telegram', label: '1. Story Input', icon: Send },
@@ -71,6 +75,18 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right: Active IP Brand & Chatbot Affordance */}
         <div className="flex items-center gap-2">
+          {onOpenGoogleExport && hasScript && (
+            <button
+              id="header-google-workspace-export-button"
+              onClick={onOpenGoogleExport}
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-emerald-500/10 hover:from-blue-500/20 hover:to-emerald-500/20 border border-blue-500/30 px-3 py-1.5 text-xs font-semibold text-blue-300 transition-all cursor-pointer shadow-sm shadow-blue-500/10"
+              title="Export detailed script to Google Docs or Google Sheets"
+            >
+              <FileText className="h-3.5 w-3.5 text-blue-400" />
+              <span className="hidden sm:inline">Google Docs / Sheets</span>
+            </button>
+          )}
+
           <button
             id="open-ip-branding-button"
             onClick={onOpenIpModal}

@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# AI Studio generates this with real project identifiers — keep it local
+firebase-applet-config.json

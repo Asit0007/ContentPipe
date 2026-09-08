@@ -24,7 +24,9 @@ import {
   Check,
   ExternalLink,
   Link as LinkIcon,
-  Music
+  Music,
+  FileText,
+  Table
 } from 'lucide-react';
 import { VideoScript, VideoScriptScene, IPBranding, ResearchData, NotebookLMAudioResult } from '../types';
 import {
@@ -34,6 +36,7 @@ import {
   playWebAudioSFX
 } from '../utils/audioUtils';
 import { NotebookLMStudio } from './NotebookLMStudio';
+import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
 
 interface VideoStudioProps {
   videoScript: VideoScript;
@@ -62,6 +65,10 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, msg: '' });
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+
+  // Google Workspace Export Modal State
+  const [isGoogleExportModalOpen, setIsGoogleExportModalOpen] = useState(false);
+  const [googleExportType, setGoogleExportType] = useState<'doc' | 'sheet' | 'both'>('both');
 
   // NotebookLM Master Audio State
   const [notebooklmAudioResult, setNotebooklmAudioResult] = useState<NotebookLMAudioResult | null>(null);
@@ -840,12 +847,26 @@ ${videoScript.scenes
                   <Layers className="h-4 w-4 text-orange-400" />
                   <span>Scene Playlist ({videoScript.scenes.length})</span>
                 </h3>
-                <button
-                  onClick={onBackToScript}
-                  className="text-xs text-orange-400 hover:text-orange-300 transition-colors font-medium"
-                >
-                  Edit Script & Assets →
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    id="videostudio-google-export-button"
+                    onClick={() => {
+                      setGoogleExportType('both');
+                      setIsGoogleExportModalOpen(true);
+                    }}
+                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center gap-1 bg-blue-500/10 px-2 py-1 rounded-lg border border-blue-500/20"
+                    title="Export detailed script to Google Docs or Google Sheets"
+                  >
+                    <FileText className="h-3 w-3" />
+                    <span>Docs / Sheets</span>
+                  </button>
+                  <button
+                    onClick={onBackToScript}
+                    className="text-xs text-orange-400 hover:text-orange-300 transition-colors font-medium"
+                  >
+                    Edit Script →
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2.5 max-h-[580px] overflow-y-auto pr-1">
@@ -915,6 +936,16 @@ ${videoScript.scenes
             </div>
           </div>
         </div>
+      )}
+
+      {/* Google Workspace Export Modal */}
+      {videoScript && (
+        <GoogleWorkspaceExportModal
+          isOpen={isGoogleExportModalOpen}
+          onClose={() => setIsGoogleExportModalOpen(false)}
+          videoScript={videoScript}
+          initialExportType={googleExportType}
+        />
       )}
     </div>
   );
