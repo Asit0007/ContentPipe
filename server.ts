@@ -13,7 +13,7 @@ import {
   generateFallbackIpList,
   generateFallbackNotebookLMPodcast,
 } from './server/fallbackGenerators';
-import { researchSchema, planSchema, scriptSchema, visualDirectionSchema, productionBibleSchema } from './server/schemas';
+import { researchSchema, planSchema, buildScriptScenesSchema, buildVisualDirectionSchema, productionBibleSchema } from './server/schemas';
 import { extractUrls, fetchSources, buildSourceContext } from './server/sourceFetcher';
 import { generateSceneImage } from './server/imageProviders';
 import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
@@ -26,6 +26,31 @@ import {
 // absent: Google returns 404 "no longer available to new users" for it, so
 // leading with it burned a guaranteed-failed call on every request.
 const TEXT_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+
+// The scriptwriting pass (generateSceneChunk) and the art-direction pass
+// (generateVisualDirectionChunk) generate scenes in batches instead of the
+// whole script in one call — see buildScriptScenesSchema's docstring for why
+// a long-form script (40-60 scenes) can't just raise a single call's scene
+// count instead.
+//
+// The two passes need DIFFERENT chunk sizes. Measured live 2026-09-19 against
+// gemini-3.1-flash-lite/3.6-flash/3.7-flash: a request with this repo's full
+// per-scene narrative schema (which includes `infographic` — 3 more nested
+// arrays-of-objects on top of `visual`/`motion`) gets a hard 400
+// INVALID_ARGUMENT the instant `maxItems` on the scenes array reaches 4,
+// reproducible across every model and both min<max ranges and min===max.
+// maxItems 3 succeeded every time; maxItems 4 failed every time. Dropping
+// just `infographic` from the same schema let maxItems 6 succeed again, so
+// it's specifically that field's nesting depth pushing the compiled schema
+// over some internal limit, not the array bound alone. The visual-direction
+// pass's item schema (sceneNumber/visual/motion/citations, no infographic)
+// doesn't carry that field, so it isn't capped the same way — verified live
+// at count 5 in production use.
+const NARRATIVE_SCENES_PER_CHUNK = 3;
+const VISUAL_DIRECTION_SCENES_PER_CHUNK = 6;
+// Midpoint of the 8-15s narration guidance given to generateSceneChunk,
+// used to translate a target duration into a target scene count.
+const AVG_SCENE_DURATION_SEC = 11.5;
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -289,10 +314,14 @@ Return strictly a valid JSON object matching this schema:
 
 // 2. Planning Agent: Takes research and produces a high-retention infotainment video plan
 app.post('/api/plan', async (req, res) => {
-  const { researchData, targetFormat, targetTone } = req.body;
+  const { researchData, targetFormat, targetTone, targetDurationSec } = req.body;
   if (!researchData) {
     return res.status(400).json({ error: 'researchData is required' });
   }
+  // No validation beyond the number coercion below — this mirrors targetFormat/
+  // targetTone, which are also unvalidated free-form request fields. Omitting
+  // it keeps the pre-existing 60s Shorts-style default exactly as before.
+  const duration = Number(targetDurationSec) || 60;
 
   try {
     const ai = getAIClient();
@@ -304,17 +333,19 @@ ${JSON.stringify(researchData, null, 2)}
 
 Target Platform Format: ${targetFormat || '9:16 (Shorts / Reels / TikTok)'}
 Target Tone: ${targetTone || 'Witty Tech & Sarcastic'}
+Target Duration: ${duration} seconds
 
 CRITICAL MANDATE:
 The entire video plan MUST be strictly focused on the topic in the Research Data: "${researchData.topicTitle || 'the provided story'}".
 Do NOT invent an unrelated topic (e.g. do NOT talk about virtual DOM or Rust if the story is about JFrog Artifactory or a security vulnerability).
 
 Create a structured video plan with narrative acts, retention hooks, and visual direction.
+The narrativeBeats' durationSec values MUST sum to approximately ${duration} seconds. For anything past ~90 seconds, add MORE acts rather than inflating a handful of them to unrealistic individual lengths — e.g. a ${duration}s plan should have roughly ${Math.max(5, Math.round(duration / 45))} acts, each covering a distinct beat of the story, not 5 acts stretched thin.
 Output strictly a JSON object matching this schema:
 {
   "title": "${researchData.topicTitle || 'High-CTR Video Title'}",
   "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
-  "targetDurationSec": 60,
+  "targetDurationSec": ${duration},
   "tone": "${targetTone || 'Witty Tech & Sarcastic'}",
   "hookStrategy": "Specific visual + verbal 3-second hook pattern to stop scrolling on this exact story",
   "coreConflict": "The central drama or technological dilemma for this topic",
@@ -363,7 +394,9 @@ Output strictly a JSON object matching this schema:
     "Open loop question before the reveal"
   ],
   "callToAction": "Drop a comment: How is your team handling this?"
-}`;
+}
+
+REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum to 60s. Your actual narrativeBeats array must sum to ~${duration}s, which for anything past 90s means writing MORE act objects in the same shape (roughly ${Math.max(5, Math.round(duration / 45))} for this ${duration}s plan), not stretching 5 acts thin.`;
 
     const systemInstruction = 'You are an award-winning tech infotainment director. Output strictly valid JSON strictly tailored to the topic in the research.';
 
@@ -431,16 +464,16 @@ B. "styleGuide": "artDirection", "colorPalette", "lighting", "lensAndFilm", "neg
 }
 
 /**
- * Second pass over a finished script: produces the layered image prompts and
- * motion direction for every scene, then merges them in. Falls back to leaving
- * the scenes as-is (they still carry visualPrompt) if the call fails.
+ * One chunk of the art-direction pass — see applyVisualDirection for why
+ * this is called per chunk instead of once over the whole scenes array.
  */
-async function applyVisualDirection(ai: GoogleGenAI, script: any, researchData: any): Promise<any> {
-  const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
-  if (scenes.length === 0) return script;
-
-  const bible = script.characterBible || [];
-  const style = script.styleGuide || {};
+async function generateVisualDirectionChunk(
+  ai: GoogleGenAI,
+  chunkScenes: any[],
+  bible: any[],
+  style: any,
+  researchData: any
+): Promise<any[]> {
   const sourceIds = (researchData?.retrievedSources || [])
     .filter((r: any) => r.ok)
     .map((r: any) => {
@@ -464,9 +497,9 @@ ${JSON.stringify(style, null, 2)}
 AVAILABLE SOURCE IDS for citations:
 ${sourceIds.length ? sourceIds.join('\n') : '(none retrieved — return [] for every citations field)'}
 
-SCENES:
+SCENES (one chunk of a longer script — direct these ${chunkScenes.length} on their own terms; the shared style guide above is what keeps them visually unified with the rest):
 ${JSON.stringify(
-  scenes.map((s: any) => ({
+  chunkScenes.map((s: any) => ({
     sceneNumber: s.sceneNumber,
     title: s.title,
     actPhase: s.actPhase,
@@ -491,55 +524,113 @@ For EVERY scene above return an object with:
 - "motion": "shotType", "cameraMove", "subjectMotion", "durationSec" (match durationEst), "easing", "transitionOut", and "motionPrompt" — one ready-to-paste sentence for an image-to-video model.
 - "citations": source ids backing the factual claims in that scene's narration; [] for purely rhetorical scenes. Never invent an id that is not listed above.
 
-Return one entry per scene, in order.`;
+Return exactly ${chunkScenes.length} entries, one per scene above, in order.`;
 
-  try {
-    const direction: any = await generateGeminiJson(
-      ai,
-      prompt,
-      'You are a precise art director. Output strictly valid JSON matching the schema. Reuse character promptAnchor strings verbatim so characters stay identical between scenes.',
-      TEXT_MODELS,
-      visualDirectionSchema
-    );
-    const byNumber = new Map<number, any>();
-    for (const d of direction?.scenes || []) byNumber.set(Number(d.sceneNumber), d);
+  const direction: any = await generateGeminiJson(
+    ai,
+    prompt,
+    'You are a precise art director. Output strictly valid JSON matching the schema. Reuse character promptAnchor strings verbatim so characters stay identical between scenes.',
+    TEXT_MODELS,
+    buildVisualDirectionSchema(chunkScenes.length)
+  );
+  return Array.isArray(direction?.scenes) ? direction.scenes : [];
+}
 
-    // A single styleAnchor wins across the set even if the model varied it.
-    const anchors = (direction?.scenes || []).map((d: any) => d?.visual?.styleAnchor).filter(Boolean);
-    const canonicalAnchor = anchors[0];
+/**
+ * Second pass over a finished script: produces the layered image prompts and
+ * motion direction for every scene, then merges them in. Falls back to leaving
+ * the scenes as-is (they still carry visualPrompt) if a chunk's call fails.
+ *
+ * Chunked over VISUAL_DIRECTION_SCENES_PER_CHUNK scenes at a time rather than
+ * one call for the whole script. A long-form script can run 40-60 scenes;
+ * asking for visual + motion direction on all of them in a single call is
+ * exactly the large-output failure mode this function's schema was already
+ * split out to avoid (see buildVisualDirectionSchema's docstring) — chunking
+ * keeps each call the same size that was already proven reliable.
+ */
+async function applyVisualDirection(ai: GoogleGenAI, script: any, researchData: any): Promise<any> {
+  const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
+  if (scenes.length === 0) return script;
 
-    script.scenes = scenes.map((s: any, i: number) => {
-      const d = byNumber.get(Number(s.sceneNumber)) || (direction?.scenes || [])[i];
-      if (!d) return s;
-      const visual = d.visual ? { ...d.visual, styleAnchor: canonicalAnchor || d.visual.styleAnchor } : undefined;
-      return {
-        ...s,
-        ...(visual ? { visual } : {}),
-        ...(d.motion ? { motion: d.motion } : {}),
-        ...(Array.isArray(d.citations) ? { citations: d.citations } : {}),
-        // Keep the flat prompt consistent with the layered one.
-        visualPrompt: visual ? [visual.scene, visual.styleAnchor].filter(Boolean).join(' ') : s.visualPrompt,
-      };
-    });
-    const covered = script.scenes.filter((s: any) => s.visual).length;
-    console.log(`[Art Director] visual direction applied to ${covered}/${scenes.length} scenes`);
-  } catch (err: any) {
-    console.warn('[Art Director] visual direction pass failed, keeping flat prompts:', err?.message || err);
+  const bible = script.characterBible || [];
+  const style = script.styleGuide || {};
+
+  const allDirections: any[] = [];
+  const numChunks = Math.ceil(scenes.length / VISUAL_DIRECTION_SCENES_PER_CHUNK);
+  for (let i = 0; i < scenes.length; i += VISUAL_DIRECTION_SCENES_PER_CHUNK) {
+    const chunk = scenes.slice(i, i + VISUAL_DIRECTION_SCENES_PER_CHUNK);
+    try {
+      const chunkDirections = await generateVisualDirectionChunk(ai, chunk, bible, style, researchData);
+      allDirections.push(...chunkDirections);
+    } catch (err: any) {
+      console.warn(
+        `[Art Director] chunk ${Math.floor(i / VISUAL_DIRECTION_SCENES_PER_CHUNK) + 1}/${numChunks} failed, those scenes keep flat prompts:`,
+        err?.message || err
+      );
+    }
   }
+
+  const byNumber = new Map<number, any>();
+  for (const d of allDirections) byNumber.set(Number(d.sceneNumber), d);
+
+  // A single styleAnchor wins across the whole script even if a chunk varied
+  // it — the first one produced by any chunk, not just the first chunk,
+  // since an earlier chunk's call may have failed entirely.
+  const canonicalAnchor = allDirections.map((d: any) => d?.visual?.styleAnchor).find(Boolean);
+
+  script.scenes = scenes.map((s: any) => {
+    const d = byNumber.get(Number(s.sceneNumber));
+    if (!d) return s;
+    const visual = d.visual ? { ...d.visual, styleAnchor: canonicalAnchor || d.visual.styleAnchor } : undefined;
+    return {
+      ...s,
+      ...(visual ? { visual } : {}),
+      ...(d.motion ? { motion: d.motion } : {}),
+      ...(Array.isArray(d.citations) ? { citations: d.citations } : {}),
+      // Keep the flat prompt consistent with the layered one.
+      visualPrompt: visual ? [visual.scene, visual.styleAnchor].filter(Boolean).join(' ') : s.visualPrompt,
+    };
+  });
+  const covered = script.scenes.filter((s: any) => s.visual).length;
+  console.log(`[Art Director] visual direction applied to ${covered}/${scenes.length} scenes across ${numChunks} chunk(s)`);
   return script;
 }
 
-// 3. Scriptwriting Agent: Converts plan into scene-by-scene script with voiceover and image prompts
-app.post('/api/script', async (req, res) => {
-  const { videoPlan, researchData, channelBrandName } = req.body;
-  if (!videoPlan) {
-    return res.status(400).json({ error: 'videoPlan is required' });
-  }
+/**
+ * One chunk of the scriptwriting pass — see generateSceneChunks for why a
+ * long-form script is written in batches instead of one call.
+ *
+ * `videoPlan.tone === 'Deep Dive Documentary'` gets a different writer
+ * persona and narration-style instruction than everything else. This is the
+ * fix for a gap CyberPipe's CLAUDE.md documented: passing a custom
+ * targetTone string to /api/plan couldn't change actual prose, because the
+ * persona/style instructions here were hardcoded to an "electrifying, witty,
+ * infotainment" voice regardless of tone. Every other tone value keeps the
+ * original behavior unchanged.
+ */
+async function generateSceneChunk(
+  ai: GoogleGenAI,
+  videoPlan: any,
+  researchData: any,
+  productionBible: { characterBible: any[]; styleGuide: any },
+  channelBrandName: string | undefined,
+  sceneCount: number,
+  sceneNumberOffset: number,
+  priorScenesContext: string,
+  isLastChunk: boolean
+): Promise<any[]> {
+  const isDocumentaryTone = videoPlan?.tone === 'Deep Dive Documentary';
+  const persona = isDocumentaryTone
+    ? `You are an investigative documentary scriptwriter and creative director working in the style of authoritative long-form cybersecurity journalism (Bloomberg cyber docs, Darknet Diaries' narrative pacing, a Netflix true-crime breakdown) — not an infotainment creator.`
+    : `You are an elite, award-winning infotainment video scriptwriter & creative director for top-tier YouTube Shorts, TikTok, and video essays (in the style of Veritasium, Fireship, and ColdFusion).`;
+  const narrationStyle = isDocumentaryTone
+    ? `Must sound authoritative, investigative, and slightly urgent — precise, measured, architecturally detailed. No fearmongering, no clickbait, no "your team is panicking" hype. Let the facts carry the weight.`
+    : `Must sound natural, electrifying, conversational, witty, and incisive. Use rhetorical questions, crisp pacing, contrast, and clever technical humor directly about this story.`;
+  const systemInstruction = isDocumentaryTone
+    ? 'You write precise, authoritative cybersecurity investigative narration with cinematic visual cues. Output valid JSON strictly grounded in the topic. No hype, no fearmongering, no clickbait.'
+    : 'You write the sharpest, most viral infotainment scripts on the internet with cinematic visual cues and brilliant narration. Output valid JSON strictly grounded in the topic.';
 
-  try {
-    const ai = getAIClient();
-    const productionBible = await generateProductionBible(ai, videoPlan, researchData, channelBrandName);
-    const prompt = `You are an elite, award-winning infotainment video scriptwriter & creative director for top-tier YouTube Shorts, TikTok, and video essays (in the style of Veritasium, Fireship, and ColdFusion).
+  const prompt = `${persona}
 Brand Identity / Show Name: "${channelBrandName || 'The Orange Thread'}"
 
 Video Blueprint Plan:
@@ -553,20 +644,25 @@ ${JSON.stringify(productionBible, null, 2)}
 
 CRITICAL REQUIREMENT:
 The script narration, cinematography, visual prompts, and onScreenText for EVERY SINGLE SCENE must be 100% focused on this specific topic: "${videoPlan.title || researchData?.topicTitle || 'the story'}".
-If the topic is a security vulnerability (e.g. JFrog Artifactory auth bypass or token minting), EVERY scene must discuss that specific vulnerability, exploit mechanism, supply chain risks, and community panic.
 Do NOT output generic text about unrelated topics.
 
 FACTUAL DISCIPLINE: every figure, date, CVE id, version number and quoted comment in the narration must trace to the research dossier. The dossier lists what was actually retrieved under "retrievedSources" and per-fact attribution under "factCitations". Do not introduce specifics the dossier does not contain.
 
 The production bible and style guide are already fixed (given above). Write to them.
 
-Write an extraordinary, high-octane scene-by-scene script.
-The "scenes" array MUST contain either 5 or 6 scene objects — never fewer. Every narrative beat in the plan needs its own scene.
+${priorScenesContext}
+
+This is one chunk of a longer script. Write EXACTLY ${sceneCount} new scenes continuing directly on — do not repeat, re-hook, or re-introduce the topic if this isn't the opening chunk. ${
+    isLastChunk
+      ? 'This IS the final chunk of the script — the last scene must land the conclusion, remediation takeaway, and call to action.'
+      : 'This is NOT the final chunk — do not wrap up or deliver a call to action yet.'
+  }
+
 For EACH scene, you MUST craft:
-1. "sceneNumber": integer index (1..N)
+1. "sceneNumber": integer index, starting at ${sceneNumberOffset + 1}
 2. "title": Punchy scene title
-3. "actPhase": One of "Hook (0-5s)", "Technical Breakdown", "The Flame War", "The Critical Flaw", "The Revelation & Twist", "The Payoff & CTA"
-4. "narration": Spoken-word voiceover script. Must sound natural, electrifying, conversational, witty, and incisive. Use rhetorical questions, crisp pacing, contrast, and clever technical humor directly about this story. (approx 22-38 words per scene).
+3. "actPhase": a short label for this beat's narrative function (e.g. "Hook", "Technical Breakdown", "Community Reaction", "The Fix", "Conclusion & CTA")
+4. "narration": Spoken-word voiceover script. ${narrationStyle} (approx 22-38 words per scene).
 5. "durationEst": Realistic speaking duration in seconds (8 to 15s).
 6. "cinematography": Precise visual director cues (camera framing e.g., 'Slow dynamic push-in on macro CRT monitor with anamorphic lens flare and volumetric neon haze').
 7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt — it must equal the concatenation of visual.scene + visual.styleAnchor below.
@@ -585,52 +681,133 @@ For EACH scene, you MUST craft:
       "metrics": [{"label": "Metric", "value": "9.8", "subtext": "Critical", "color": "#ef4444"}]
     }
 
-Return strictly a JSON object matching this schema:
-{
-  "title": "${videoPlan.title || 'Hacker News Infotainment Masterclass'}",
-  "targetPlatform": "${videoPlan.format === '16:9' ? 'YouTube Long-form (16:9)' : 'Shorts/Reels/TikTok (9:16)'}",
-  "aspectRatio": "${videoPlan.format === '16:9' ? '16:9' : '9:16'}",
-  "estimatedTotalDuration": 60,
-  "totalWordCount": 160,
-  "targetWpm": 150,
-  "viralityScore": 96,
-  "tonePacing": "${videoPlan.tone || 'Witty Tech & Sarcastic'}",
-  "signatureIntro": "Welcome back to ${channelBrandName || 'The Orange Thread'}...",
-  "signatureOutro": "Drop your hot take in the comments and subscribe to ${channelBrandName || 'The Orange Thread'}.",
-  "scenes": [
-    {
-      "id": "scene-1",
-      "sceneNumber": 1,
-      "title": "Scene Title",
-      "actPhase": "Hook (0-5s)",
-      "narration": "Electrifying 3-second hook voiceover tailored specifically to this story...",
-      "durationEst": 9,
-      "cinematography": "Camera and lighting direction for scene 1",
-      "visualPrompt": "Detailed cinematic prompt for AI image generator matching the scene (equals visual.scene + visual.styleAnchor)",
-      "visualType": "headline",
-      "onScreenText": "3-5 KINETIC WORDS",
-      "soundEffect": "Specific SFX cue",
-      "retentionNote": "Why this hooks the viewer",
-      "infographic": {
-        "type": "threat_scorecard",
-        "title": "VULNERABILITY SCORECARD",
-        "badge": "CVSS 9.8",
-        "badgeColor": "#ef4444",
-        "summary": "Core exploit pathway summary",
-        "metrics": [{"label": "Severity", "value": "Critical", "color": "#ef4444"}]
-      }
-    }
-  ]
-}`;
+Return strictly a JSON object: { "scenes": [ ...exactly ${sceneCount} scene objects as described above... ] }`;
 
-    const systemInstruction = 'You write the sharpest, most viral infotainment scripts on the internet with cinematic visual cues and brilliant narration. Output valid JSON strictly grounded in the topic.';
+  // Exact min===max, not a +1 buffer: this schema includes `infographic`,
+  // and maxItems 4 hard-fails regardless of minItems (see
+  // NARRATIVE_SCENES_PER_CHUNK's comment) — a "helpful" +1 here would have
+  // silently turned a 3-scene chunk's maxItems into 4 and broken it.
+  const result = await generateGeminiJson<{ scenes: any[] }>(
+    ai,
+    prompt,
+    systemInstruction,
+    TEXT_MODELS,
+    buildScriptScenesSchema(sceneCount, sceneCount)
+  );
+  return Array.isArray(result?.scenes) ? result.scenes : [];
+}
 
-    let script: any = null;
+/**
+ * Generates a full script's scenes in chunks of NARRATIVE_SCENES_PER_CHUNK
+ * rather than one call for the whole target duration.
+ *
+ * videoPlan.targetDurationSec used to be decorative — /api/plan always
+ * hardcoded 60, and even a caller-supplied value had nowhere to go, because
+ * the old single-call scriptSchema capped scenes at minItems:5/maxItems:6
+ * (~90s of narration, ever). That's fixed on the /api/plan side (targetDurationSec
+ * is now a real request parameter), and fixed here: this translates a target
+ * duration into a target scene count and writes it in batches the size
+ * already proven reliable, carrying the last few scenes forward as context
+ * each time so the narrative stays continuous across calls.
+ *
+ * Partial results are kept on a chunk failure (a 6-minute script beats none)
+ * — the caller falls back to generateFallbackScript only if zero scenes come
+ * back at all.
+ */
+async function generateSceneChunks(
+  ai: GoogleGenAI,
+  videoPlan: any,
+  researchData: any,
+  productionBible: { characterBible: any[]; styleGuide: any },
+  channelBrandName?: string
+): Promise<any[]> {
+  const targetDurationSec = Number(videoPlan?.targetDurationSec) || 60;
+  const totalScenesTarget = Math.max(5, Math.min(80, Math.round(targetDurationSec / AVG_SCENE_DURATION_SEC)));
+  const numChunks = Math.max(1, Math.ceil(totalScenesTarget / NARRATIVE_SCENES_PER_CHUNK));
+
+  const allScenes: any[] = [];
+  let remaining = totalScenesTarget;
+
+  for (let chunkIndex = 0; chunkIndex < numChunks; chunkIndex++) {
+    const chunksLeft = numChunks - chunkIndex;
+    const thisChunkCount = Math.max(1, Math.round(remaining / chunksLeft));
+    remaining -= thisChunkCount;
+
+    const priorScenesContext =
+      allScenes.length === 0
+        ? '(This is the opening chunk of the script — write the hook first.)'
+        : 'SCENES ALREADY WRITTEN (the most recent ones — continue directly on from here, do not repeat or re-hook):\n' +
+          allScenes
+            .slice(-3)
+            .map((s: any) => `  #${s.sceneNumber} "${s.title}": ${s.narration}`)
+            .join('\n');
+
     try {
-      script = await generateGeminiJson(ai, prompt, systemInstruction, TEXT_MODELS, scriptSchema);
+      const chunkScenes = await generateSceneChunk(
+        ai,
+        videoPlan,
+        researchData,
+        productionBible,
+        channelBrandName,
+        thisChunkCount,
+        allScenes.length,
+        priorScenesContext,
+        chunkIndex === numChunks - 1
+      );
+      for (const s of chunkScenes) {
+        allScenes.push({ ...s, sceneNumber: allScenes.length + 1 });
+      }
+    } catch (err: any) {
+      console.warn(
+        `[Script Agent] scene chunk ${chunkIndex + 1}/${numChunks} failed, stopping with ${allScenes.length} scene(s) so far:`,
+        err?.message || err
+      );
+      break;
+    }
+  }
+  console.log(
+    `[Script Agent] generated ${allScenes.length}/${totalScenesTarget} scenes across ${numChunks} chunk(s) for a ${targetDurationSec}s target`
+  );
+  return allScenes;
+}
+
+// 3. Scriptwriting Agent: Converts plan into scene-by-scene script with voiceover and image prompts
+app.post('/api/script', async (req, res) => {
+  const { videoPlan, researchData, channelBrandName } = req.body;
+  if (!videoPlan) {
+    return res.status(400).json({ error: 'videoPlan is required' });
+  }
+
+  try {
+    const ai = getAIClient();
+    const productionBible = await generateProductionBible(ai, videoPlan, researchData, channelBrandName);
+
+    let scenes: any[] = [];
+    try {
+      scenes = await generateSceneChunks(ai, videoPlan, researchData, productionBible, channelBrandName);
     } catch (aiErr: any) {
-      console.warn('[Script Agent] Live AI tiers unavailable, utilizing dynamic script generator:', aiErr?.message || aiErr);
+      console.warn('[Script Agent] scene generation threw before any chunk succeeded:', aiErr?.message || aiErr);
+    }
+
+    let script: any;
+    if (scenes.length === 0) {
+      console.warn('[Script Agent] no scenes generated, utilizing dynamic script generator');
       script = generateFallbackScript(videoPlan, researchData, channelBrandName);
+    } else {
+      // title/targetPlatform/aspectRatio/signatureIntro/signatureOutro/tonePacing
+      // were never real model creativity — the old single-call prompt's JSON
+      // example just interpolated these same videoPlan/channelBrandName values
+      // straight through unchanged — so they're built directly here instead of
+      // spending a model call on them.
+      script = {
+        title: videoPlan.title || researchData?.topicTitle || 'Untitled',
+        targetPlatform: videoPlan.format === '16:9' ? 'YouTube Long-form (16:9)' : 'Shorts/Reels/TikTok (9:16)',
+        aspectRatio: videoPlan.format === '16:9' ? '16:9' : '9:16',
+        tonePacing: videoPlan.tone || 'Witty Tech & Sarcastic',
+        signatureIntro: `Welcome back to ${channelBrandName || 'The Orange Thread'}...`,
+        signatureOutro: `Drop your hot take in the comments and subscribe to ${channelBrandName || 'The Orange Thread'}.`,
+        scenes,
+      };
     }
 
     // Calculate word counts & metrics if missing
@@ -648,7 +825,9 @@ Return strictly a JSON object matching this schema:
           id: s.id || `scene-${idx + 1}-${Date.now()}`,
           sceneNumber: idx + 1,
           title: s.title || `Scene ${idx + 1}`,
-          actPhase: s.actPhase || (idx === 0 ? 'Hook (0-5s)' : idx === 1 ? 'Technical Breakdown' : idx === 2 ? 'The Flame War' : idx === 3 ? 'The Critical Flaw' : 'The Payoff & CTA'),
+          // No fixed 5-scene assumption here anymore — a chunk failure can
+          // leave any scene without one, at any position in a script of any length.
+          actPhase: s.actPhase || (idx === 0 ? 'Hook' : idx === script.scenes.length - 1 ? 'Conclusion & CTA' : 'Development'),
           narration: s.narration || '',
           durationEst: dur,
           cinematography: s.cinematography || 'Cinematic stylized camera tracking with amber lighting and depth of field',

@@ -310,104 +310,103 @@ const motionSchema = {
   required: ['shotType', 'cameraMove', 'subjectMotion', 'durationSec', 'easing', 'transitionOut', 'motionPrompt'],
 };
 
-export const scriptSchema = {
+/**
+ * One scene's narrative-pass fields, including `infographic` — the deepest
+ * nested field here (3 more arrays-of-objects inside it, on top of `visual`/
+ * `motion`). Measured live 2026-09-19: wrapped in an array with this item
+ * shape, `maxItems: 4` gets a hard 400 INVALID_ARGUMENT from every model in
+ * TEXT_MODELS, reproducible regardless of minItems or whether min===max;
+ * `maxItems: 3` succeeds reliably. Dropping just `infographic` let `maxItems:
+ * 6` succeed again, so it's this field's nesting specifically hitting some
+ * internal schema-complexity limit, not the array bound alone. See
+ * NARRATIVE_SCENES_PER_CHUNK in server.ts, which is why long-form scripts are
+ * generated 3 scenes at a time rather than the 6 used elsewhere.
+ */
+const scriptSceneItemSchema = {
   type: Type.OBJECT,
   properties: {
+    sceneNumber: { type: Type.INTEGER },
     title: { type: Type.STRING },
-    targetPlatform: {
+    actPhase: { type: Type.STRING },
+    narration: { type: Type.STRING },
+    durationEst: { type: Type.NUMBER },
+    visualPrompt: { type: Type.STRING },
+    visualType: {
       type: Type.STRING,
-      enum: ['Shorts/Reels/TikTok (9:16)', 'YouTube Long-form (16:9)'],
+      enum: ['headline', 'terminal', 'meme', 'cyberpunk', 'diagram', 'character'],
     },
-    aspectRatio: { type: Type.STRING, enum: ['16:9', '9:16', '1:1'] },
-    estimatedTotalDuration: { type: Type.NUMBER },
-    totalWordCount: { type: Type.INTEGER },
-    targetWpm: { type: Type.INTEGER },
-    viralityScore: { type: Type.NUMBER },
-    tonePacing: { type: Type.STRING },
-    signatureIntro: { type: Type.STRING },
-    signatureOutro: { type: Type.STRING },
-    scenes: {
-      type: Type.ARRAY,
-      // Without an explicit floor the model will happily return a single scene.
-      minItems: 5,
-      maxItems: 6,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          sceneNumber: { type: Type.INTEGER },
-          title: { type: Type.STRING },
-          actPhase: { type: Type.STRING },
-          narration: { type: Type.STRING },
-          durationEst: { type: Type.NUMBER },
-          visualPrompt: { type: Type.STRING },
-          visualType: {
-            type: Type.STRING,
-            enum: ['headline', 'terminal', 'meme', 'cyberpunk', 'diagram', 'character'],
-          },
-          cinematography: { type: Type.STRING },
-          onScreenText: { type: Type.STRING },
-          soundEffect: { type: Type.STRING },
-          retentionNote: { type: Type.STRING },
-          wordCount: { type: Type.INTEGER },
-          visual: sceneVisualSchema,
-          motion: motionSchema,
-          citations: { type: Type.ARRAY, items: { type: Type.STRING } },
-          infographic: infographicSchema,
-        },
-        required: [
-          'sceneNumber',
-          'title',
-          'narration',
-          'durationEst',
-          'visualPrompt',
-          'visualType',
-          'onScreenText',
-          'soundEffect',
-        ],
-        propertyOrdering: [
-          'sceneNumber',
-          'title',
-          'actPhase',
-          'narration',
-          'durationEst',
-          'cinematography',
-          'visualPrompt',
-          'visual',
-          'motion',
-          'citations',
-          'visualType',
-          'onScreenText',
-          'soundEffect',
-          'retentionNote',
-          'wordCount',
-          'infographic',
-        ],
-      },
-    },
+    cinematography: { type: Type.STRING },
+    onScreenText: { type: Type.STRING },
+    soundEffect: { type: Type.STRING },
+    retentionNote: { type: Type.STRING },
+    wordCount: { type: Type.INTEGER },
+    visual: sceneVisualSchema,
+    motion: motionSchema,
+    citations: { type: Type.ARRAY, items: { type: Type.STRING } },
+    infographic: infographicSchema,
   },
   required: [
+    'sceneNumber',
     'title',
-    'targetPlatform',
-    'aspectRatio',
-    'estimatedTotalDuration',
-    'signatureIntro',
-    'signatureOutro',
-    'scenes',
+    'narration',
+    'durationEst',
+    'visualPrompt',
+    'visualType',
+    'onScreenText',
+    'soundEffect',
   ],
   propertyOrdering: [
+    'sceneNumber',
     'title',
-    'targetPlatform',
-    'aspectRatio',
-    'estimatedTotalDuration',
-    'totalWordCount',
-    'targetWpm',
-    'viralityScore',
-    'tonePacing',
-    'signatureIntro',
-    'signatureOutro',
-    'scenes',
+    'actPhase',
+    'narration',
+    'durationEst',
+    'cinematography',
+    'visualPrompt',
+    'visual',
+    'motion',
+    'citations',
+    'visualType',
+    'onScreenText',
+    'soundEffect',
+    'retentionNote',
+    'wordCount',
+    'infographic',
   ],
 };
+
+/**
+ * Scenes-only schema for one chunk of a script, with a caller-supplied scene
+ * count instead of a hardcoded 5-6.
+ *
+ * The old `scriptSchema` bundled title/targetPlatform/signatureIntro/etc.
+ * alongside `scenes` in one call, capped at minItems 5 / maxItems 6 — fine
+ * for a ~60s Short, a hard ceiling around 90s for anything longer. Those
+ * top-level fields were never real model creativity though: the prompt's own
+ * JSON example just interpolated videoPlan/channelBrandName straight through
+ * (e.g. `"title": "${videoPlan.title || ...}"`), so /api/script now builds
+ * them directly in TypeScript (see server.ts) and only asks Gemini for
+ * `scenes`. That shrinks the per-call schema and, combined with generating
+ * scenes in chunks of ~6 (the count already proven reliable) instead of one
+ * call for the whole target duration, is what makes an 8-10 minute script
+ * (~40-60 scenes) actually reachable without hitting the large-schema
+ * field-dropping failure mode documented above for visualDirectionSchema.
+ */
+export function buildScriptScenesSchema(minScenes: number, maxScenes: number) {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      scenes: {
+        type: Type.ARRAY,
+        // Without an explicit floor the model will happily return a single scene.
+        minItems: minScenes,
+        maxItems: maxScenes,
+        items: scriptSceneItemSchema,
+      },
+    },
+    required: ['scenes'],
+  };
+}
 
 /**
  * Second-pass schema: art direction only.
@@ -416,27 +415,36 @@ export const scriptSchema = {
  * required fields from it (observed: gemini-3.6-flash returning finishReason
  * STOP with `visual` and `motion` absent). Asking for the visual layer on its
  * own keeps the schema small enough to be honoured reliably.
+ *
+ * Parametrized by scene count for the same reason as buildScriptScenesSchema:
+ * a long-form script's scenes are art-directed in chunks (see
+ * applyVisualDirection in server.ts), each call asking for exactly that
+ * chunk's scene count rather than the whole script's in one shot.
  */
-export const visualDirectionSchema = {
-  type: Type.OBJECT,
-  properties: {
-    scenes: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          sceneNumber: { type: Type.INTEGER },
-          visual: sceneVisualSchema,
-          motion: motionSchema,
-          citations: { type: Type.ARRAY, items: { type: Type.STRING } },
+export function buildVisualDirectionSchema(sceneCount: number) {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      scenes: {
+        type: Type.ARRAY,
+        minItems: sceneCount,
+        maxItems: sceneCount,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            sceneNumber: { type: Type.INTEGER },
+            visual: sceneVisualSchema,
+            motion: motionSchema,
+            citations: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ['sceneNumber', 'visual', 'motion', 'citations'],
+          propertyOrdering: ['sceneNumber', 'visual', 'motion', 'citations'],
         },
-        required: ['sceneNumber', 'visual', 'motion', 'citations'],
-        propertyOrdering: ['sceneNumber', 'visual', 'motion', 'citations'],
       },
     },
-  },
-  required: ['scenes'],
-};
+    required: ['scenes'],
+  };
+}
 
 /**
  * First-pass schema: the production bible.
