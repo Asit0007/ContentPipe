@@ -55,6 +55,8 @@ Hence three passes in `/api/script`, each with a small schema. **Do not consolid
 
 Related: arrays need explicit `minItems`. Without it the model returns one scene and stops.
 
+A second, harder failure mode on the same root cause: it's not just about field *breadth*, array *length* has its own ceiling, and this one is a hard `400` rather than a silent omission. `scriptSceneItemSchema` (the narrative pass's per-scene shape, which includes `infographic` — three more nested arrays-of-objects on top of `visual`/`motion`) gets an immediate `400 INVALID_ARGUMENT` from every model in `TEXT_MODELS` the instant a wrapping array's `maxItems` reaches 4 — measured live 2026-09-19, reproducible regardless of `minItems` or whether `min === max`, confirmed even against the schema exactly as it shipped before long-form chunking existed (it was always there, just never exercised past 6 items). Removing just `infographic` let `maxItems: 6` succeed again. This is why `/api/script`'s narrative pass generates scenes 3 at a time (`NARRATIVE_SCENES_PER_CHUNK` in `server.ts`) while the art-direction pass, whose schema lacks `infographic`, stays at 6 (`VISUAL_DIRECTION_SCENES_PER_CHUNK`). Don't raise either without retesting live first.
+
 ### Grounding and structured output are mutually exclusive
 
 `tools: [{google_search: {}}]` cannot be combined with `responseMimeType: 'application/json'` + `responseSchema`. If grounding is ever enabled it needs two calls: grounded free-form generation, then a structuring pass. Currently moot — see quota below.
@@ -117,10 +119,12 @@ PORT=3100 npm run dev
 curl -s -X POST localhost:3100/api/research -H 'Content-Type: application/json' \
   -d '{"messageText":"...","sourceUrls":["https://..."]}' > /tmp/r.json
 
-# then /api/plan with {researchData}, /api/script with {videoPlan, researchData}
+# then /api/plan with {researchData, targetDurationSec}, /api/script with {videoPlan, researchData}
+# targetDurationSec defaults to 60 if omitted (short-form) — pass e.g. 540 to exercise the
+# chunked long-form path in /api/script instead of the single-chunk short-form one.
 ```
 
-Check the server log for coverage lines — `[Production Bible] N character(s) defined` and `[Art Director] visual direction applied to N/M scenes`. Partial coverage means a pass is degrading.
+Check the server log for coverage lines — `[Production Bible] N character(s) defined`, `[Script Agent] generated N/M scenes across K chunk(s)`, and `[Art Director] visual direction applied to N/M scenes across K chunk(s)`. Partial coverage means a pass (or one chunk of it) is degrading.
 
 Then confirm structure holds:
 

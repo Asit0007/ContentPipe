@@ -45,10 +45,11 @@ Telegram / news input
   /api/research ──── fetches your source URLs, extracts article text,
         │            builds a dossier with per-fact citations
         ▼
-  /api/plan ─────── narrative beats, hook strategy, pacing
+  /api/plan ─────── narrative beats, hook strategy, pacing, target duration
         │
         ▼
-  /api/script ───── three passes (see below)
+  /api/script ───── three passes, scenes generated in duration-sized chunks
+        │            (see below)
         │
         ▼
   /api/export/markdown ── writes the brief to exports/
@@ -73,12 +74,16 @@ Not one call, deliberately.
 | Pass | Produces | Schema |
 |---|---|---|
 | 1. Production bible | `characterBible`, `styleGuide` | `productionBibleSchema` |
-| 2. Narrative | scenes: narration, cinematography, infographics | `scriptSchema` |
-| 3. Art direction | per scene: `visual`, `motion`, `citations` | `visualDirectionSchema` |
+| 2. Narrative | scenes: narration, cinematography, infographics | `buildScriptScenesSchema(min, max)` |
+| 3. Art direction | per scene: `visual`, `motion`, `citations` | `buildVisualDirectionSchema(count)` |
 
 **Why split:** on a single combined schema, models return `finishReason: STOP` while silently omitting required fields. Observed with `gemini-3.6-flash`: `characterBible`, `styleGuide`, `visual` and `motion` all absent despite being listed in `required`. The same fields come back reliably when each pass gets a small, focused schema. If you merge these passes back together, expect fields to start disappearing.
 
 Array bounds matter too — without `minItems` on `scenes`, the model returns a single scene and stops.
+
+**Passes 2 and 3 are themselves chunked**, not one call each. `videoPlan.targetDurationSec` (a real request parameter on `/api/plan` — previously hardcoded to 60 regardless of input) is translated into a target scene count, and the narrative pass writes it 3 scenes at a time, carrying the last few scenes forward as prompt context so a long-form script stays continuous across calls. The art-direction pass batches 6 scenes per call. Those two chunk sizes are **not interchangeable, and not arbitrary**: pass 2's per-scene schema includes `infographic` (three more nested arrays on top of `visual`/`motion`), and measured live 2026-09-19, that schema gets a hard `400 INVALID_ARGUMENT` from every model the instant a chunk's `maxItems` reaches 4 — reproducible regardless of `minItems`, confirmed even against the schema exactly as it shipped before this chunking existed. Pass 3's schema has no `infographic` and isn't capped the same way. Don't raise either chunk size without retesting live first — see `scriptSceneItemSchema`'s docstring in `server/schemas.ts` and `NARRATIVE_SCENES_PER_CHUNK`/`VISUAL_DIRECTION_SCENES_PER_CHUNK` in `server.ts`.
+
+A chunk that fails (quota exhaustion, a weak fallback-tier model going degenerate under load — both observed live) doesn't fail the whole script; whatever scenes already generated are kept and returned. Check `estimatedTotalDuration` against what was actually requested rather than assuming a match.
 
 ### Character consistency
 
