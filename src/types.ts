@@ -1,5 +1,6 @@
 export type AspectRatio = '16:9' | '9:16' | '1:1';
 export type ImageResolution = '1K' | '2K' | '4K';
+export type ImageProviderId = 'gemini' | 'pollinations' | 'placeholder';
 export type VoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
 export type WorkflowStep = 'telegram' | 'research' | 'plan' | 'script' | 'studio' | 'ip_branding';
 
@@ -16,6 +17,8 @@ export interface TelegramMessage {
   sourceUrl?: string;
 }
 
+export type FetchVia = 'direct' | 'jina' | 'wayback';
+
 export interface RetrievedSource {
   /** Stable tag used in prompts and citations, e.g. "S1". */
   id: string;
@@ -24,6 +27,12 @@ export interface RetrievedSource {
   wordCount: number;
   fetchedAt: string;
   ok: boolean;
+  /** How the text was obtained. Absent on pre-ladder data; treat as 'direct'. */
+  via?: FetchVia;
+  /** The URL actually requested — the reader-proxy or archive URL, not `url`. */
+  retrievalUrl?: string;
+  /** ISO timestamp of the archived capture. Only set when `via === 'wayback'`. */
+  snapshotDate?: string;
   error?: string;
 }
 
@@ -107,6 +116,9 @@ export interface ResearchData {
   groundingSources?: Array<{
     title: string;
     url: string;
+    /** How this source was retrieved. Absent on pre-ladder data; treat as 'direct'. */
+    via?: FetchVia;
+    snapshotDate?: string;
   }>;
   /** Documents actually retrieved and read for this dossier. */
   retrievedSources?: RetrievedSource[];
@@ -203,6 +215,11 @@ export interface VideoScriptScene {
   wordCount?: number;
   infographic?: SceneInfographic;
   generatedImageUrl?: string;
+  /** Which backend actually produced generatedImageUrl. Absent = not yet generated. */
+  imageProvider?: ImageProviderId;
+  imageProviderLabel?: string;
+  /** True when generatedImageUrl is a generated placeholder, not real artwork. */
+  imageIsPlaceholder?: boolean;
   generatedAudioBase64?: string;
   isAudioLoading?: boolean;
   isImageLoading?: boolean;

@@ -15,6 +15,7 @@ import {
 } from './server/fallbackGenerators';
 import { researchSchema, planSchema, scriptSchema, visualDirectionSchema, productionBibleSchema } from './server/schemas';
 import { extractUrls, fetchSources, buildSourceContext } from './server/sourceFetcher';
+import { generateSceneImage } from './server/imageProviders';
 import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import {
   generateNotebookLMAudioService,
@@ -181,8 +182,21 @@ app.post('/api/research', async (req, res) => {
     wordCount: f.wordCount,
     fetchedAt: f.fetchedAt,
     ok: f.ok,
+    via: f.via,
+    ...(f.retrievalUrl ? { retrievalUrl: f.retrievalUrl } : {}),
+    ...(f.snapshotDate ? { snapshotDate: f.snapshotDate } : {}),
     ...(f.error ? { error: f.error } : {}),
   }));
+  // Shared by the success and fallback paths below so both stay in sync — a
+  // rescued source (via !== 'direct') must be disclosed here too, not just in
+  // the prompt and the exported brief.
+  const groundingSources = usable.map((f) => ({
+    title: f.title || f.url,
+    url: f.url,
+    via: f.via,
+    ...(f.snapshotDate ? { snapshotDate: f.snapshotDate } : {}),
+  }));
+  const sourcesUnavailable = usable.length === 0;
 
   try {
     const ai = getAIClient();
@@ -253,8 +267,8 @@ Return strictly a valid JSON object matching this schema:
     // out of the input (or hardcoded news.ycombinator.com) and presented it as
     // a source the agent had consulted, which it never had.
     parsedData.retrievedSources = retrievedSources;
-    parsedData.groundingSources = usable.map((f) => ({ title: f.title || f.url, url: f.url }));
-    if (parsedData.groundingSources.length === 0) {
+    parsedData.groundingSources = groundingSources;
+    if (sourcesUnavailable) {
       parsedData.sourcesUnavailable = true;
     }
 
@@ -262,7 +276,14 @@ Return strictly a valid JSON object matching this schema:
   } catch (error: any) {
     console.error('[Research Agent] Exception caught, providing synthesized dossier:', error);
     const fallback = generateFallbackResearch(messageText, channelName);
-    res.json({ ...fallback, retrievedSources });
+    // Same source reporting as the success path. A synthesized dossier must not
+    // inherit invented sources, and must still disclose what was actually read.
+    res.json({
+      ...fallback,
+      retrievedSources,
+      groundingSources,
+      ...(sourcesUnavailable ? { sourcesUnavailable: true } : {}),
+    });
   }
 });
 
@@ -422,7 +443,15 @@ async function applyVisualDirection(ai: GoogleGenAI, script: any, researchData: 
   const style = script.styleGuide || {};
   const sourceIds = (researchData?.retrievedSources || [])
     .filter((r: any) => r.ok)
-    .map((r: any) => `${r.id} = ${r.title} (${r.url})`);
+    .map((r: any) => {
+      const provenance =
+        r.via === 'wayback'
+          ? ` [archive snapshot ${r.snapshotDate || 'unknown date'}]`
+          : r.via === 'jina'
+          ? ' [via reader proxy]'
+          : '';
+      return `${r.id} = ${r.title} (${r.url})${provenance}`;
+    });
 
   const prompt = `You are the art director and cinematographer for this video. The script is written; your job is the visual layer only.
 
@@ -715,7 +744,8 @@ app.post('/api/tts', async (req, res) => {
   }
 });
 
-// 5. High-Quality Image Generation: Uses model 'gemini-2.5-flash-image' / 'gemini-3.1-flash-image' with smart fallback
+// 5. Scene image generation: Gemini -> Pollinations (free, no key) -> SVG placeholder.
+// See server/imageProviders.ts for why: Gemini image models have zero free-tier quota.
 app.post('/api/generate-image', async (req, res) => {
   const { prompt, aspectRatio = '16:9', imageSize = '1K' } = req.body;
   if (!prompt) {
@@ -729,48 +759,20 @@ app.post('/api/generate-image', async (req, res) => {
 
   try {
     const ai = getAIClient();
-    let imageUrl: string | null = null;
-
-    const imgModels = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'];
-    for (const model of imgModels) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: {
-            parts: [{ text: prompt }],
-          },
-          config: {
-            imageConfig: {
-              aspectRatio: targetAspectRatio,
-              imageSize: targetSize,
-            },
-          },
-        });
-
-        const parts = response?.candidates?.[0]?.content?.parts || [];
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            const mime = part.inlineData.mimeType || 'image/png';
-            imageUrl = `data:${mime};base64,${part.inlineData.data}`;
-            break;
-          }
-        }
-        if (imageUrl) break;
-      } catch (imgErr: any) {
-        console.warn(`[Image Agent] Model ${model} notice:`, imgErr?.message || imgErr);
-      }
-    }
-
-    if (!imageUrl) {
-      const fallbackUrl = generateFallbackImage(prompt, targetAspectRatio);
-      return res.json({ imageUrl: fallbackUrl, imageSize: targetSize, aspectRatio: targetAspectRatio, isQuotaFallback: true });
-    }
-
-    res.json({ imageUrl, imageSize: targetSize, aspectRatio: targetAspectRatio });
+    const result = await generateSceneImage(ai, { prompt, aspectRatio: targetAspectRatio, imageSize: targetSize });
+    res.json({ ...result, imageSize: targetSize, aspectRatio: targetAspectRatio });
   } catch (error: any) {
-    console.log('[Image Agent] Exception handled, returning visual artwork.');
+    console.log('[Image Agent] Exception handled, returning placeholder artwork.');
     const fallbackUrl = generateFallbackImage(prompt, targetAspectRatio);
-    res.json({ imageUrl: fallbackUrl, imageSize: targetSize, aspectRatio: targetAspectRatio, isQuotaFallback: true });
+    res.json({
+      imageUrl: fallbackUrl,
+      provider: 'placeholder',
+      providerLabel: 'Placeholder',
+      isPlaceholder: true,
+      isQuotaFallback: true,
+      imageSize: targetSize,
+      aspectRatio: targetAspectRatio,
+    });
   }
 });
 

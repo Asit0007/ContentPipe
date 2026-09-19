@@ -223,16 +223,6 @@ export function generateFallbackResearch(messageText: string, channelName: strin
         { dateOrPhase: 'Phase 2: Weaponization', event: 'Automated exploit scripts emerge in the wild scanning exposed enterprise ports.' },
         { dateOrPhase: 'Phase 3: Incident Response', event: 'DevOps and SecOps teams deploy emergency patches, rotate secrets, and audit access logs.' },
       ],
-      groundingSources: [
-        {
-          title: parsed.url ? 'The Hacker News Security Disclosure' : 'Hacker News Security Advisory',
-          url: parsed.url || 'https://thehackernews.com',
-        },
-        {
-          title: 'Official Security Advisory & Patch Notes',
-          url: 'https://news.ycombinator.com',
-        },
-      ],
       isQuotaFallback: true,
     };
   }
@@ -294,10 +284,6 @@ export function generateFallbackResearch(messageText: string, channelName: strin
       { dateOrPhase: 'Phase 1: Initial Release', event: `${parsed.subject} details announced, catching the attention of tech enthusiasts.` },
       { dateOrPhase: 'Phase 2: Viral Discussion', event: 'Frontpage ranking triggers thousands of reviews, benchmarks, and community reactions.' },
       { dateOrPhase: 'Phase 3: Production Reality', event: 'Engineering teams audit trade-offs and evaluate adoption strategies.' },
-    ],
-    groundingSources: [
-      { title: parsed.headline, url: parsed.url || 'https://news.ycombinator.com' },
-      { title: 'Technical Discussion & Analysis', url: 'https://news.ycombinator.com' },
     ],
     isQuotaFallback: true,
   };

@@ -23,7 +23,7 @@ Single Express app (`server.ts`) that also serves the Vite/React front end in mi
 /api/plan      → narrative beats
 /api/script    → three passes: production bible → narrative → art direction
 /api/tts       → narration audio
-/api/generate-image → scene stills (blocked on free tier, see below)
+/api/generate-image → scene stills (Gemini -> Pollinations -> SVG placeholder, see below)
 /api/export/markdown → writes the brief to exports/
 /api/chat, /api/ip-names, /api/notebooklm-* → side features
 ```
@@ -65,10 +65,21 @@ Related: arrays need explicit `minItems`. Without it the model returns one scene
 |---|---|
 | Text | works (transient 503s on 3.x Flash; the chain absorbs them) |
 | TTS | works |
-| Image generation | **`limit: 0`** — no quota exists at all |
+| Gemini image generation | **`limit: 0`** — no quota exists at all |
 | Google Search grounding | **429 immediately** |
 
-A 429 saying `limit: 0` is not something to retry or work around; it needs billing. Don't add backoff for it.
+A 429 saying `limit: 0` is not something to retry or work around on the Gemini side; it needs billing. Don't add backoff for it. But image generation itself is no longer blocked end-to-end — `server/imageProviders.ts` falls through to Pollinations (free, no key) before the SVG placeholder. Grounding stays genuinely unaddressed and is not planned even with billing: fetching real URLs and disclosing exactly what was read (see the rescue ladder below) already beats grounding's opaque citations, for free.
+
+### The fetch rescue ladder, and its two live gotchas
+
+`server/sourceFetcher.ts` doesn't give up after one failed fetch. It escalates: direct → [r.jina.ai](https://r.jina.ai) reader proxy → Wayback Machine snapshot, stopping at first success. Whichever rung wins is recorded as `via` and disclosed everywhere a source is shown (prompt, UI, exported brief) — a rescued source must never look like an ordinary live read.
+
+Two things cost real debugging time building this and are worth knowing up front:
+
+- **r.jina.ai bot-checks a browser-spoofing `User-Agent`.** The same Chrome UA this repo already uses for direct fetches (because *that* UA is needed to get past news sites) gets a Cloudflare "Just a moment…" 403 from r.jina.ai's own edge. An honest, non-browser UA (`ContentPipe-SourceFetcher/1.0`) passes with a plain 200. The two rungs need *opposite* UA strategies — don't unify them.
+- **The Wayback Machine's own API (`archive.org/wayback/available`) rate-limits aggressively** — 429s were observed repeatedly in ordinary manual testing, not under load. Treat it as a last-resort rung that will often fail, never as a dependency, and never retry a 429 there.
+
+**Rejected as a discovery source: Google News RSS.** `<link>` entries are opaque `news.google.com/rss/articles/CBMi…` tokens; the redirect target is a client-rendered Angular shell with zero publisher URLs recoverable from 598 KB of HTML (verified 2026-09-17). Don't re-attempt this path. HN Algolia and publisher RSS feeds both return direct fetchable URLs and are the better option if a discovery stage is ever built.
 
 ### Environment loading
 

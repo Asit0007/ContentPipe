@@ -122,12 +122,12 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
         opCount++;
       }
 
-      // 2. Generate 4K Visual Scene
+      // 2. Generate Visual Scene
       if (!scene.generatedImageUrl) {
         setBatchProgress({
           current: ++opCount,
           total: totalOps,
-          msg: `Rendering 4K Visual for Scene ${scene.sceneNumber}...`,
+          msg: `Rendering Visual for Scene ${scene.sceneNumber}...`,
         });
         try {
           const res = await fetch('/api/generate-image', {
@@ -141,7 +141,13 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
           });
           const data = await res.json();
           if (data.imageUrl) {
-            scenes[i] = { ...scenes[i], generatedImageUrl: data.imageUrl };
+            scenes[i] = {
+              ...scenes[i],
+              generatedImageUrl: data.imageUrl,
+              imageProvider: data.provider,
+              imageProviderLabel: data.providerLabel,
+              imageIsPlaceholder: !!data.isPlaceholder,
+            };
           }
         } catch (e) {
           console.warn('Image error in batch:', e);
@@ -676,14 +682,25 @@ ${videoScript.scenes
               >
                 {/* Visual Scene Background (AI Image or Dynamic Procedural Cyber Canvas) */}
                 {currentScene.generatedImageUrl ? (
-                  <img
-                    src={currentScene.generatedImageUrl}
-                    alt={currentScene.title}
-                    key={currentScene.id}
-                    className={`w-full h-full object-cover transition-transform duration-[8000ms] ease-out ${
-                      isPlaying ? 'scale-110 translate-x-1 -translate-y-1' : 'scale-100'
-                    }`}
-                  />
+                  <>
+                    <img
+                      src={currentScene.generatedImageUrl}
+                      alt={currentScene.title}
+                      key={currentScene.id}
+                      className={`w-full h-full object-cover transition-transform duration-[8000ms] ease-out ${
+                        isPlaying ? 'scale-110 translate-x-1 -translate-y-1' : 'scale-100'
+                      }`}
+                    />
+                    {currentScene.imageIsPlaceholder ? (
+                      <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-300 backdrop-blur-sm">
+                        🧩 Placeholder — no image quota
+                      </span>
+                    ) : currentScene.imageProviderLabel ? (
+                      <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-zinc-900/70 border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300 backdrop-blur-sm">
+                        🖼️ {currentScene.imageProviderLabel}
+                      </span>
+                    ) : null}
+                  </>
                 ) : (
                   <div className="relative w-full h-full">
                     <canvas
@@ -919,9 +936,15 @@ ${videoScript.scenes
                             </span>
                           )}
                           {scene.generatedImageUrl ? (
-                            <span className="text-sky-400 font-semibold" title="4K Visual Ready">
-                              🖼️ 4K Scene
-                            </span>
+                            scene.imageIsPlaceholder ? (
+                              <span className="text-amber-400 font-semibold" title="No image quota — showing a placeholder">
+                                🧩 Placeholder
+                              </span>
+                            ) : (
+                              <span className="text-sky-400 font-semibold" title={`Visual ready via ${scene.imageProviderLabel || 'AI'}`}>
+                                🖼️ {scene.imageProviderLabel || 'Scene'}
+                              </span>
+                            )
                           ) : (
                             <span className="text-zinc-500" title="Procedural Visual">
                               ⚡ Cyber Canvas

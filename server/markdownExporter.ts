@@ -79,21 +79,35 @@ export function renderScriptMarkdown(payload: {
 
   // ---- Sources, stated up front so claims are checkable ----
   const retrieved: any[] = research?.retrievedSources || [];
+  const readSources = retrieved.filter((r) => r.ok);
+  const rescuedSources = readSources.filter((r) => r.via && r.via !== 'direct');
+  const retrievalLabel = (r: any): string => {
+    if (!r.ok) return '—';
+    if (!r.via || r.via === 'direct') return 'live';
+    if (r.via === 'jina') return 'reader proxy';
+    return `archive snapshot${r.snapshotDate ? ` (${r.snapshotDate.slice(0, 10)})` : ''}`;
+  };
+  out.push('## Sources');
+  out.push('');
   if (retrieved.length) {
-    out.push('## Sources');
-    out.push('');
     out.push(
       table(
-        ['ID', 'Title', 'URL', 'Status'],
+        ['ID', 'Title', 'URL', 'Status', 'Retrieval'],
         retrieved.map((r) => [
           r.id,
           r.title || '—',
           r.url,
           r.ok ? `read (${r.wordCount} words)` : `NOT READ — ${r.error || 'unavailable'}`,
+          retrievalLabel(r),
         ])
       )
     );
     out.push('');
+  }
+  if (readSources.length === 0) {
+    out.push('> **No sources were retrieved for this script.** Every factual claim below is unverified model output. Do not publish without checking.');
+    out.push('');
+  } else {
     const failed = retrieved.filter((r) => !r.ok);
     if (failed.length) {
       out.push(
@@ -101,11 +115,12 @@ export function renderScriptMarkdown(payload: {
       );
       out.push('');
     }
-  } else {
-    out.push('## Sources');
-    out.push('');
-    out.push('> **No sources were retrieved for this script.** Every factual claim below is unverified model output. Do not publish without checking.');
-    out.push('');
+    if (rescuedSources.length) {
+      out.push(
+        `> **${rescuedSources.length} source(s) above were not read live** — obtained via reader proxy or an archived snapshot after the direct fetch failed. See the Retrieval column; treat archived content as dated to its snapshot, not current.`
+      );
+      out.push('');
+    }
   }
 
   if (research?.factCitations?.length) {

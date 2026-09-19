@@ -58,9 +58,13 @@ Telegram / news input
 
 `/api/research` fetches every URL you supply (or any URL found in the pasted text), strips the HTML to prose, and feeds that into the prompt. Facts come back with `factCitations` mapping each claim to the source that supports it, and `retrievedSources` records exactly what was read — including what failed and why.
 
-If a page can't be fetched (paywall, JS-rendered, timeout) it is reported as `ok: false` rather than silently ignored, and the exported brief carries a warning banner. **A brief with no retrieved sources is unverified model output** and says so at the top.
+If a direct fetch fails (paywall, JS-rendered page, timeout) `server/sourceFetcher.ts` escalates through two rescue rungs before giving up: [r.jina.ai](https://r.jina.ai) (a free reader proxy that renders JS server-side) and then a Wayback Machine snapshot. Whichever rung succeeds is recorded as `via: 'direct' | 'jina' | 'wayback'` and disclosed everywhere the source is shown — the model prompt, the UI, and the exported brief's Retrieval column — because a rescued source must never be presented as an ordinary live read. Wayback's own API is aggressively rate-limited (429s observed in normal use), so it's a last resort, never a dependency.
 
-> **Not used: Google Search grounding.** The `google_search` tool has zero quota on the Gemini free tier — grounded calls 429 immediately while plain calls succeed. If you enable billing, adding it is a small change to `/api/research`; note that grounding and `responseSchema` are mutually exclusive, so it needs a second structuring call.
+If every rung fails, the source is reported as `ok: false` rather than silently ignored, and the exported brief carries a warning banner. **A brief with no retrieved sources is unverified model output** and says so at the top.
+
+> **Not used: Google Search grounding.** The `google_search` tool has zero quota on the Gemini free tier — grounded calls 429 immediately while plain calls succeed. If you enable billing, adding it is a small change to `/api/research`; note that grounding and `responseSchema` are mutually exclusive, so it needs a second structuring call. Grounding is also not planned even with billing: fetching and disclosing real URLs (above) already does better than grounding's opaque citations, for free.
+>
+> **Rejected as a discovery source: Google News RSS.** Its `<link>` entries are opaque `news.google.com/rss/articles/CBMi…` redirect tokens, and the redirect target is a client-rendered Angular shell with no publisher URL recoverable from the HTML — verified 2026-09-17. Don't re-attempt this path; HN Algolia (`hn.algolia.com/api/v1/search`) and publisher RSS feeds return direct, fetchable URLs and are the better free, key-free option if a discovery stage is added later.
 
 ### Script generation runs in three passes
 
@@ -123,10 +127,10 @@ Note that ListModels is not proof of access — `gemini-2.5-flash` appears in th
 |---|---|---|
 | Text generation | Works | Occasional `503` on 3.x Flash; the chain handles it |
 | TTS | Works | `gemini-3.1-flash-tts-preview` |
-| **Image generation** | **Blocked** | `limit: 0` on `generate_content_free_tier_requests` for every image model — not a rate limit, no quota exists. Falls back to placeholder SVGs. Needs billing. |
-| **Google Search grounding** | **Blocked** | 429 immediately. Needs billing. |
+| **Gemini image generation** | **Blocked** | `limit: 0` on `generate_content_free_tier_requests` for every image model — not a rate limit, no quota exists. Needs billing. |
+| **Google Search grounding** | **Blocked** | 429 immediately. Needs billing, and not planned even then — see [Research is real, within limits](#research-is-real-within-limits). |
 
-Image generation failing is expected on free tier; `isQuotaFallback: true` in the response means you got a placeholder, not artwork.
+`/api/generate-image` (`server/imageProviders.ts`) doesn't stop at Gemini: it falls through to [Pollinations](https://pollinations.ai), a free hosted diffusion endpoint that needs no API key, before finally falling back to a generated SVG placeholder. The response's `provider` field names which one actually produced the image (`'gemini' | 'pollinations' | 'placeholder'`), and `isPlaceholder: true` means you got a placeholder, not artwork — the UI badges this rather than presenting a placeholder as real art. Note scene prompts sent to Pollinations leave the machine to a third-party host; this is judged acceptable because prompts describe public news stories, not private data.
 
 ---
 
@@ -161,7 +165,8 @@ npm run lint     # tsc --noEmit
 server.ts                     Express app, all endpoints, model chain
 server/
   schemas.ts                  Gemini responseSchema definitions
-  sourceFetcher.ts            URL fetching + HTML-to-text extraction
+  sourceFetcher.ts            URL fetching, HTML-to-text extraction, and the direct -> jina -> wayback rescue ladder
+  imageProviders.ts           Scene image chain: Gemini -> Pollinations -> SVG placeholder
   markdownExporter.ts         Brief rendering + file writing
   fallbackGenerators.ts       Canned output when the API is unreachable
   notebooklmService.ts        Multi-voice podcast audio

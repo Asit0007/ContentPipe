@@ -178,6 +178,9 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
       handleSceneChange(scene.id, {
         generatedImageUrl: data.imageUrl,
+        imageProvider: data.provider,
+        imageProviderLabel: data.providerLabel,
+        imageIsPlaceholder: !!data.isPlaceholder,
         isImageLoading: false,
       });
       playWebAudioSFX('pop');
@@ -705,9 +708,15 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                   )}
 
                   {scene.generatedImageUrl ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-sky-400 border border-sky-500/20">
-                      <CheckCircle2 className="h-3 w-3" /> Image Ready
-                    </span>
+                    scene.imageIsPlaceholder ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300 border border-amber-500/20" title="No image quota — this is a generated placeholder, not artwork">
+                        🧩 Placeholder
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-sky-400 border border-sky-500/20" title={scene.imageProviderLabel ? `Generated via ${scene.imageProviderLabel}` : undefined}>
+                        <CheckCircle2 className="h-3 w-3" /> Image Ready
+                      </span>
+                    )
                   ) : (
                     <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-400">
                       Image Pending
@@ -870,9 +879,18 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                           alt={`Scene ${scene.sceneNumber}`}
                           className="w-full h-full object-cover"
                         />
+                        {scene.imageIsPlaceholder ? (
+                          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                            🧩 Placeholder — no image quota
+                          </span>
+                        ) : scene.imageProviderLabel ? (
+                          <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-zinc-900/70 border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300">
+                            🖼️ {scene.imageProviderLabel}
+                          </span>
+                        ) : null}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex items-end justify-between">
                           <span className="text-[10px] font-bold text-white bg-black/60 px-2 py-0.5 rounded">
-                            {selectedResolution} Render
+                            {scene.imageIsPlaceholder ? 'Placeholder' : `${selectedResolution} Render`}
                           </span>
                           <a
                             href={scene.generatedImageUrl}

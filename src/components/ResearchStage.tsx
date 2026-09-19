@@ -199,21 +199,40 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
       {researchData.groundingSources && researchData.groundingSources.length > 0 && (
         <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-4 text-xs text-zinc-400">
           <span className="font-bold text-zinc-300 uppercase tracking-wider block mb-2">
-            Google Search Grounding Sources
+            Sources Actually Read
           </span>
           <div className="flex flex-wrap gap-2">
-            {researchData.groundingSources.map((source, idx) => (
-              <a
-                key={idx}
-                href={source.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-md bg-zinc-900 border border-zinc-800 px-2.5 py-1 text-zinc-300 hover:text-orange-300 hover:border-orange-500/40 transition-colors"
-              >
-                <ExternalLink className="h-3 w-3" />
-                <span className="truncate max-w-[200px]">{source.title}</span>
-              </a>
-            ))}
+            {researchData.groundingSources.map((source, idx) => {
+              const rescued = source.via && source.via !== 'direct';
+              const viaLabel =
+                source.via === 'jina'
+                  ? 'via reader proxy — direct fetch failed'
+                  : source.via === 'wayback'
+                  ? `Wayback snapshot${source.snapshotDate ? ` (${source.snapshotDate.slice(0, 10)})` : ''} — direct fetch failed`
+                  : undefined;
+              return (
+                <a
+                  key={idx}
+                  href={source.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={viaLabel}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 transition-colors ${
+                    rescued
+                      ? 'bg-amber-950/30 border-amber-500/30 text-amber-300 hover:text-amber-200 hover:border-amber-500/60'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-orange-300 hover:border-orange-500/40'
+                  }`}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  <span className="truncate max-w-[200px]">{source.title}</span>
+                  {rescued && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">
+                      {source.via === 'wayback' ? 'archived' : 'proxied'}
+                    </span>
+                  )}
+                </a>
+              );
+            })}
           </div>
         </div>
       )}
