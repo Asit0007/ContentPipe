@@ -3,6 +3,7 @@ import { generateGeminiJson, TEXT_MODELS } from './gemini';
 import { buildScriptScenesSchema, buildVisualDirectionSchema, productionBibleSchema } from './schemas';
 import { isRetryableError } from './quota';
 import type { RunJournal } from './runJournal';
+import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
 
 // The scriptwriting pass (generateSceneChunk) and the art-direction pass
 // (generateVisualDirectionChunk) generate scenes in batches instead of the
@@ -106,7 +107,7 @@ export async function generateProductionBible(
   }
   const isDocumentary = videoPlan?.tone === 'Deep Dive Documentary';
   const prompt = `You are the production designer for ${isDocumentary ? 'an investigative cybersecurity documentary' : 'a short infotainment video'}.
-Show: "${channelBrandName || 'The Orange Thread'}"
+Show: "${channelBrandName || DEFAULT_CHANNEL_BRAND}"
 Story: "${videoPlan?.title || researchData?.topicTitle || 'the story'}"
 Tone: ${videoPlan?.tone || 'Witty Tech & Sarcastic'}
 Summary: ${researchData?.summary || ''}
@@ -333,7 +334,7 @@ async function generateSceneChunk(
     : 'You write the sharpest, most viral infotainment scripts on the internet with cinematic visual cues and brilliant narration. Output valid JSON strictly grounded in the topic.';
 
   const prompt = `${persona}
-Brand Identity / Show Name: "${channelBrandName || 'The Orange Thread'}"
+Brand Identity / Show Name: "${channelBrandName || DEFAULT_CHANNEL_BRAND}"
 
 Video Blueprint Plan:
 ${JSON.stringify(videoPlan, null, 2)}

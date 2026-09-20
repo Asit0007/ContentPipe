@@ -37,6 +37,7 @@ import {
 } from '../utils/audioUtils';
 import { NotebookLMStudio } from './NotebookLMStudio';
 import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
+import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
 
 interface VideoStudioProps {
   videoScript: VideoScript;
@@ -425,7 +426,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
     const md = `# ${videoScript.title}
 **Target Platform:** ${videoScript.targetPlatform}
 **Estimated Duration:** ~${videoScript.estimatedTotalDuration}s
-**Channel IP Brand:** ${activeIp ? activeIp.name : 'HN Infotainment'}
+**Channel IP Brand:** ${activeIp ? activeIp.name : DEFAULT_CHANNEL_BRAND}
 
 ---
 
@@ -731,10 +732,10 @@ ${videoScript.scenes
                 <div className="absolute top-4 left-4 right-4 flex items-center justify-between text-xs text-white z-10">
                   <div className="flex items-center gap-2">
                     <div className="flex h-6 w-6 items-center justify-center rounded-md bg-orange-600 font-bold text-[11px] shadow">
-                      Y
+                      {(activeIp ? activeIp.name : DEFAULT_CHANNEL_BRAND).charAt(0).toUpperCase()}
                     </div>
                     <span className="font-bold tracking-tight text-white drop-shadow-md">
-                      {activeIp ? activeIp.name : 'The Orange Thread'}
+                      {activeIp ? activeIp.name : DEFAULT_CHANNEL_BRAND}
                     </span>
                   </div>
 

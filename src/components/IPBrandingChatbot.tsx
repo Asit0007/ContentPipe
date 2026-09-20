@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Sparkles, MessageSquare, Send, Bot, User, Trash2, CheckCircle2, Copy, Flame, Layers, Radio, Cpu, RefreshCw, X, ArrowRight } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { IPBranding, ChatMessage } from '../types';
+import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
 
 interface IPBrandingChatbotProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export const IPBrandingChatbot: React.FC<IPBrandingChatbotProps> = ({
       role: 'model',
       content: `👋 Welcome! I am your AI IP Brand Strategist & Infotainment Director.
 
-I specialize in brainstorming viral names, visual identities, show formats, and signature hooks for your Hacker News infotainment channels (like *The Orange Thread*, *Kernel Panic Daily*, *Show HN Express*, etc.).
+I specialize in brainstorming names, visual identities, show formats, and signature hooks for technical and security channels — and I will not hand you someone else's brand: no borrowed publication name, no borrowed signature colour.
 
 How can I help you build a dominant tech media brand today?`,
       timestamp: Date.now(),
@@ -40,14 +41,14 @@ How can I help you build a dominant tech media brand today?`,
   const [curatedIps, setCuratedIps] = useState<IPBranding[]>([
     {
       id: 'ip-1',
-      name: 'The Orange Thread',
-      tagline: 'Unfiltered Hacker News breakdowns for the curious engineer.',
-      hookLine: 'What the top 1% of developers are arguing about right now.',
-      vibe: 'Sleek retro-cyberpunk terminal with warm YC-orange glowing accents',
-      targetAudience: 'Software engineers, startup founders, CS students, and tech enthusiasts',
-      mascotOrVisualIdentity: 'A vintage 1980s mainframe CRT monitor displaying live animated ASCII art',
-      suggestedHandle: '@TheOrangeThread',
-      whyItWorks: 'Direct homage to Hacker News signature color and comment threads, instantly recognizable in tech circles.',
+      name: DEFAULT_CHANNEL_BRAND,
+      tagline: "What the breach actually touched, from the operator's chair.",
+      hookLine: 'The incident, the mechanism, and what it changes in your stack on Monday.',
+      vibe: 'Restrained terminal minimalism: mono type, one accent colour, no gradients',
+      targetAudience: 'Security engineers, SREs, platform teams and technical founders',
+      mascotOrVisualIdentity: 'Concentric rings spreading across an architecture diagram — the blast radius itself',
+      suggestedHandle: '@blastradius',
+      whyItWorks: 'Names the question defenders actually ask, and owns the operator angle instead of the hacker aesthetic.',
     },
     {
       id: 'ip-2',
@@ -69,7 +70,7 @@ How can I help you build a dominant tech media brand today?`,
       targetAudience: 'Frontend devs, Rustaceans, indie hackers, and framework enthusiasts',
       mascotOrVisualIdentity: 'A minimalist 3D neon crab (Ferris) typing on a mechanical keyboard',
       suggestedHandle: '@900LineShow',
-      whyItWorks: 'References the legendary "rewrote in Rust in 900 lines" Show HN archetype.',
+      whyItWorks: 'References the "someone rewrote it in 900 lines" archetype every engineer recognises.',
     },
     {
       id: 'ip-4',
@@ -173,7 +174,7 @@ How can I help you build a dominant tech media brand today?`,
       const res = await fetch('/api/ip-names', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topicContext: topicContext || 'Hacker News breaking stories' }),
+        body: JSON.stringify({ topicContext: topicContext || 'breaking security and infrastructure stories' }),
       });
       const data = await res.json();
       if (Array.isArray(data) && data.length > 0) {
@@ -197,8 +198,8 @@ How can I help you build a dominant tech media brand today?`,
   };
 
   const quickPrompts = [
-    'Suggest 5 catchy IP brand names for my Hacker News video channel',
-    'What visual aesthetic and color palette works best for HN infotainment?',
+    'Suggest 5 catchy IP brand names for my security video channel',
+    'What visual aesthetic and colour palette works best for incident breakdowns?',
     'Give me 3 punchy signature catchphrases for my video intros and outros',
     'How do I position my channel to go viral on YouTube Shorts and TikTok?',
   ];
@@ -381,7 +382,7 @@ How can I help you build a dominant tech media brand today?`,
           <div className="flex-1 p-6 overflow-y-auto space-y-6 bg-zinc-950">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-white">Curated Hacker News Media IPs</h3>
+                <h3 className="text-sm font-bold text-white">Curated Media IPs</h3>
                 <p className="text-xs text-zinc-400">
                   Select any brand identity to apply it across all video plans, intros, and scene scripts.
                 </p>

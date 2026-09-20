@@ -136,7 +136,7 @@ export async function generateNotebookLMAudioService(
     podcastStyle = 'deep_dive',
   } = options;
 
-  const topicTitle = researchData?.topicTitle || script?.title || 'Hacker News Deep Dive';
+  const topicTitle = researchData?.topicTitle || script?.title || 'Deep Dive';
   const topicSummary = researchData?.summary || script?.targetAudience || '';
   const apiKey = process.env.NOTEBOOKLM_API_KEY || process.env.GEMINI_API_KEY || '';
 

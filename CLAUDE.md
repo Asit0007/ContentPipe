@@ -125,6 +125,12 @@ When output looks generic or off-topic, check `isQuotaFallback` before debugging
 
 ## Conventions
 
+**The default channel brand lives in `shared/brand.ts` (`DEFAULT_CHANNEL_BRAND`, "Blast Radius").** Server prompts, the canned fallback script, and the UI's watermark / export headers all fall back to it when no `channelBrandName` is supplied — never hard-code a show name (the old fallbacks said "The Orange Thread", i.e. another site's colour, and a video's on-screen default said "HACKER NEWS BREAKDOWN"). It is imported by both `server/` and `src/`, so keep it dependency-free. The UI starts with **no** preset IP (`activeIp = null`), and the IP-brainstorming gallery, `/api/ip-names` and the chatbot now lead with the default brand instead of another publication's.
+
+**`server/brand.test.ts` is the guard.** It renders every canned fallback surface — plan, research, IP roster, podcast, chat replies, script, and the placeholder infographic SVG — and fails on any mention of a tool name or another publication. The one allowed exception is the dossier's "No Hacker News discussion was retrieved" sentence, which names the API it did *not* get data from. Hacker News is still a first-class **source** (`server/hnThread.ts`, `via: 'hn-api'`, the sentiment panel): naming it where it labels retrieved data is provenance, naming it anywhere else is a brand leak.
+
+**The `visualType` fill-in stays `'cyberpunk'`** in `server.ts`. `'terminal'`, `'diagram'` and `'headline'` are what the evidence-mix audit counts as real evidence, so defaulting a *missing* field to one of them would make a slideshow of AI stills score as sourced footage.
+
 **`src/types.ts` and `server/schemas.ts` are two descriptions of the same shapes.** Change both together. The schema constrains what the model emits; the types describe what the UI reads. Drift is silent.
 
 **New optional scene fields must stay optional in `src/types.ts`** (`visual?`, `motion?`, `citations?`). Scenes generated before a pass existed, or when a pass fails, won't have them, and every consumer must tolerate that. `visualPrompt` is the always-present fallback.

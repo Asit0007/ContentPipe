@@ -11,6 +11,7 @@ import { SAMPLE_TELEGRAM_MESSAGES } from './data/sampleMessages';
 import { PLAN_PRESETS, PlanPresetKey } from './data/planPresets';
 import { TelegramMessage, ResearchData, VideoPlan, VideoScript, IPBranding, WorkflowStep } from './types';
 import { AlertCircle } from 'lucide-react';
+import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
 
 export default function App() {
   const [currentStep, setCurrentStep] = useState<WorkflowStep>('telegram');
@@ -18,17 +19,8 @@ export default function App() {
   const [researchData, setResearchData] = useState<ResearchData | null>(null);
   const [videoPlan, setVideoPlan] = useState<VideoPlan | null>(null);
   const [videoScript, setVideoScript] = useState<VideoScript | null>(null);
-  const [activeIp, setActiveIp] = useState<IPBranding | null>({
-    id: 'ip-1',
-    name: 'The Orange Thread',
-    tagline: 'Unfiltered Hacker News breakdowns for the curious engineer.',
-    hookLine: 'What the top 1% of developers are arguing about right now.',
-    vibe: 'Sleek retro-cyberpunk terminal with warm YC-orange glowing accents',
-    targetAudience: 'Software engineers, startup founders, CS students, and tech enthusiasts',
-    mascotOrVisualIdentity: 'A vintage 1980s mainframe CRT monitor displaying live animated ASCII art',
-    suggestedHandle: '@TheOrangeThread',
-    whyItWorks: 'Direct homage to Hacker News signature color and comment threads.',
-  });
+  // No preset brand: an unchosen IP falls back to DEFAULT_CHANNEL_BRAND everywhere it is read.
+  const [activeIp, setActiveIp] = useState<IPBranding | null>(null);
 
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
   const [isGlobalGoogleExportOpen, setIsGlobalGoogleExportOpen] = useState(false);
@@ -118,7 +110,7 @@ export default function App() {
         body: JSON.stringify({
           videoPlan,
           researchData,
-          channelBrandName: activeIp?.name || 'The Orange Thread',
+          channelBrandName: activeIp?.name || DEFAULT_CHANNEL_BRAND,
         }),
       });
       const data = await response.json();
@@ -219,7 +211,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-zinc-900 bg-zinc-950 py-6 text-center text-xs text-zinc-600">
-        <p>Hacker News Infotainment Video Agent • Powered by Gemini 3.7 Flash, Gemini 3.1 Pro, Gemini Pro Image & Gemini TTS</p>
+        <p>News-to-Video Brief Agent • Powered by Gemini 3.7 Flash, Gemini 3.1 Pro, Gemini Pro Image & Gemini TTS</p>
       </footer>
 
       {/* IP Branding & Gemini Chatbot Modal */}

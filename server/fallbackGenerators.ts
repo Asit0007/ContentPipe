@@ -4,6 +4,7 @@
  * detects domain (Cybersecurity, AI, DevOps, Systems, Web, etc.), and generates
  * 100% accurate, topic-grounded research dossiers, video production plans, and scene scripts.
  */
+import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
 
 interface ParsedStoryTopic {
   headline: string;
@@ -155,7 +156,7 @@ const NO_HN_DISCUSSION = {
   topHnComments: [] as Array<{ author: string; comment: string; vibe: 'skeptical' | 'excited' | 'cynical' | 'insightful' }>,
 };
 
-export function generateFallbackResearch(messageText: string, channelName: string = 'HN Radar') {
+export function generateFallbackResearch(messageText: string, channelName: string = 'an unnamed source') {
   const parsed = parseStoryInput(messageText);
 
   if (parsed.domain === 'security') {
@@ -208,7 +209,7 @@ export function generateFallbackResearch(messageText: string, channelName: strin
   // Dynamic Generator for AI, Systems, Web, or General Tech
   return {
     topicTitle: parsed.headline,
-    oneLineHook: `Why ${parsed.subject} is sparking a viral debate across the entire Hacker News community.`,
+    oneLineHook: `Why ${parsed.subject} is sparking a debate across the engineering community.`,
     summary: `An investigative breakdown of the story shared in ${channelName}. Developers and industry veterans are dissecting ${parsed.coreMechanism}, evaluating real-world implications, and analyzing the fallout.`,
     coreTechExplanation: `Under the hood, this centers around ${parsed.coreMechanism}. The core engineering challenge lies in balancing performance, security, and developer ergonomics against edge-case reliability.`,
     hnCommunitySentiment: { ...NO_HN_DISCUSSION, topHnComments: [] },
@@ -286,12 +287,12 @@ export function generateFallbackPlan(researchData: any, targetFormat: string, ta
         keyTakeaway: 'Viewer feels enlightened and understands the mechanism',
       },
       {
-        act: 'Act 3: The Hacker News Drama',
+        act: 'Act 3: The Community Reaction',
         purpose: isSecurity
           ? 'Highlight the rapid in-the-wild weaponization and DevOps community panic.'
           : 'Quote the sharpest top comments and community debates.',
         durationSec: 14,
-        visualTone: 'Retro floating Hacker News discussion cards with animated upvote tickers',
+        visualTone: 'Floating discussion cards with animated reaction tickers',
         keyTakeaway: 'Relatable engineering humor and high-stakes drama',
       },
       {
@@ -326,8 +327,8 @@ export function generateFallbackPlan(researchData: any, targetFormat: string, ta
 }
 
 export function generateFallbackScript(videoPlan: any, researchData: any, channelBrandName: string) {
-  const brand = channelBrandName || 'The Orange Thread';
-  const title = videoPlan?.title || researchData?.topicTitle || 'Hacker News Infotainment Episode';
+  const brand = channelBrandName || DEFAULT_CHANNEL_BRAND;
+  const title = videoPlan?.title || researchData?.topicTitle || 'Untitled Episode';
   const lower = `${title} ${researchData?.summary || ''}`.toLowerCase();
   const isJfrog = lower.includes('jfrog') || lower.includes('artifactory') || lower.includes('token');
   const isSecurity = isJfrog || lower.includes('vulnerability') || lower.includes('exploit') || lower.includes('auth') || lower.includes('cve') || lower.includes('backdoor');
@@ -405,10 +406,10 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
           sceneNumber: 3,
           title: 'The 48-Hour Weaponization Wave',
           actPhase: 'The Flame War',
-          narration: `Within days of disclosure, automated exploit scripts flooded the web. On Hacker News, thousands of engineers are roasting the design decisions that left token generation endpoints exposed to the world.`,
+          narration: `Within days of disclosure, automated exploit scripts flooded the web. Across engineering forums, the design decisions that left token generation endpoints exposed are being pulled apart line by line.`,
           durationEst: 12,
-          cinematography: 'Floating 3D discussion cards rushing past the camera with glowing orange upvote tickers and security alerts',
-          visualPrompt: 'Hacker News comment cards and security advisory bulletins floating in dark cyberspace with orange upvote counters spinning wildly',
+          cinematography: 'Floating 3D discussion cards rushing past the camera with reaction tickers and security alerts',
+          visualPrompt: 'Anonymous comment cards and security advisory bulletins floating in dark cyberspace with reaction counters spinning wildly',
           visualType: 'terminal',
           onScreenText: 'WEAPONIZED IN 48 HOURS',
           soundEffect: 'Fast notification pings and forum chatter storm',
@@ -416,7 +417,7 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
           wordCount: 28,
           infographic: {
             type: 'sentiment_gauge',
-            title: 'HACKER NEWS THREAD SENTIMENT & COMMUNITY REACTION',
+            title: 'DISCUSSION THREAD SENTIMENT & COMMUNITY REACTION',
             badge: 'SAMPLE DATA',
             badgeColor: '#ff6600',
             summary: 'Urgent calls to audit CI/CD perimeters vs architecture design critique',
@@ -545,10 +546,10 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
           sceneNumber: 3,
           title: 'The Internet-Wide Panic',
           actPhase: 'The Flame War',
-          narration: `Within hours, automated exploit scanners lit up threat maps worldwide. On Hacker News, thousands of engineers are debating how this slipped through security reviews.`,
+          narration: `Within hours, automated exploit scanners lit up threat maps worldwide. Across engineering forums, the argument is how this slipped through security reviews at all.`,
           durationEst: 12,
           cinematography: 'Floating 3D comment cards rushing past the camera with glowing orange upvote tickers',
-          visualPrompt: 'Hacker News comment cards floating in dark cyberspace with orange upvote counters spinning wildly, retro terminal UI',
+          visualPrompt: 'Anonymous comment cards floating in dark cyberspace with reaction counters spinning wildly, retro terminal UI',
           visualType: 'terminal',
           onScreenText: 'SCANNERS LIGHT UP',
           soundEffect: 'Fast notification pings and forum chatter',
@@ -607,7 +608,7 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
         sceneNumber: 1,
         title: 'The 3-Second Scroll-Stopper',
         actPhase: 'Hook (0-5s)',
-        narration: `What if I told you the hottest story on Hacker News today is completely changing how developers think about modern software architecture?`,
+        narration: `What if I told you the most argued-about story in engineering today is completely changing how developers think about modern software architecture?`,
         durationEst: 9,
         cinematography: 'Extreme macro push-in on glowing amber CRT monitor with floating neon code particles',
         visualPrompt: 'A glowing retro-cyberpunk orange CRT monitor displaying breaking code in a dark server room, neon amber lighting, cinematic 8k render',
@@ -637,12 +638,12 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
         sceneNumber: 3,
         title: 'The Comment Section Erupts',
         actPhase: 'The Flame War',
-        narration: `Within hours of posting, the thread surged past fifteen hundred points. Half the community calls it visionary, while senior maintainers are frantically debating the trade-offs.`,
+        narration: `Within hours of posting, the thread was one of the busiest of the day. Half the community calls it visionary, while senior maintainers are debating the trade-offs.`,
         durationEst: 12,
         cinematography: 'Floating 3D comment cards rushing past the camera with glowing orange upvote tickers',
-        visualPrompt: 'Hacker News comment cards floating in dark cyberspace with orange upvote counters spinning wildly, retro terminal UI',
+        visualPrompt: 'Anonymous comment cards floating in dark cyberspace with reaction counters spinning wildly, retro terminal UI',
         visualType: 'terminal',
-        onScreenText: '1,500 UPVOTES IN HOURS',
+        onScreenText: 'THE THREAD ERUPTS',
         soundEffect: 'Fast notification pings and forum chatter',
         retentionNote: 'Social proof and polarizing debate builds emotional investment',
         wordCount: 24,
@@ -827,7 +828,7 @@ export function generateFallbackImage(prompt: string, aspectRatio: string = '16:
     infographicSvg = `
     <g transform="translate(${width * 0.5}, ${height * (is916 ? 0.46 : 0.44)})">
       <rect x="-240" y="-125" width="480" height="250" rx="16" fill="#121214" stroke="#f97316" stroke-width="2" />
-      <text x="-215" y="-95" fill="#f97316" font-family="sans-serif" font-size="12" font-weight="bold">HACKER NEWS BENCHMARK & COMMUNITY TELEMETRY</text>
+      <text x="-215" y="-95" fill="#f97316" font-family="sans-serif" font-size="12" font-weight="bold">BENCHMARK &amp; COMMUNITY TELEMETRY</text>
       
       <!-- Bar 1 -->
       <text x="-215" y="-60" fill="#e4e4e7" font-family="sans-serif" font-size="11" font-weight="semibold">Community Urgency Rating</text>
@@ -872,7 +873,7 @@ export function generateFallbackImage(prompt: string, aspectRatio: string = '16:
   <!-- Header Branding Badge -->
   <rect x="${width * 0.5 - 140}" y="35" width="280" height="34" rx="17" fill="#18181b" stroke="#f97316" stroke-width="1.5" />
   <circle cx="${width * 0.5 - 120}" cy="52" r="6" fill="#f97316" />
-  <text x="${width * 0.5}" y="57" fill="#ffffff" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" letter-spacing="1">HACKER NEWS INFOTAINMENT</text>
+  <text x="${width * 0.5}" y="57" fill="#ffffff" font-family="sans-serif" font-size="12" font-weight="bold" text-anchor="middle" letter-spacing="1">${DEFAULT_CHANNEL_BRAND.toUpperCase()}</text>
 
   <!-- Bottom Visual Prompt Card -->
   <rect x="${width * 0.06}" y="${height - 105}" width="${width * 0.88}" height="70" rx="14" fill="#09090b" fill-opacity="0.85" stroke="#27272a" stroke-width="1.5" />
@@ -888,11 +889,11 @@ export function generateFallbackChatReply(message: string, rolePreset: string) {
   if (rolePreset === 'ip_strategist') {
     return `🎯 **IP Brand Strategist Blueprint**:
 
-For a top-tier Hacker News & tech infotainment channel, here are 3 killer angles based on your prompt:
+For a technical / security video channel, here are 3 angles based on your prompt:
 
-1. **Brand Name**: **The Orange Thread** (@TheOrangeThread)
-   - *Signature Hook*: "What 1,000 senior engineers are arguing about on the frontpage right now."
-   - *Visual Motif*: Neon orange CRT terminals, animated retro code diffs, fast terminal glitches.
+1. **Brand Name**: **${DEFAULT_CHANNEL_BRAND}** (@${DEFAULT_CHANNEL_BRAND.toLowerCase().replace(/[^a-z0-9]/g, '')})
+   - *Signature Hook*: "What this breach actually touched — and what it touches in your stack."
+   - *Visual Motif*: Concentric rings over an architecture diagram, mono wordmark, one accent colour, no gradients.
 
 2. **Brand Name**: **Kernel Panic Daily** (@KernelPanicDaily)
    - *Signature Hook*: "The single commit that almost broke the global cloud."
@@ -915,24 +916,24 @@ Here is how to optimize retention for your current script:
   }
 
   return `🚀 **Rapid Fire Ideas**:
-- **Title 1**: *The 900-Line Code War That Broke Hacker News*
+- **Title 1**: *The 900-Line Code War That Split The Internet*
 - **Title 2**: *Why Senior Devs Are Terrified of This Solo Project*
-- **Title 3**: *We Audited the Most Upvoted Show HN of 2026*
-- **Visual Tip**: Use high-contrast orange and obsidian black with retro monospaced fonts for instant brand recognition.`;
+- **Title 3**: *We Audited the Most Hyped Side Project of 2026*
+- **Visual Tip**: One accent colour on obsidian black with a mono typeface, held consistently — recognition comes from repetition, not from more colours.`;
 }
 
 export function generateFallbackIpList(topicContext: string = '') {
   return [
     {
       id: 'ip-1',
-      name: 'The Orange Thread',
-      tagline: 'Unfiltered Hacker News breakdowns for the curious engineer.',
-      hookLine: 'What the top 1% of developers are arguing about right now.',
-      vibe: 'Sleek retro-cyberpunk terminal with warm YC-orange glowing accents',
-      targetAudience: 'Software engineers, startup founders, CS students, and tech enthusiasts',
-      mascotOrVisualIdentity: 'A vintage 1980s mainframe CRT monitor displaying live animated ASCII art',
-      suggestedHandle: '@TheOrangeThread',
-      whyItWorks: 'Direct homage to Hacker News signature color and comment threads, instantly recognizable in tech circles.',
+      name: DEFAULT_CHANNEL_BRAND,
+      tagline: 'What the breach actually touched, from the operator\'s chair.',
+      hookLine: 'The incident, the mechanism, and what it changes in your stack on Monday.',
+      vibe: 'Restrained terminal minimalism: mono type, one accent colour, no gradients',
+      targetAudience: 'Security engineers, SREs, platform teams and technical founders',
+      mascotOrVisualIdentity: 'Concentric rings spreading across an architecture diagram — the blast radius itself',
+      suggestedHandle: '@blastradius',
+      whyItWorks: 'Names the question defenders actually ask, and owns the operator angle instead of the hacker aesthetic.',
     },
     {
       id: 'ip-2',
@@ -954,7 +955,7 @@ export function generateFallbackIpList(topicContext: string = '') {
       targetAudience: 'Frontend devs, Rustaceans, indie hackers, and framework enthusiasts',
       mascotOrVisualIdentity: 'A minimalist 3D neon crab (Ferris) typing on a mechanical keyboard',
       suggestedHandle: '@900LineShow',
-      whyItWorks: 'References the legendary "rewrote in Rust in 900 lines" Show HN archetype.',
+      whyItWorks: 'References the "someone rewrote it in 900 lines" archetype every engineer recognises.',
     },
     {
       id: 'ip-4',
@@ -982,7 +983,7 @@ export function generateFallbackIpList(topicContext: string = '') {
 }
 
 export function generateFallbackNotebookLMPodcast(researchData: any, topicText: string = '') {
-  const topic = researchData?.topicTitle || topicText || 'Hacker News Viral Breakthrough';
+  const topic = researchData?.topicTitle || topicText || 'the submitted story';
   const lower = topic.toLowerCase();
 
   const isXz = lower.includes('xz') || lower.includes('backdoor') || lower.includes('ssh');
@@ -1040,7 +1041,7 @@ export function generateFallbackNotebookLMPodcast(researchData: any, topicText: 
           id: 'turn-6',
           speaker: 'Host 2 (Morgan)',
           speakerRole: 'Skeptical Pragmatist',
-          text: 'The huge takeaway the Hacker News community is debating now: we cannot have multi-billion-dollar cloud infrastructure depending on burned-out unpaid volunteers.',
+          text: 'The huge takeaway the community is debating now: we cannot have multi-billion-dollar cloud infrastructure depending on burned-out unpaid volunteers.',
           tone: 'explanatory',
           durationEst: 10,
         },
@@ -1065,7 +1066,7 @@ export function generateFallbackNotebookLMPodcast(researchData: any, topicText: 
         id: 'turn-1',
         speaker: 'Host 1 (Alex)',
         speakerRole: 'Tech Enthusiast',
-        text: `Welcome back! Today we are diving into a thread that completely took over Hacker News: ${topic}.`,
+        text: `Today we are diving into the story everyone in engineering has been arguing about: ${topic}.`,
         tone: 'excited',
         durationEst: 7,
       },
@@ -1089,7 +1090,7 @@ export function generateFallbackNotebookLMPodcast(researchData: any, topicText: 
         id: 'turn-4',
         speaker: 'Host 2 (Morgan)',
         speakerRole: 'Skeptical Pragmatist',
-        text: 'That explains the 40x speedup on synthetic micro-benchmarks. But the top comments on HN pointed out: what happens when you need internationalization and edge-case handling?',
+        text: 'That explains the 40x speedup on synthetic micro-benchmarks. But the sharpest replies pointed out: what happens when you need internationalization and edge-case handling?',
         tone: 'skeptical',
         durationEst: 10,
       },

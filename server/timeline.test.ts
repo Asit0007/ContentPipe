@@ -119,7 +119,7 @@ test('mid-roll: with no boundary inside ±25s, the nearest allowed one is used a
 // ------------------------------------------------------------------------------------------- audit
 
 test('audit: an intro line ("Welcome back to…") is flagged against the no-intro rule', () => {
-  const c = auditScript({ scenes: scenes(20), signatureIntro: 'Welcome back to The Orange Thread...' });
+  const c = auditScript({ scenes: scenes(20), signatureIntro: 'Welcome back to Blast Radius...' });
   assert.equal(find(c, 'intro-line-present').severity, 'warn');
   assert.equal(find(auditScript({ scenes: scenes(20), signatureIntro: '' }), 'intro-line-present'), undefined);
 });

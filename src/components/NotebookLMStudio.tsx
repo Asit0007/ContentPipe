@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, Volume2, VolumeX, Sparkles, Mic, Download, Share2, Headphones, Radio, Flame, CheckCircle, RefreshCw, Layers, Copy, Check, ExternalLink, Link as LinkIcon } from 'lucide-react';
 import { NotebookLMPodcast, PodcastTurn, ResearchData, IPBranding, NotebookLMAudioResult } from '../types';
+import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
 import { speakWithBrowserSpeech, stopAllSpeechAndAudio, playWebAudioSFX, playAudioFromBase64, pcmBase64ToWavDataUrl } from '../utils/audioUtils';
 
 interface NotebookLMStudioProps {
@@ -41,7 +42,7 @@ export const NotebookLMStudio: React.FC<NotebookLMStudioProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           researchData,
-          topicText: researchData?.topicTitle || 'Hacker News Viral Discovery',
+          topicText: researchData?.topicTitle || 'the submitted story',
         }),
       });
 
@@ -243,7 +244,7 @@ export const NotebookLMStudio: React.FC<NotebookLMStudioProps> = ({
     if (!podcast) return;
     const content = `# ${podcast.title}
 **NotebookLM Deep Dive Audio Overview**
-Channel IP: ${activeIp ? activeIp.name : 'The Orange Thread'}
+Channel IP: ${activeIp ? activeIp.name : DEFAULT_CHANNEL_BRAND}
 Audio URL: ${audioResult ? `${window.location.origin}${audioResult.audioUrl}` : 'Generating...'}
 Hosts: ${podcast.hosts.host1.name} (${podcast.hosts.host1.title}) & ${podcast.hosts.host2.name} (${podcast.hosts.host2.title})
 

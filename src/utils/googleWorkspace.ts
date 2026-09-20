@@ -8,6 +8,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { VideoScript, VideoPlan, ResearchData } from '../types';
+import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/documents',
@@ -132,7 +133,7 @@ export const exportScriptToGoogleDoc = async (
     throw new Error('No active Google authentication token. Please sign in with Google first.');
   }
 
-  const docTitle = `[HN Script] ${videoScript.title || 'Detailed Infotainment Script'}`;
+  const docTitle = `[${DEFAULT_CHANNEL_BRAND}] ${videoScript.title || 'Production Script'}`;
 
   // 1. Create document
   const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
@@ -162,7 +163,7 @@ export const exportScriptToGoogleDoc = async (
   const totalDuration = videoScript.scenes.reduce((acc, s) => acc + (s.durationEst || 10), 0);
   const wpm = Math.round((totalWords / (Math.max(totalDuration, 1) / 60))) || 150;
 
-  let bodyText = `HACKER NEWS INFOTAINMENT PRODUCTION SCRIPT\n`;
+  let bodyText = `PRODUCTION SCRIPT\n`;
   bodyText += `Title: ${videoScript.title}\n`;
   bodyText += `Target Platform: ${videoScript.targetPlatform} | Aspect Ratio: ${videoScript.aspectRatio}\n`;
   bodyText += `Estimated Duration: ~${totalDuration}s\n`;
@@ -248,7 +249,7 @@ export const exportScriptToGoogleDoc = async (
       }
 
       if (scene.infographic.commentQuote) {
-        bodyText += `• Featured Hacker News Quote: "${scene.infographic.commentQuote.comment}" -- by ${scene.infographic.commentQuote.author} ${scene.infographic.commentQuote.karma != null ? `(${scene.infographic.commentQuote.karma} upvotes)` : ''}\n`;
+        bodyText += `• Featured Community Quote: "${scene.infographic.commentQuote.comment}" -- by ${scene.infographic.commentQuote.author} ${scene.infographic.commentQuote.karma != null ? `(${scene.infographic.commentQuote.karma} upvotes)` : ''}\n`;
       }
       bodyText += `\n`;
     }
@@ -312,7 +313,7 @@ export const exportScriptToGoogleSheet = async (
     throw new Error('No active Google authentication token. Please sign in with Google first.');
   }
 
-  const sheetTitle = `[HN Script] ${videoScript.title || 'Detailed Infotainment Script'}`;
+  const sheetTitle = `[${DEFAULT_CHANNEL_BRAND}] ${videoScript.title || 'Production Script'}`;
 
   // 1. Create Spreadsheet with two structured worksheets
   const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
@@ -412,7 +413,7 @@ export const exportScriptToGoogleSheet = async (
 
   const metadataValues = [
     ['Dossier Parameter', 'Production Value', 'Notes'],
-    ['Episode Script Title', videoScript.title, 'Hacker News viral adaptation'],
+    ['Episode Script Title', videoScript.title, 'Video adaptation'],
     ['Target Platform', videoScript.targetPlatform, 'Optimized layout & pacing'],
     ['Aspect Ratio', videoScript.aspectRatio, 'Format framing'],
     ['Total Scene Count', String(videoScript.scenes.length), 'Full narrative arc'],

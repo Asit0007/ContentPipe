@@ -1,6 +1,7 @@
 import React from 'react';
 import { Sparkles, Video, FileText, Compass, Send, ShieldCheck, Play, Flame } from 'lucide-react';
 import { WorkflowStep, IPBranding } from '../types';
+import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
 
 interface HeaderProps {
   currentStep: WorkflowStep;
@@ -38,7 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold tracking-tight text-white sm:text-base">
-                HN Infotainment Script Agent
+                {DEFAULT_CHANNEL_BRAND} Script Agent
               </span>
               <span className="rounded-full bg-orange-500/10 px-2 py-0.5 text-[11px] font-medium text-orange-400 border border-orange-500/20">
                 AI Studio

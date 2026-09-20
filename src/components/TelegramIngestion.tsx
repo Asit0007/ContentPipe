@@ -68,7 +68,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
               Transform Any Tech Topic into an Amazing Infotainment Script
             </h1>
             <p className="mt-2 text-sm sm:text-base text-zinc-400 max-w-2xl leading-relaxed">
-              Provide any story, breaking news, Hacker News controversy, Telegram message, or raw prompt. Our agentic pipeline runs deep web research, extracts viral angles, builds a retention blueprint, and writes a detailed, master-grade scene script.
+              Provide any story, breaking news, forum controversy, Telegram message, or raw prompt. Our agentic pipeline runs deep web research, extracts viral angles, builds a retention blueprint, and writes a detailed, master-grade scene script.
             </p>
           </div>
         </div>
@@ -111,7 +111,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
             }`}
           >
             <Flame className="h-3.5 w-3.5" />
-            <span>Trending HN Presets</span>
+            <span>Sample Stories</span>
           </button>
         </div>
 
@@ -140,7 +140,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
                     id="input-channel-name"
                     value={channelName}
                     onChange={(e) => setChannelName(e.target.value)}
-                    placeholder="e.g. Hacker News Frontpage, @techinsider, or My Notes"
+                    placeholder="e.g. a newsletter, @techinsider, or My Notes"
                     className="bg-transparent text-sm font-semibold text-white focus:outline-none focus:ring-1 focus:ring-orange-500 rounded px-1.5 -ml-1.5 py-0.5"
                   />
                 </div>
@@ -182,7 +182,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
                 onChange={(e) => setCustomText(e.target.value)}
                 placeholder="Type or paste your topic here. For example:
 - A breakthrough AI model or library release
-- A controversial pull request or engineering architecture debate on Hacker News
+- A controversial pull request or engineering architecture debate
 - An incident postmortem, Linux kernel bug, or distributed systems outage
 - Your startup pitch or engineering technical deep dive..."
                 className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800 p-4 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 resize-y leading-relaxed font-sans transition-all"
@@ -269,7 +269,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
                 <Flame className="h-4 w-4 text-orange-400" />
-                <span>Curated HN Feed Samples</span>
+                <span>Curated Sample Feed</span>
               </h3>
               <span className="text-[11px] text-zinc-500">Pick to test</span>
             </div>

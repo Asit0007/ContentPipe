@@ -31,7 +31,7 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
         <div className="space-y-1 max-w-md">
           <h3 className="text-lg font-bold text-white">Investigative Research Agent at Work</h3>
           <p className="text-xs text-zinc-400">
-            Querying Google Search grounding, analyzing Hacker News discussion threads, synthesizing developer sentiments, and isolating high-retention infotainment angles...
+            Querying Google Search grounding, reading the supplied sources, synthesizing developer sentiments, and isolating high-retention infotainment angles...
           </p>
         </div>
       </div>
