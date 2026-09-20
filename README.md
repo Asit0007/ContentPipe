@@ -44,7 +44,8 @@ Telegram / news input
         │
         ▼
   /api/research ──── fetches your source URLs, extracts article text,
-        │            builds a dossier with per-fact citations
+        │            builds a dossier with per-fact citations, and reports
+        │            how much of it is actually sourced
         ▼
   /api/plan ─────── narrative beats, hook strategy, pacing, target duration
         │
@@ -66,9 +67,44 @@ If a direct fetch fails (paywall, JS-rendered page, timeout) `server/sourceFetch
 
 If every rung fails, the source is reported as `ok: false` rather than silently ignored, and the exported brief carries a warning banner. **A brief with no retrieved sources is unverified model output** and says so at the top.
 
+#### What it refuses to claim it read
+
+The failure mode worth guarding against here is not a crash — it is a dossier that looks fine and isn't. Four rules, each closing a way that used to happen:
+
+- **Binary is never text.** `res.text()` will happily UTF-8-decode a PDF, and the mojibake that comes back has no tags, survives HTML stripping, clears the minimum-length check, and gets reported as a clean direct read. `unreadableAs()` refuses it — by magic bytes, then content-type, then the density of replacement and control characters in the decoded text, because content-type is often wrong or missing. A refused PDF isn't lost: the direct rung fails and r.jina.ai extracts its text properly on the next rung.
+- **Two dates, never merged.** `published` is what the page states about itself and is the only basis for *when* something happened; `retrieved` is just when this tool read the page. A page that states no date is marked `not stated by the page`, and the prompt is told not to infer one from the retrieval time or from today's date. A bare `<time datetime>` is deliberately ignored — on an article page it's as likely to be a comment's timestamp, and a wrong date is worse than none.
+- **Truncation is disclosed.** The cap is 40,000 characters per source (max 6 sources), applied in one place so every rung is capped alike. Anything longer is marked `truncated` in the prompt and in the brief, because the model must not report an absence in a document it only half read.
+- **The source text is kept.** Exactly what the model saw is written to `.runs/sources-<id>.json`, so "is this line in the script actually supported?" is answerable afterwards. It's on disk rather than in the response because six sources at the cap is ~240 KB that would otherwise ride in every research response and every request body that echoes the dossier back.
+
+#### Depth, and what happens when there isn't any
+
+A 9-minute script is ~1,350 words of narration; four facts can't carry it, which is how a long-form draft ends up restating one point five ways. The obvious fix — a high `minItems` on `keyFacts` — is the wrong one: `minItems` is a hard constraint, so on a thin story it doesn't produce research, it produces invention.
+
+So the schema floor stays at 3 (enough to catch a degenerate one-fact response) and the real target of 8 is asked for in the prompt, scaled by `targetDurationSec` when you pass one. The prompt's honest way out is `researchGaps`: one line per missing piece, naming what the script still needs and what would answer it. A short `keyFacts` plus a populated `researchGaps` is the correct answer to a thin story.
+
+Compliance is then **counted, not trusted**. `researchCoverage` on the response is computed server-side:
+
+```jsonc
+"researchCoverage": {
+  "sourcesUsable": 3, "sourcesTruncated": 1, "sourcesUndated": 1,
+  "keyFacts": 9, "citedFacts": 7, "uncitedFacts": 2,
+  "sourceArchiveId": "a1b2c3d4e5f60718"
+}
+```
+
+`uncitedFacts` is the number the script will have to carry on trust. A model's own account of its sourcing would itself need checking, so none of this is asked of the model.
+
 > **Not used: Google Search grounding.** The `google_search` tool has zero quota on the Gemini free tier — grounded calls 429 immediately while plain calls succeed. If you enable billing, adding it is a small change to `/api/research`; note that grounding and `responseSchema` are mutually exclusive, so it needs a second structuring call. Grounding is also not planned even with billing: fetching and disclosing real URLs (above) already does better than grounding's opaque citations, for free.
 >
 > **Rejected as a discovery source: Google News RSS.** Its `<link>` entries are opaque `news.google.com/rss/articles/CBMi…` redirect tokens, and the redirect target is a client-rendered Angular shell with no publisher URL recoverable from the HTML — verified 2026-09-17. Don't re-attempt this path; HN Algolia (`hn.algolia.com/api/v1/search`) and publisher RSS feeds return direct, fetchable URLs and are the better free, key-free option if a discovery stage is added later.
+
+### The channel it writes for
+
+One constant, `DEFAULT_CHANNEL_BRAND` in `shared/brand.ts`, is the show name every "no brand was supplied" path falls back to — server prompts, the canned fallback script, the UI header and watermark, the export headers, the placeholder infographic badge. A rename is one edit.
+
+It is deliberately **not** the name of this tool and not the name of any source site. A script that opens "Welcome back to ContentPipe", or a frame with another publication's name burned into it, is a brand leak — and those aren't hypothetical, they were the defaults until `shared/brand.ts` existed. `server/brand.test.ts` renders every canned surface, including the generated SVG, and fails on any tool or publication name.
+
+Pass `channelBrandName` on `/api/script` to override it per request.
 
 ### Script generation runs in three passes
 
@@ -99,6 +135,17 @@ The script also comes back with `timeline`, `chapters`, `midrollMarkers` (two, s
 ### Publish package
 
 `POST /api/publish-package` (or the button on the script screen) returns five linted titles, three thumbnail concepts, a description, tags and hashtags. The model writes the copy; code does the rest — title/thumbnail linting, chapters and mid-roll times, a sources list containing only URLs that were actually read, and `{{PLACEHOLDER}}`s (never invented links) for newsletter/social. The recommendation is the linter's, not the model's.
+
+### Request parameters worth knowing
+
+| Endpoint | Field | Effect |
+|---|---|---|
+| `/api/research` | `sourceUrls` | URLs to fetch. Any URL in `messageText` is picked up too. |
+| `/api/research` | `channelName` | Where the story came from, for the dossier's context. Omit it rather than inventing one — your own channel is not a story's origin. |
+| `/api/research` | `targetDurationSec` | Optional, and deliberately not defaulted. It scales how much research the dossier is asked for; guessing would either ask a 60-second short for nine minutes of depth or let a documentary settle for four facts. |
+| `/api/plan` | `targetDurationSec` | The real target length. Drives scene count and mid-roll placement. |
+| `/api/script` | `channelBrandName` | Overrides `DEFAULT_CHANNEL_BRAND` for this script. |
+| `/api/script` | `runId`, `fresh` | Explicit checkpoint key; `fresh: true` discards any resume. |
 
 ### For automated callers: strict mode
 
@@ -175,7 +222,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # unit tests — no network, no quota
+npm test         # 169 unit tests — no network, no quota
 npm run test:e2e # real server vs a stub Gemini: 429, overload, crash-resume, SSRF (~1 min)
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
@@ -195,6 +242,8 @@ server/
   strict.ts                   strict-mode status mapping (X-ContentPipe-Strict)
   scriptPipeline.ts           the three script passes and chunking
   runJournal.ts               on-disk checkpoints (.runs/) for /api/script
+  sourceArchive.ts            keeps the text the model actually saw (.runs/sources-*.json)
+  researchCoverage.ts         counts how much of a dossier is genuinely cited
   timeline.ts                 timeline, chapters, mid-rolls, retention/compliance audit
   publishPackage.ts           titles / thumbnails / description / tags + linters
   netGuard.ts                 SSRF guard for fetched URLs
@@ -205,13 +254,15 @@ server/
   markdownExporter.ts         Brief rendering + file writing
   fallbackGenerators.ts       Canned output when the API is unreachable
   notebooklmService.ts        Multi-voice podcast audio
+shared/
+  brand.ts                    DEFAULT_CHANNEL_BRAND — imported by both server/ and src/
 src/
   App.tsx                     Stage orchestration
   components/                 One component per pipeline stage
   types.ts                    Shared types — mirrors server/schemas.ts
   utils/googleWorkspace.ts    Firebase Auth + Docs/Sheets export
 exports/                      Generated briefs (gitignored)
-.runs/                        Script-run checkpoints (gitignored, pruned after 7 days)
+.runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days)
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
 ```
 
@@ -230,5 +281,11 @@ e2e/                          End-to-end failure-contract test (npm run test:e2e
 **A script shorter than requested.** Check `generation` — it says how many scenes were produced and which chunk failed. Send the same request again after the quota resets and it resumes from the last finished chunk.
 
 **`Blocked: … private or reserved address` on a source.** The SSRF guard refused an internal/loopback URL, by design.
+
+**A source failed with `Response is a PDF, which cannot be decoded as text here`.** Working as intended — the direct rung refuses binary rather than passing mojibake off as an article. Check `attempts` on that source: the reader-proxy rung usually extracts the PDF on the next try. If every rung failed, no text was retrieved and the dossier genuinely has nothing from that URL.
+
+**The dossier is thin and `researchGaps` is full.** The sources didn't support more. That's the honest answer, not a bug — `researchGaps` names what would fill it. Check `researchCoverage.uncitedFacts` too: those are claims the script will carry on trust.
+
+**Everything in the brief says `Published: not stated`.** The pages carry no publication metadata. Nothing is inferred from the fetch time, so date-sensitive framing ("this week", "newly disclosed") needs checking by hand before publishing.
 
 **`auth/unauthorized-domain`.** See [Google Workspace export](#google-workspace-export-optional).
