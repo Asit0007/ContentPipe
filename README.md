@@ -26,6 +26,7 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `NOTEBOOKLM_API_KEY` | No | Falls back to `GEMINI_API_KEY`. |
 | `APP_URL` | No | Self-referential links. |
 | `PORT` | No | Defaults to 3000. |
+| `HOST` | No | Interface to bind. Defaults to `127.0.0.1` (this machine only) — the endpoints are unauthenticated and spend your Gemini quota. `HOST=0.0.0.0` to expose it, only behind something that authenticates callers. |
 | `VITE_FIREBASE_*` | Only for Google Docs export | Client-side Firebase Auth config. See [Google Workspace export](#google-workspace-export-optional). |
 
 `.env` is gitignored. `.env.example` holds placeholders only — never commit real values.
@@ -53,6 +54,8 @@ Telegram / news input
         │
         ▼
   /api/export/markdown ── writes the brief to exports/
+
+  /api/publish-package ─ titles, thumbnails, description, tags (on demand, after the script)
 ```
 
 ### Research is real, within limits
@@ -81,9 +84,25 @@ Not one call, deliberately.
 
 Array bounds matter too — without `minItems` on `scenes`, the model returns a single scene and stops.
 
-**Passes 2 and 3 are themselves chunked**, not one call each. `videoPlan.targetDurationSec` (a real request parameter on `/api/plan` — previously hardcoded to 60 regardless of input) is translated into a target scene count, and the narrative pass writes it 3 scenes at a time, carrying the last few scenes forward as prompt context so a long-form script stays continuous across calls. The art-direction pass batches 6 scenes per call. Those two chunk sizes are **not interchangeable, and not arbitrary**: pass 2's per-scene schema includes `infographic` (three more nested arrays on top of `visual`/`motion`), and measured live 2026-09-19, that schema gets a hard `400 INVALID_ARGUMENT` from every model the instant a chunk's `maxItems` reaches 4 — reproducible regardless of `minItems`, confirmed even against the schema exactly as it shipped before this chunking existed. Pass 3's schema has no `infographic` and isn't capped the same way. Don't raise either chunk size without retesting live first — see `scriptSceneItemSchema`'s docstring in `server/schemas.ts` and `NARRATIVE_SCENES_PER_CHUNK`/`VISUAL_DIRECTION_SCENES_PER_CHUNK` in `server.ts`.
+**Passes 2 and 3 are themselves chunked**, not one call each. `videoPlan.targetDurationSec` (a real request parameter on `/api/plan` — previously hardcoded to 60 regardless of input) is translated into a target scene count, and the narrative pass writes it 3 scenes at a time, carrying the last few scenes forward as prompt context so a long-form script stays continuous across calls. The art-direction pass batches 6 scenes per call. Those two chunk sizes are **not interchangeable, and not arbitrary**: pass 2's per-scene schema includes `infographic` (three more nested arrays on top of `visual`/`motion`), and measured live 2026-09-19, that schema gets a hard `400 INVALID_ARGUMENT` from every model the instant a chunk's `maxItems` reaches 4 — reproducible regardless of `minItems`, confirmed even against the schema exactly as it shipped before this chunking existed. Pass 3's schema has no `infographic` and isn't capped the same way. Don't raise either chunk size without retesting live first — see `scriptSceneItemSchema`'s docstring in `server/schemas.ts` and `NARRATIVE_SCENES_PER_CHUNK`/`VISUAL_DIRECTION_SCENES_PER_CHUNK` in `server/scriptPipeline.ts`.
 
 A chunk that fails (quota exhaustion, a weak fallback-tier model going degenerate under load — both observed live) doesn't fail the whole script; whatever scenes already generated are kept and returned. Check `estimatedTotalDuration` against what was actually requested rather than assuming a match.
+
+### Checkpointing and resume
+
+`/api/script` writes each finished chunk to `.runs/` (gitignored). A run interrupted by a quota hit or a crash resumes from its last finished chunk when the **same request** is sent again — nothing to configure; a run that was already delivered is never replayed, so "regenerate" starts fresh. Optional body fields: `runId` (explicit key) and `fresh: true`. Every response carries `generation` — requested vs produced scenes and duration, whether it is complete, and what degraded — so a short script is never mistaken for a full one.
+
+### Retention audit and mid-rolls
+
+The script also comes back with `timeline`, `chapters`, `midrollMarkers` (two, snapped to scene boundaries near 2:30 and 6:00 — and none, with a warning, under 8:00) and `qualityChecks`: hook, pattern-interrupt cadence, duration shortfall, evidence mix (a slideshow of AI stills is flagged), and any figure or CVE in the narration that is not in the research dossier. All of it is computed from the scenes — no model involved — and the exported brief carries it plus a manual pre-publish checklist.
+
+### Publish package
+
+`POST /api/publish-package` (or the button on the script screen) returns five linted titles, three thumbnail concepts, a description, tags and hashtags. The model writes the copy; code does the rest — title/thumbnail linting, chapters and mid-roll times, a sources list containing only URLs that were actually read, and `{{PLACEHOLDER}}`s (never invented links) for newsletter/social. The recommendation is the linter's, not the model's.
+
+### For automated callers: strict mode
+
+The browser UI always gets *something* — on quota exhaustion the endpoints fall back to canned sample content flagged `isQuotaFallback`. A pipeline must not mistake that for a real draft. Send `X-ContentPipe-Strict: 1` and you get real status codes instead: `429` + `Retry-After` for quota, `503` + `Retry-After` for overload, `502` for non-retryable failures, `409` if the same script run is already in flight. See CLAUDE.md for the full table.
 
 ### Character consistency
 
@@ -95,7 +114,7 @@ The mechanism is `promptAnchor`: one dense clause per character, generated once 
 
 `POST /api/export/markdown` writes a full brief to `exports/`, named `YYYY-MM-DD-slug.md`, never overwriting (`-2`, `-3` suffixes). `GET /api/export/list` enumerates them.
 
-Each brief contains YAML front matter, a production summary, the source table with read/failed status, fact attribution, the style guide, the character bible with copy-paste anchors, a continuous narration teleprompter, a shot list, and per scene: narration, layered image prompts (character / background / composed / style / negative), motion parameters with a paste-ready `motionPrompt`, and infographic data.
+Each brief contains YAML front matter, a production summary, loud warnings when the script is incomplete or canned, the quality checks, the source table with read/failed status, fact attribution, chapters and mid-roll placement, a manual pre-publish checklist, the publish package (when generated), the style guide, the character bible with copy-paste anchors, a continuous narration teleprompter, a shot list, and per scene: narration, layered image prompts (character / background / composed / style / negative), motion parameters with a paste-ready `motionPrompt`, and infographic data.
 
 `exports/` is gitignored — these are working artefacts.
 
@@ -105,7 +124,7 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 
 ## Model configuration
 
-All text generation uses the `TEXT_MODELS` chain in `server.ts`, tried best-first:
+All text generation uses the `TEXT_MODELS` chain in `server/gemini.ts`, tried best-first:
 
 ```ts
 const TEXT_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
@@ -156,6 +175,8 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
+npm test         # unit tests — no network, no quota
+npm run test:e2e # real server vs a stub Gemini: 429, overload, crash-resume, SSRF (~1 min)
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
 npm start        # node dist/server.cjs
@@ -167,10 +188,19 @@ npm run lint     # tsc --noEmit
 ## Layout
 
 ```
-server.ts                     Express app, all endpoints, model chain
+server.ts                     Express app: routes and wiring only
 server/
+  gemini.ts                   client, TEXT_MODELS chain, quota-aware generateGeminiJson
+  quota.ts                    classifies Gemini errors (per-minute / per-day / limit: 0 / overload)
+  strict.ts                   strict-mode status mapping (X-ContentPipe-Strict)
+  scriptPipeline.ts           the three script passes and chunking
+  runJournal.ts               on-disk checkpoints (.runs/) for /api/script
+  timeline.ts                 timeline, chapters, mid-rolls, retention/compliance audit
+  publishPackage.ts           titles / thumbnails / description / tags + linters
+  netGuard.ts                 SSRF guard for fetched URLs
+  hnThread.ts                 Hacker News discussion as a retrievable source (Algolia API)
   schemas.ts                  Gemini responseSchema definitions
-  sourceFetcher.ts            URL fetching, HTML-to-text extraction, and the direct -> jina -> wayback rescue ladder
+  sourceFetcher.ts            URL fetching, HTML-to-text extraction, and the (hn-api) -> direct -> jina -> wayback rescue ladder
   imageProviders.ts           Scene image chain: Gemini -> Pollinations -> SVG placeholder
   markdownExporter.ts         Brief rendering + file writing
   fallbackGenerators.ts       Canned output when the API is unreachable
@@ -181,6 +211,8 @@ src/
   types.ts                    Shared types — mirrors server/schemas.ts
   utils/googleWorkspace.ts    Firebase Auth + Docs/Sheets export
 exports/                      Generated briefs (gitignored)
+.runs/                        Script-run checkpoints (gitignored, pruned after 7 days)
+e2e/                          End-to-end failure-contract test (npm run test:e2e)
 ```
 
 `src/types.ts` and `server/schemas.ts` describe the same shapes in two languages. **Change both together** or the schema will quietly stop matching what the UI reads.
@@ -193,6 +225,10 @@ exports/                      Generated briefs (gitignored)
 
 **`EADDRINUSE: 0.0.0.0:3000`.** Something else owns the port — Grafana is a common culprit. Use `PORT=3100 npm run dev`.
 
-**Scenes missing `visual` or `motion`.** A pass returned incomplete output. Check the server log for `[Art Director]` and `[Production Bible]` lines, which report coverage. Don't fix it by merging schemas.
+**Scenes missing `visual` or `motion`.** A pass returned incomplete output. Check `generation.degraded` in the response, then the server log for `[Art Director]` and `[Production Bible]` lines. Don't fix it by merging schemas.
+
+**A script shorter than requested.** Check `generation` — it says how many scenes were produced and which chunk failed. Send the same request again after the quota resets and it resumes from the last finished chunk.
+
+**`Blocked: … private or reserved address` on a source.** The SSRF guard refused an internal/loopback URL, by design.
 
 **`auth/unauthorized-domain`.** See [Google Workspace export](#google-workspace-export-optional).

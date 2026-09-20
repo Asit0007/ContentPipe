@@ -21,12 +21,26 @@ Single Express app (`server.ts`) that also serves the Vite/React front end in mi
 ```
 /api/research  → fetches source URLs, extracts text, builds a cited dossier
 /api/plan      → narrative beats
-/api/script    → three passes: production bible → narrative → art direction
+/api/script    → three passes: production bible → narrative → art direction (checkpointed, resumable)
+/api/publish-package → titles, thumbnails, description, tags (model writes copy; the checkable parts are deterministic)
 /api/tts       → narration audio
 /api/generate-image → scene stills (Gemini -> Pollinations -> SVG placeholder, see below)
 /api/export/markdown → writes the brief to exports/
 /api/chat, /api/ip-names, /api/notebooklm-* → side features
 ```
+
+Where things live (`server.ts` is routes and wiring only — the logic moved out so it can be unit-tested; `server.ts` calls `startServer()` at import and cannot be imported by a test):
+
+| File | Owns |
+|---|---|
+| `server/gemini.ts` | client, `TEXT_MODELS` chain, `generateGeminiJson` (quota-aware: cooldowns, one bounded retry pass) |
+| `server/quota.ts` | classifies Gemini errors; typed `QuotaExhaustedError` / `UpstreamUnavailableError` |
+| `server/strict.ts` | the strict-mode contract (`X-ContentPipe-Strict`) and `orFallback` |
+| `server/scriptPipeline.ts` | the three script passes, chunk sizes, `buildGenerationSummary` |
+| `server/runJournal.ts` | on-disk checkpoints in `.runs/` |
+| `server/timeline.ts` | deterministic timeline, chapters, mid-roll placement, retention/compliance audit |
+| `server/publishPackage.ts` | titles / thumbnails / description / tags and their linters |
+| `server/sourceFetcher.ts`, `hnThread.ts`, `netGuard.ts`, `htmlText.ts` | fetching, the HN thread rung, the SSRF guard |
 
 ---
 
@@ -55,7 +69,9 @@ Hence three passes in `/api/script`, each with a small schema. **Do not consolid
 
 Related: arrays need explicit `minItems`. Without it the model returns one scene and stops.
 
-A second, harder failure mode on the same root cause: it's not just about field *breadth*, array *length* has its own ceiling, and this one is a hard `400` rather than a silent omission. `scriptSceneItemSchema` (the narrative pass's per-scene shape, which includes `infographic` — three more nested arrays-of-objects on top of `visual`/`motion`) gets an immediate `400 INVALID_ARGUMENT` from every model in `TEXT_MODELS` the instant a wrapping array's `maxItems` reaches 4 — measured live 2026-09-19, reproducible regardless of `minItems` or whether `min === max`, confirmed even against the schema exactly as it shipped before long-form chunking existed (it was always there, just never exercised past 6 items). Removing just `infographic` let `maxItems: 6` succeed again. This is why `/api/script`'s narrative pass generates scenes 3 at a time (`NARRATIVE_SCENES_PER_CHUNK` in `server.ts`) while the art-direction pass, whose schema lacks `infographic`, stays at 6 (`VISUAL_DIRECTION_SCENES_PER_CHUNK`). Don't raise either without retesting live first.
+A second, harder failure mode on the same root cause: it's not just about field *breadth*, array *length* has its own ceiling, and this one is a hard `400` rather than a silent omission. `scriptSceneItemSchema` (the narrative pass's per-scene shape, which includes `infographic` — three more nested arrays-of-objects on top of `visual`/`motion`) gets an immediate `400 INVALID_ARGUMENT` from every model in `TEXT_MODELS` the instant a wrapping array's `maxItems` reaches 4 — measured live 2026-09-19, reproducible regardless of `minItems` or whether `min === max`, confirmed even against the schema exactly as it shipped before long-form chunking existed (it was always there, just never exercised past 6 items). Removing just `infographic` let `maxItems: 6` succeed again. This is why `/api/script`'s narrative pass generates scenes 3 at a time (`NARRATIVE_SCENES_PER_CHUNK` in `server/scriptPipeline.ts`) while the art-direction pass, whose schema lacks `infographic`, stays at 6 (`VISUAL_DIRECTION_SCENES_PER_CHUNK`). Don't raise either without retesting live first.
+
+`publishPackageSchema` (two arrays of shallow objects plus string arrays — deliberately flat) was confirmed accepted live 2026-09-19. Keep it flat; anything the model doesn't have to write (chapters, mid-rolls, sources, the recommendation) is computed in code instead of added to it.
 
 ### Grounding and structured output are mutually exclusive
 
@@ -72,9 +88,21 @@ A second, harder failure mode on the same root cause: it's not just about field 
 
 A 429 saying `limit: 0` is not something to retry or work around on the Gemini side; it needs billing. Don't add backoff for it. But image generation itself is no longer blocked end-to-end — `server/imageProviders.ts` falls through to Pollinations (free, no key) before the SVG placeholder. Grounding stays genuinely unaddressed and is not planned even with billing: fetching real URLs and disclosing exactly what was read (see the rescue ladder below) already beats grounding's opaque citations, for free.
 
+### Reading a Gemini 429 (captured live 2026-09-19 — fixtures in `server/__fixtures__/`)
+
+`server/quota.ts` encodes all of this; the tests use the real bodies, don't "simplify" it from memory:
+
+- The SDK's `ApiError` has the numeric code on `.status` and the **whole JSON body, stringified, on `.message`**.
+- **One 429 lists every violated quota at once** — per-minute *and* per-day `quotaId`s together — beside a `retryDelay` of only a few seconds (4s, 9s, 48s seen). A short `retryDelay` is the per-minute window, not proof that waiting helps. **Any `…PerDay…` violation wins**, and the retry time is the next midnight Pacific (Gemini's reset), not the delay.
+- `limit: 0` appears only in the human-readable message text (`* Quota exceeded for metric: …, limit: 0`), not as a structured field. It means no quota exists (free-tier image models, grounding): never retried, and a strict caller gets a non-retryable 502, not a 429.
+- Two of the three text models had their daily quota (`limit: 20`) spent by ordinary testing that same day; `gemini-3.1-flash-lite` carried the work. Budget live tests accordingly — `GOOGLE_GEMINI_BASE_URL` points the SDK at a stub so the quota paths can be exercised for free (see Verifying changes).
+- A model known to be exhausted is skipped for its retry time (capped at 30 min so enabling billing takes effect); a chain that fails on quota/overload waits once (≤45 s per-minute delay, 8 s overload) and retries the chain once.
+
 ### The fetch rescue ladder, and its two live gotchas
 
 `server/sourceFetcher.ts` doesn't give up after one failed fetch. It escalates: direct → [r.jina.ai](https://r.jina.ai) reader proxy → Wayback Machine snapshot, stopping at first success. Whichever rung wins is recorded as `via` and disclosed everywhere a source is shown (prompt, UI, exported brief) — a rescued source must never look like an ordinary live read.
+
+There is a fourth rung ahead of the others for one URL shape: `news.ycombinator.com/item?id=N` is read through the HN Algolia API (`via: 'hn-api'`) — real comments, real handles. Every hop of every rung, including redirect targets, goes through `server/netGuard.ts` (loopback / RFC1918 / link-local-metadata / CGNAT / ULA / v4-mapped are refused; ports 80/443 only); a blocked URL fails the whole ladder up front so it is never handed to r.jina.ai or archive.org. Residual DNS-rebinding risk is documented in `netGuard.ts`.
 
 Two things cost real debugging time building this and are worth knowing up front:
 
@@ -103,15 +131,54 @@ When output looks generic or off-topic, check `isQuotaFallback` before debugging
 
 **Prompts carry an inline JSON example alongside `responseSchema`.** When they disagree the model follows the inline example — this caused `visual`/`motion` to go missing even with a correct schema. Update both, or delete the example.
 
-**Fallback generators are load-bearing.** Every AI endpoint degrades to `server/fallbackGenerators.ts` rather than erroring, so the UI always has something to render. Keep that property; make failures visible in the *output* (`isQuotaFallback`, source status tables) instead of throwing.
+**Fallback generators are load-bearing — for the UI.** Every AI endpoint degrades to `server/fallbackGenerators.ts` rather than erroring, so the browser always has something to render. Keep that property; make failures visible in the *output* (`isQuotaFallback`, `generation`, source status tables) instead of throwing. **Automated callers opt out** with `X-ContentPipe-Strict: 1` and never receive fallback content — see the next section.
 
 **Source honesty is a product requirement.** `/api/research` used to regex-scrape a URL out of the input — or hardcode `news.ycombinator.com` — and present it as a source it had consulted. It hadn't. Never present unread URLs as sources. `retrievedSources` records what was actually fetched, failures included, and the exported brief warns when nothing was read.
+
+That includes **people**: the research prompt used to ask for "authentic-sounding" Hacker News comments with a handle and karma while no HN data was ever fetched — every commenter was invented, shown in the UI and quoted into scripts. Community reaction now comes only from a retrieved HN thread (`hn-api`); otherwise `hnCommunitySentiment` says none was retrieved and `topHnComments` is `[]`. The HN API gives comments no points and returns them chronologically, so `karma` is optional everywhere and they are never called "top" comments. Likewise `viralityScore` was a hardcoded 96 — removed; `qualityChecks` replaces it.
+
+Source ids: `S#` is a source's position in the **fetched** list (`sourceId()` in `sourceFetcher.ts`), used for both `retrievedSources` and the prompt. Numbering only the usable subset used to make `[S1]` point at a different document than `retrievedSources[S1]` whenever an earlier fetch had failed. Fetched text is wrapped in `<source>` tags and declared untrusted in the prompt (for a security channel the sources are often attacker-authored); the tag names inside page text are escaped so a page can't close the wrapper.
+
+---
+
+## Failure contract for API clients (strict mode)
+
+Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:
+
+| Status | Meaning | Body |
+|---|---|---|
+| `429` + `Retry-After` | quota exhausted (`per_minute` \| `per_day`); retry at the given time | `{error, kind, retryable: true, retryAfterSec, runId?, progress?}` |
+| `503` + `Retry-After: 30` | upstream overloaded on every tier, after one bounded wait | same shape, `kind: 'upstream_unavailable'` |
+| `502` | not retryable: no quota exists (`zero_quota`, needs billing), bad key, rejected request | `{error, kind, retryable: false}` |
+| `409` | an identical `/api/script` run is already in flight | `{kind: 'in_progress', runId}` |
+
+Strict mode rethrows *retryable* failures instead of absorbing them into a shorter or flatter script; non-retryable ones (a rejected schema, unparseable output) still degrade — and say so in `generation.degraded`. Every `/api/script` response carries `generation` (`complete`, requested vs produced scenes/duration, `degraded[]`), so a partial script is self-describing in both modes.
+
+## Run journal (`.runs/`, gitignored)
+
+A 9-minute script is ~25 sequential Gemini calls against ~20 requests/day per model, so restarting from zero after a quota hit at call 22 never converges. Each finished chunk is written to `.runs/<key>.json` (atomic temp+rename). **A run resumes iff its journal exists, its input hash matches, and it has not been delivered.** The key is `runId` from the body if given, else a hash of plan + research + brand — so an interrupted strict run resumes on the identical re-POST with no client cooperation, while "regenerate" after a delivered script starts fresh. A run that finished while its client was gone is served from the journal without regenerating. `fresh: true` discards. One in-flight run per key (409). Journals older than 7 days are pruned at startup. `CONTENTPIPE_RUNS_DIR` relocates it (the e2e test uses this).
+
+## Retention audit and publish package
+
+`server/timeline.ts` is pure and deterministic — no model call, no quota. `/api/script` adds `timeline`, `chapters`, `midrollMarkers` and `qualityChecks` to the script: mid-rolls at ~2:30 and ~6:00 snapped to real scene boundaries (a semantic bonus for "after the problem is set up" / "before the fix"), **none and a warning if the runtime is under 8:00**, chapters grouped by `actPhase` (≥3, ≥10 s each, ≤12), and checks for missing hook, 30 s+ runs with no pattern interrupt, duration shortfall, narration that can't fit its scene, an AI-slideshow-risk evidence mix, and **specifics in the narration (CVE ids, %, $, large numbers, versions) that are not in the research dossier**. Thresholds are named constants at the top of the file; they encode the spec's targets, not measured truths, and the 8:00 rule should be re-verified against YouTube's current policy.
+
+Documentary tone (`Deep Dive Documentary`) now actually changes the output: no `signatureIntro` (cold open), a calm outro, and tone-conditional plan / bible / scene prompts. The plan prompt's inline example used to be infotainment-shaped regardless of tone, and the inline example wins over instructions.
+
+`/api/publish-package` is a fourth small-schema pass. The model writes titles, thumbnail concepts, description copy and tags; code does the rest: title lint (≤70 chars, no ≥6-letter ALL-CAPS words, no emoji, banned clickbait phrases, brackets only for `[CVE-…]`, **figures must be in the dossier**), thumbnail lint, one feedback retry when fewer than 3 titles pass, a linter-chosen recommendation, chapters and mid-roll times from the timeline, and a description whose only URLs are retrieved sources — contact links are literal `{{PLACEHOLDER}}`s listed in `todos`, never invented.
 
 ---
 
 ## Verifying changes
 
-There are no automated tests. Run the pipeline end to end against the live API:
+```bash
+npm run lint       # tsc --noEmit — the baseline is zero errors (tests are type-checked too)
+npm test           # unit tests (server/*.test.ts, node:test via tsx) — fast, no network, no quota
+npm run test:e2e   # the real server against a stub Gemini: 429/503/kill -9/resume/409/SSRF (~1 min)
+```
+
+The SDK honours `GOOGLE_GEMINI_BASE_URL`, which is how `test:e2e` (and any ad-hoc check) exercises quota paths without spending quota: run the server with it pointed at a stub. Unit tests build fakes from **real captured bodies** in `server/__fixtures__/`; add a fixture when a new failure shape shows up live.
+
+Then, against the live API:
 
 ```bash
 PORT=3100 npm run dev
@@ -124,7 +191,7 @@ curl -s -X POST localhost:3100/api/research -H 'Content-Type: application/json' 
 # chunked long-form path in /api/script instead of the single-chunk short-form one.
 ```
 
-Check the server log for coverage lines — `[Production Bible] N character(s) defined`, `[Script Agent] generated N/M scenes across K chunk(s)`, and `[Art Director] visual direction applied to N/M scenes across K chunk(s)`. Partial coverage means a pass (or one chunk of it) is degrading.
+Check the server log for coverage lines — `[Production Bible] N character(s) defined`, `[Script Agent] generated N/M scenes across K chunk(s)`, and `[Art Director] visual direction applied to N/M scenes across K chunk(s)`. Partial coverage means a pass (or one chunk of it) is degrading — and the response says so itself: `generation.complete` / `generation.degraded[]`, plus `qualityChecks` for everything the audit found.
 
 Then confirm structure holds:
 
@@ -136,12 +203,12 @@ print('anchors identical:', len({(x.get('visual') or {}).get('styleAnchor') for 
 "
 ```
 
-`npm run lint` is `tsc --noEmit`. Zero errors is the baseline.
-
 ---
 
 ## Security
 
-`.env`, `exports/` and `firebase-applet-config.json` are gitignored. The repo is **public** — nothing with a real credential in it may be committed.
+The server binds **`127.0.0.1` by default** (`HOST` env to change it): the endpoints are unauthenticated and spend the Gemini quota, and `/api/research` fetches arbitrary URLs. Set `HOST=0.0.0.0` only behind something that authenticates callers (Cloud Run / AI Studio). Source fetches pass the SSRF guard on every hop (see the rescue ladder above); `runId` becomes a filename, so it is validated against `^[A-Za-z0-9_-]{1,64}$`.
+
+`.env`, `exports/`, `.runs/` and `firebase-applet-config.json` are gitignored. The repo is **public** — nothing with a real credential in it may be committed.
 
 Firebase web config values are public by design (they ship in the browser bundle) but are kept out of the repo anyway; they load from `VITE_FIREBASE_*`. A Firebase API key was committed once and force-pushed out of history — treat that key as burned, and remember GitHub still serves orphaned commits by SHA after a force-push, so rotation matters more than history rewriting.

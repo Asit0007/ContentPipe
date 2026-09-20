@@ -9,6 +9,8 @@ News story + source links → researched dossier → narrative plan → scene-by
 
 Read `CLAUDE.md` in the repo root before changing anything. It records failure modes that are expensive to rediscover.
 
+Automated callers should send `-H 'X-ContentPipe-Strict: 1'` (see "Failure contract" in `CLAUDE.md`): then quota/overload comes back as 429/503 + `Retry-After` instead of canned content, and re-sending the same `/api/script` request resumes an interrupted run. Without the header you get the UI contract, where `isQuotaFallback: true` means you are looking at sample content.
+
 ## Running the pipeline
 
 Start the server (3000 is often taken by Grafana):
@@ -61,6 +63,16 @@ print('anchors identical:', len({(x.get('visual') or {}).get('styleAnchor') for 
 
 Also check `retrievedSources` in `/tmp/r.json`: every entry with `ok: false` is a claim the brief could not verify.
 
+`/tmp/s.json` now says how it went by itself: `generation.complete` / `generation.degraded[]`, and `qualityChecks` (errors first) for the deterministic audit — duration shortfall, evidence mix, mid-roll eligibility, narration specifics missing from the dossier. `midrollMarkers` and `chapters` are computed from the scenes.
+
+```bash
+# Titles / thumbnails / description / tags for a finished script
+python3 -c "import json;json.dump({'script':json.load(open('/tmp/s.json')),'research':json.load(open('/tmp/r.json')),'plan':json.load(open('/tmp/p.json')),'channelBrandName':'Blast Radius'},open('/tmp/pq2.json','w'))"
+curl -s -m 240 -X POST localhost:3100/api/publish-package -H 'Content-Type: application/json' -d @/tmp/pq2.json | python3 -m json.tool | head -60
+```
+
+Live free-tier quota is scarce (a 9-minute script is ~25 calls against ~20/day per model). Prefer `npm test` and `npm run test:e2e`, which need none.
+
 ## Diagnosing bad output
 
 Work down this list before touching prompts.
@@ -70,6 +82,7 @@ Work down this list before touching prompts.
 3. **Only one scene** — the array lost its `minItems` constraint.
 4. **404 on a model** — verify against ListModels *and* a real `generateContent` call. Use `"${m}:generateContent"`, never `"$m:generateContent"`, or zsh corrupts the name.
 5. **429 with `limit: 0`** — no quota exists on the free tier for that capability (images, search grounding). Not retryable; needs billing.
+6. **429 mentioning `PerDay`** — the daily quota is spent, whatever the short `retryDelay` says. Come back after midnight Pacific; the script run resumes.
 
 ## Extending the script
 
@@ -77,7 +90,7 @@ Adding a field means touching three places, in this order:
 
 1. `server/schemas.ts` — add to the pass whose schema stays smallest
 2. `src/types.ts` — mirror it, **optional** (`field?:`), since older scripts and failed passes won't have it
-3. the prompt in `server.ts` — spec *and* inline JSON example, which must agree
+3. the prompt in `server/scriptPipeline.ts` (narrative/art passes) or `server.ts` (research/plan) — spec *and* inline JSON example, which must agree
 4. `server/markdownExporter.ts` — render it, tolerating absence
 
 Then run the pipeline end to end and confirm coverage before assuming it worked.
