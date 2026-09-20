@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Compass, Sparkles, ArrowRight, MessageSquare, Flame, CheckCircle2, RefreshCw, ExternalLink, Lightbulb, TrendingUp, ShieldAlert, Cpu } from 'lucide-react';
 import { ResearchData } from '../types';
+import { PLAN_PRESETS, PlanPresetKey } from '../data/planPresets';
 
 interface ResearchStageProps {
   researchData: ResearchData | null;
   isLoading: boolean;
-  onProceedToPlan: (selectedAngle?: string) => void;
+  onProceedToPlan: (selectedAngle?: string, preset?: PlanPresetKey) => void;
   onReResearch: () => void;
 }
 
@@ -16,6 +17,7 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
   onReResearch,
 }) => {
   const [selectedAngleIndex, setSelectedAngleIndex] = useState<number>(0);
+  const [preset, setPreset] = useState<PlanPresetKey>('short');
 
   if (isLoading) {
     return (
@@ -136,20 +138,26 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
               <p className="text-xs text-zinc-300 mt-1">{researchData.hnCommunitySentiment?.contrarianView}</p>
             </div>
 
-            <div>
-              <span className="text-xs font-bold text-zinc-400 uppercase tracking-wide">Top Quoted HN Comments</span>
-              <div className="mt-2 space-y-2">
-                {researchData.hnCommunitySentiment?.topHnComments?.map((c, i) => (
-                  <div key={i} className="rounded-lg bg-zinc-950/60 p-2.5 border border-zinc-800/80 text-xs">
-                    <div className="flex items-center justify-between text-[11px] text-zinc-500 mb-1">
-                      <span className="font-mono text-orange-400">@{c.author}</span>
-                      <span className="text-zinc-400">{c.karma} points • vibe: {c.vibe}</span>
+            {(researchData.hnCommunitySentiment?.topHnComments?.length ?? 0) > 0 && (
+              <div>
+                <span className="text-xs font-bold text-zinc-400 uppercase tracking-wide">
+                  Quoted HN Comments (verbatim, from the retrieved thread)
+                </span>
+                <div className="mt-2 space-y-2">
+                  {researchData.hnCommunitySentiment.topHnComments.map((c, i) => (
+                    <div key={i} className="rounded-lg bg-zinc-950/60 p-2.5 border border-zinc-800/80 text-xs">
+                      <div className="flex items-center justify-between text-[11px] text-zinc-500 mb-1">
+                        <span className="font-mono text-orange-400">@{c.author}</span>
+                        <span className="text-zinc-400">
+                          {c.karma != null ? `${c.karma} points • ` : ''}vibe: {c.vibe}
+                        </span>
+                      </div>
+                      <p className="text-zinc-300 italic">"{c.comment}"</p>
                     </div>
-                    <p className="text-zinc-300 italic">"{c.comment}"</p>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -203,9 +211,11 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
           </span>
           <div className="flex flex-wrap gap-2">
             {researchData.groundingSources.map((source, idx) => {
-              const rescued = source.via && source.via !== 'direct';
+              const rescued = source.via === 'jina' || source.via === 'wayback';
               const viaLabel =
-                source.via === 'jina'
+                source.via === 'hn-api'
+                  ? 'read via the Hacker News API — the discussion thread, not the linked article'
+                  : source.via === 'jina'
                   ? 'via reader proxy — direct fetch failed'
                   : source.via === 'wayback'
                   ? `Wayback snapshot${source.snapshotDate ? ` (${source.snapshotDate.slice(0, 10)})` : ''} — direct fetch failed`
@@ -239,9 +249,21 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
 
       {/* Bottom Action Bar */}
       <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
+        <select
+          id="plan-preset-select"
+          value={preset}
+          onChange={(e) => setPreset(e.target.value as PlanPresetKey)}
+          className="rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs font-medium text-zinc-200 focus:outline-none focus:ring-1 focus:ring-orange-500"
+        >
+          {(Object.keys(PLAN_PRESETS) as PlanPresetKey[]).map((k) => (
+            <option key={k} value={k}>
+              {PLAN_PRESETS[k].label}
+            </option>
+          ))}
+        </select>
         <button
           id="proceed-to-plan-button"
-          onClick={() => onProceedToPlan(researchData.infotainmentAngles?.[selectedAngleIndex]?.title)}
+          onClick={() => onProceedToPlan(researchData.infotainmentAngles?.[selectedAngleIndex]?.title, preset)}
           className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-600/30 hover:from-orange-500 hover:to-amber-400 transition-all cursor-pointer"
         >
           <Sparkles className="h-4 w-4" />

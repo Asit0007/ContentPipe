@@ -144,6 +144,17 @@ function parseStoryInput(messageText: string): ParsedStoryTopic {
   };
 }
 
+/**
+ * Canned fallback content used to invent Hacker News commenters (handles + karma) and a
+ * community "consensus". None of it was ever read from a thread, so it is now an
+ * explicit statement that nothing was retrieved.
+ */
+const NO_HN_DISCUSSION = {
+  consensus: 'No Hacker News discussion was retrieved (offline sample content).',
+  contrarianView: 'No Hacker News discussion was retrieved (offline sample content).',
+  topHnComments: [] as Array<{ author: string; comment: string; vibe: 'skeptical' | 'excited' | 'cynical' | 'insightful' }>,
+};
+
 export function generateFallbackResearch(messageText: string, channelName: string = 'HN Radar') {
   const parsed = parseStoryInput(messageText);
 
@@ -161,40 +172,7 @@ export function generateFallbackResearch(messageText: string, channelName: strin
       coreTechExplanation: isJfrog
         ? `The vulnerability stems from improper authentication validation in default deployment setups. Unauthenticated requests to internal token-generation endpoints bypass authorization checks, allowing threat actors to generate signed JWTs and administrative access keys directly.`
         : `Under the hood, the exploit circumvents authorization checks by manipulating ${parsed.coreMechanism}, allowing unauthorized network actors to escalate privileges to full root/admin.`,
-      hnCommunitySentiment: {
-        consensus: isJfrog
-          ? `Engineers agree that Artifactory instances holding proprietary build artifacts are critical single points of failure, urging immediate version audits and default configuration lockdowns.`
-          : `The community consensus urges immediate patching, warning that automated scanners weaponize public disclosures within 48 to 72 hours.`,
-        contrarianView: isJfrog
-          ? `DevOps veterans are debating why high-privilege token generation endpoints were ever reachable without authentication in default configurations out of the box.`
-          : `Some engineers argue that organizations rely too heavily on perimeter security rather than zero-trust internal network policies.`,
-        topHnComments: [
-          {
-            author: 'devops_sec_ops',
-            karma: 1420,
-            comment: isJfrog
-              ? 'If your company uses Artifactory in your CI/CD, stop what you are doing and check your version right now. Exploits are already weaponized in the wild.'
-              : 'Network access with zero login required is essentially CVSS 9.8+ territory. Drop everything and audit your perimeter.',
-            vibe: 'excited',
-          },
-          {
-            author: 'supply_chain_auditor',
-            karma: 980,
-            comment: isJfrog
-              ? 'Artifactory holds the crown jewels of enterprise software. Minting admin tokens means attackers can poison release containers silently without tripping alarms.'
-              : 'Look at how fast the weaponization happened after disclosure. Attackers automate these scans in hours.',
-            vibe: 'insightful',
-          },
-          {
-            author: 'cloud_architect',
-            karma: 670,
-            comment: isJfrog
-              ? 'Default configurations should always fail closed. Exposing token minting endpoints without strict auth is a huge design oversight.'
-              : 'Always assume attackers have internal network access. Defense in depth is not optional anymore.',
-            vibe: 'skeptical',
-          },
-        ],
-      },
+      hnCommunitySentiment: { ...NO_HN_DISCUSSION, topHnComments: [] },
       infotainmentAngles: [
         {
           title: 'The Zero-Click Master Key',
@@ -233,30 +211,7 @@ export function generateFallbackResearch(messageText: string, channelName: strin
     oneLineHook: `Why ${parsed.subject} is sparking a viral debate across the entire Hacker News community.`,
     summary: `An investigative breakdown of the story shared in ${channelName}. Developers and industry veterans are dissecting ${parsed.coreMechanism}, evaluating real-world implications, and analyzing the fallout.`,
     coreTechExplanation: `Under the hood, this centers around ${parsed.coreMechanism}. The core engineering challenge lies in balancing performance, security, and developer ergonomics against edge-case reliability.`,
-    hnCommunitySentiment: {
-      consensus: `The majority of engineers recognize the technical significance of ${parsed.subject}, though many urge careful validation in production environments.`,
-      contrarianView: `Skeptics argue that theoretical benchmarks and demo claims often overlook real-world maintenance and operational complexity.`,
-      topHnComments: [
-        {
-          author: 'senior_staff_eng',
-          karma: 1120,
-          comment: `This is one of the most interesting developments in ${parsed.subject} we have seen all year. The architectural trade-offs are fascinating.`,
-          vibe: 'excited',
-        },
-        {
-          author: 'cynical_sysadmin',
-          karma: 780,
-          comment: `Looks great in a clean demo, but wait until you have to maintain this under high load and unexpected edge cases.`,
-          vibe: 'skeptical',
-        },
-        {
-          author: 'compiler_nerd',
-          karma: 540,
-          comment: `If you analyze the underlying mechanics, the design decisions make complete sense. A very elegant solution.`,
-          vibe: 'insightful',
-        },
-      ],
-    },
+    hnCommunitySentiment: { ...NO_HN_DISCUSSION, topHnComments: [] },
     infotainmentAngles: [
       {
         title: `The ${parsed.subject} Revolution`,
@@ -385,7 +340,6 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
       estimatedTotalDuration: 58,
       totalWordCount: 156,
       targetWpm: 161,
-      viralityScore: 98,
       tonePacing: 'Urgent, Incisive & Sarcastic Tech',
       signatureIntro: `Welcome back to ${brand}—where we decode the wildest tech stories on the internet.`,
       signatureOutro: `Hit follow on ${brand} so you never miss another high-stakes tech postmortem.`,
@@ -463,19 +417,13 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
           infographic: {
             type: 'sentiment_gauge',
             title: 'HACKER NEWS THREAD SENTIMENT & COMMUNITY REACTION',
-            badge: '1,420 UPVOTES',
+            badge: 'SAMPLE DATA',
             badgeColor: '#ff6600',
             summary: 'Urgent calls to audit CI/CD perimeters vs architecture design critique',
             metrics: [
               { label: 'Community Urgency', value: '89%', subtext: 'Drop-everything patch', color: '#ff6600' },
               { label: 'Default Setup Critique', value: '94%', subtext: 'Why open by default?', color: '#38bdf8' }
-            ],
-            commentQuote: {
-              author: 'devops_sec_ops',
-              karma: 1420,
-              comment: 'If your company uses Artifactory in CI/CD, audit your version right now. Scanners are already mass-probing endpoints.',
-              vibe: 'Urgent & Authoritative'
-            }
+            ]
           }
         },
         {
@@ -558,7 +506,6 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
       estimatedTotalDuration: 58,
       totalWordCount: 154,
       targetWpm: 159,
-      viralityScore: 97,
       tonePacing: 'Urgent & Incisive Tech',
       signatureIntro: `Welcome back to ${brand}—where we decode the wildest tech stories on the internet.`,
       signatureOutro: `Hit follow on ${brand} so you never miss another high-stakes tech postmortem.`,
@@ -651,7 +598,6 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
     estimatedTotalDuration: 60,
     totalWordCount: 160,
     targetWpm: 160,
-    viralityScore: 97,
     tonePacing: 'Witty, Incisive & Sarcastic Tech',
     signatureIntro: `Welcome back to ${brand}—where we decode the wildest tech stories on the internet.`,
     signatureOutro: `Hit follow on ${brand} so you never miss another high-stakes tech postmortem.`,

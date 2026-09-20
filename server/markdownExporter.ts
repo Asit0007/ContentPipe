@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { formatTimestamp } from './timeline';
 
 /**
  * Renders a finished script to a production-ready Markdown brief and writes it
@@ -53,6 +54,8 @@ export function renderScriptMarkdown(payload: {
   out.push(`duration_sec: ${s.estimatedTotalDuration ?? ''}`);
   out.push(`scene_count: ${scenes.length}`);
   if (channelBrandName) out.push(`channel: ${JSON.stringify(channelBrandName)}`);
+  if (s.generation) out.push(`generation_complete: ${Boolean(s.generation.complete)}`);
+  for (const m of s.midrollMarkers || []) out.push(`midroll_${m.index}: ${JSON.stringify(m.timestamp)}`);
   out.push('---');
   out.push('');
 
@@ -60,6 +63,19 @@ export function renderScriptMarkdown(payload: {
   out.push('');
   if (research?.oneLineHook) out.push(`> ${research.oneLineHook}`);
   out.push('');
+
+  // ---- Loud warnings first: a reader must not mistake a degraded brief for a finished one ----
+  if (s.isQuotaFallback) {
+    out.push('> ⚠️ **Canned fallback content.** AI generation was unavailable, so this is placeholder material, not a real draft. Do not use it.');
+    out.push('');
+  }
+  if (s.generation && s.generation.complete === false && !s.isQuotaFallback) {
+    out.push(
+      `> ⚠️ **Incomplete generation:** ${s.generation.producedScenes}/${s.generation.requestedScenes} scenes, ~${s.generation.producedDurationSec}s of a ${s.generation.requestedDurationSec}s target.`
+    );
+    for (const d of s.generation.degraded || []) out.push(`> - ${d}`);
+    out.push('');
+  }
 
   // ---- Production header ----
   const meta: string[][] = [
@@ -70,21 +86,40 @@ export function renderScriptMarkdown(payload: {
     ['Word count', String(s.totalWordCount ?? scenes.reduce((n, x) => n + (x.wordCount || (x.narration || '').split(/\s+/).filter(Boolean).length), 0))],
     ['Target WPM', String(s.targetWpm ?? '—')],
     ['Tone / pacing', s.tonePacing || plan?.tone || '—'],
-    ['Virality score', s.viralityScore != null ? String(s.viralityScore) : '—'],
+    ...(s.generation
+      ? [['Generation', s.generation.complete ? 'complete' : `INCOMPLETE — ${s.generation.producedScenes}/${s.generation.requestedScenes} scenes`]]
+      : []),
+    ...(s.midrollMarkers?.length ? [['Mid-rolls', s.midrollMarkers.map((m: any) => m.timestamp).join(' and ')]] : []),
   ];
   out.push('## Production summary');
   out.push('');
   out.push(table(['Field', 'Value'], meta));
   out.push('');
 
+  // ---- Deterministic audit (no model involved) ----
+  const checks: any[] = Array.isArray(s.qualityChecks) ? s.qualityChecks : null;
+  if (checks) {
+    out.push('## Quality checks');
+    out.push('');
+    out.push('_Computed from the script itself — no model involved. Errors should block publishing; warnings need a human look._');
+    out.push('');
+    if (checks.length === 0) {
+      out.push('> The automated audit found nothing. That does not replace the manual checklist below.');
+    } else {
+      out.push(table(['Severity', 'Check', 'Detail', 'Scenes'], checks.map((c) => [String(c.severity).toUpperCase(), c.id, c.message, (c.sceneNumbers || []).join(', ') || '—'])));
+    }
+    out.push('');
+  }
+
   // ---- Sources, stated up front so claims are checkable ----
   const retrieved: any[] = research?.retrievedSources || [];
   const readSources = retrieved.filter((r) => r.ok);
-  const rescuedSources = readSources.filter((r) => r.via && r.via !== 'direct');
+  const rescuedSources = readSources.filter((r) => r.via === 'jina' || r.via === 'wayback');
   const retrievalLabel = (r: any): string => {
     if (!r.ok) return '—';
     if (!r.via || r.via === 'direct') return 'live';
     if (r.via === 'jina') return 'reader proxy';
+    if (r.via === 'hn-api') return 'HN API (discussion thread)';
     return `archive snapshot${r.snapshotDate ? ` (${r.snapshotDate.slice(0, 10)})` : ''}`;
   };
   out.push('## Sources');
@@ -133,6 +168,86 @@ export function renderScriptMarkdown(payload: {
       )
     );
     out.push('');
+  }
+
+  // ---- Timeline, chapters and mid-rolls ----
+  if (Array.isArray(s.chapters) && s.chapters.length) {
+    out.push('## Timeline & monetization');
+    out.push('');
+    out.push('### Chapters');
+    out.push('');
+    out.push(table(['Time', 'Chapter'], s.chapters.map((c: any) => [c.timestamp, c.label])));
+    out.push('');
+  }
+  if (Array.isArray(s.midrollMarkers) && s.midrollMarkers.length) {
+    if (!(Array.isArray(s.chapters) && s.chapters.length)) {
+      out.push('## Timeline & monetization');
+      out.push('');
+    }
+    out.push('### Manual mid-roll placement');
+    out.push('');
+    out.push(table(['#', 'Time', 'After scene', 'Why here'], s.midrollMarkers.map((m: any) => [String(m.index), m.timestamp, String(m.afterSceneNumber), m.reason])));
+    out.push('');
+  }
+
+  // ---- Manual checklist: what code cannot verify ----
+  out.push('## Pre-publish checklist (manual)');
+  out.push('');
+  out.push('Nothing below is verified by the pipeline; each item is a human decision.');
+  out.push('');
+  for (const item of [
+    'Narration rewritten by a human for voice and commentary — this draft is AI output and must not ship as raw LLM text.',
+    'Voiceover is not a default or popular TTS preset (premium TTS or your own voice).',
+    'Real evidence captured or planned for every terminal / diagram / headline scene: website screenshots, code-repo b-roll, data graphs — not AI stills alone.',
+    'Every figure, CVE id, date and quote checked against its cited source (see "Unsupported specifics" above and the Sources table).',
+    'YouTube "altered or synthetic content" disclosure set if the video contains realistic AI-generated imagery or voice.',
+    'Mid-roll ads placed manually at the timestamps above (only possible on videos of 8:00 or longer).',
+    'Sponsor / affiliate disclosure added if applicable.',
+  ]) {
+    out.push(`- [ ] ${item}`);
+  }
+  out.push('');
+
+  // ---- Publishing package (titles / thumbnails / description / tags) ----
+  const pub = s.publish;
+  if (pub) {
+    out.push('## Publishing package');
+    out.push('');
+    if (pub.deterministicOnly) {
+      out.push('> ⚠️ **AI generation was unavailable** — no titles, thumbnails or tags were produced. Only the deterministic parts (chapters, mid-rolls, sources) are below.');
+      out.push('');
+    }
+    const lintText = (issues: any[]) => (issues || []).filter((i) => i.severity !== 'info').map((i) => `${i.severity.toUpperCase()}: ${i.message}`).join(' · ') || 'clean';
+    if (pub.recommendedTitle) {
+      out.push(`**Recommended title:** ${pub.recommendedTitle}${pub.recommendedThumbnail ? ` — pair with thumbnail ${pub.recommendedThumbnail}` : ''}`);
+      out.push('');
+    }
+    if (pub.titles?.length) {
+      out.push(table(['#', 'Title', 'Chars', 'Structure', 'Best thumb', 'Lint'], pub.titles.map((t: any, i: number) => [String(i + 1), t.title, String(t.chars), t.structure, t.bestThumbnail, lintText(t.lint)])));
+      out.push('');
+    }
+    for (const t of pub.thumbnails || []) {
+      out.push(`### Thumbnail ${t.variant} — ${t.concept}`);
+      out.push('');
+      out.push(table(['Field', 'Value'], [['Text overlay', t.textOverlay], ['Layout', t.layout], ['Why', t.rationale], ['Lint', lintText(t.lint)]]));
+      out.push('');
+      out.push(fence(t.imagePrompt || '', 'text'));
+      out.push('');
+    }
+    if (pub.description) {
+      out.push('### Description');
+      out.push('');
+      out.push(fence(pub.description, 'text'));
+      out.push('');
+    }
+    if (pub.tags?.length) out.push(`**Tags:** ${pub.tags.join(', ')}`, '');
+    if (pub.hashtags?.length) out.push(`**Hashtags:** ${pub.hashtags.map((h: string) => `#${h}`).join(' ')}`, '');
+    if (pub.todos?.length) {
+      out.push('### Still to do by hand');
+      out.push('');
+      for (const t of pub.todos) out.push(`- [ ] ${t}`);
+      out.push('');
+    }
   }
 
   // ---- Style guide ----
@@ -198,14 +313,23 @@ export function renderScriptMarkdown(payload: {
   out.push('');
 
   // ---- Shot list ----
+  // Start times come from the script's own timeline when present, else accumulate durations.
+  let acc = 0;
+  const startTimes: string[] = scenes.map((sc, i) => {
+    const fromTimeline = s.timeline?.[i]?.startSec;
+    const t = typeof fromTimeline === 'number' ? fromTimeline : acc;
+    acc += Number(sc.durationEst) || 0;
+    return formatTimestamp(t);
+  });
   if (scenes.length) {
     out.push('## Shot list');
     out.push('');
     out.push(
       table(
-        ['#', 'Scene', 'Dur', 'Shot', 'Camera', 'Transition', 'Sources'],
-        scenes.map((sc) => [
+        ['#', 'Start', 'Scene', 'Dur', 'Shot', 'Camera', 'Transition', 'Sources'],
+        scenes.map((sc, i) => [
           String(sc.sceneNumber ?? ''),
+          startTimes[i],
           sc.title || '',
           sc.durationEst ? `${sc.durationEst}s` : '—',
           sc.motion?.shotType || '—',
@@ -339,7 +463,7 @@ export function renderScriptMarkdown(payload: {
       if (g.commentQuote) {
         out.push(`> "${g.commentQuote.comment}"`);
         out.push('>');
-        out.push(`> — **${g.commentQuote.author}** (${g.commentQuote.karma} karma, ${g.commentQuote.vibe})`);
+        out.push(`> — **${g.commentQuote.author}** (${g.commentQuote.vibe}${g.commentQuote.karma != null ? `, ${g.commentQuote.karma} karma` : ''})`);
         out.push('');
       }
     }

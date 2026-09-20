@@ -1,0 +1,227 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
+
+/**
+ * End-to-end check of the failure contract over real HTTP.
+ *
+ * Runs the REAL server (tsx server.ts) against a stub Gemini upstream — the SDK honours
+ * GOOGLE_GEMINI_BASE_URL — so 429s, overloads, kill -9 crash recovery and the in-flight lock
+ * are exercised without spending any quota. `npm run test:e2e`; not part of `npm test`
+ * because it spawns processes and one scenario waits out the real 8 s overload retry.
+ */
+
+const REPO = path.resolve(import.meta.dirname, '..');
+const APP_PORT = 3192;
+const APP = `http://127.0.0.1:${APP_PORT}`;
+// The stub's per-day 429 is the body captured live from Gemini (limit: 20 on gemini-3.7-flash).
+const PERDAY = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemini-429-perday.json'), 'utf8'));
+
+const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [] as string[] };
+let stubServer: http.Server;
+let stubPort = 0;
+let app: ChildProcess | null = null;
+let runsDir = '';
+
+function stubAnswer(prompt: string): { status: number; body: any } {
+  if (stub.overloaded) {
+    stub.log.push('overloaded-call');
+    return { status: 503, body: { error: { code: 503, status: 'UNAVAILABLE', message: 'This model is currently experiencing high demand.' } } };
+  }
+  let out: any;
+  let tag: string;
+  if (prompt.includes('preparing a research dossier')) {
+    tag = 'research';
+    out = {
+      topicTitle: 'T', oneLineHook: 'h', summary: 's', coreTechExplanation: 'c',
+      hnCommunitySentiment: { consensus: 'none', contrarianView: 'none', topHnComments: [] },
+      infotainmentAngles: [{ title: 'a', hook: 'h', whyItGoesViral: 'w' }], keyFacts: ['f'], timeline: [{ dateOrPhase: 'p', event: 'e' }], groundingSources: [],
+    };
+  } else if (prompt.includes('production designer')) {
+    tag = 'bible';
+    out = { characterBible: [{ id: 'a', name: 'A', role: 'analyst', appearance: 'x', wardrobe: 'w', palette: 'p', promptAnchor: 'ANCHOR' }], styleGuide: { artDirection: 'noir', colorPalette: 'c', lighting: 'l', lensAndFilm: 'f', negativePrompt: 'n' } };
+  } else if (prompt.includes('art director and cinematographer')) {
+    const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
+    tag = `art@${nums[0]}`;
+    out = { scenes: nums.map((n) => ({ sceneNumber: n, visual: { character: 'c', background: 'b', scene: `s${n}`, styleAnchor: 'STYLE', negative: 'n' }, motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' }, citations: [] })) };
+  } else if (!/Write EXACTLY (\d+) new scenes/.test(prompt)) {
+    // Fail loudly rather than leave the request hanging if a new prompt kind appears.
+    return { status: 400, body: { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'e2e stub does not recognise this prompt' } } };
+  } else {
+    const count = Number(prompt.match(/Write EXACTLY (\d+) new scenes/)![1]);
+    const at = Number(prompt.match(/starting at (\d+)/)![1]);
+    tag = `narr@${at}`;
+    if (stub.failNarrFrom && at >= stub.failNarrFrom) {
+      if (stub.log[stub.log.length - 1] !== tag) stub.log.push(tag);
+      return { status: 429, body: PERDAY };
+    }
+    out = { scenes: Array.from({ length: count }, (_, i) => ({ sceneNumber: at + i, title: `S${at + i}`, actPhase: at + i === 1 ? 'Hook' : 'Technical Breakdown', narration: 'word '.repeat(30).trim(), durationEst: 10, visualPrompt: 'vp', visualType: 'terminal', onScreenText: 'x', soundEffect: 'y' })) };
+  }
+  if (stub.log[stub.log.length - 1] !== tag) stub.log.push(tag);
+  return { status: 200, body: { candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(out) }] }, finishReason: 'STOP' }], usageMetadata: {} } };
+}
+
+before(async () => {
+  runsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cp-e2e-runs-'));
+  stubServer = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', async () => {
+      const body = JSON.parse(raw || '{}');
+      const prompt = (body.contents || []).flatMap((c: any) => (c.parts || []).map((p: any) => p.text || '')).join('');
+      if (stub.delayMs) await new Promise((r) => setTimeout(r, stub.delayMs));
+      const { status, body: out } = stubAnswer(prompt);
+      res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(out));
+    });
+  });
+  await new Promise<void>((r) => stubServer.listen(0, '127.0.0.1', r));
+  stubPort = (stubServer.address() as any).port;
+});
+after(async () => {
+  await stopApp();
+  stubServer.close();
+  await fs.rm(runsDir, { recursive: true, force: true });
+});
+
+async function startApp() {
+  app = spawn('npx', ['tsx', 'server.ts'], {
+    cwd: REPO,
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
+  });
+  for (let i = 0; i < 120; i++) {
+    try {
+      if ((await fetch(`${APP}/api/health`)).ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error('app did not start');
+}
+async function stopApp() {
+  if (!app?.pid) return;
+  try { process.kill(-app.pid, 'SIGKILL'); } catch {}
+  app = null;
+  await new Promise((r) => setTimeout(r, 300));
+}
+async function restartApp() {
+  await stopApp();
+  await startApp();
+}
+async function post(pathname: string, body: unknown, strict = false) {
+  const res = await fetch(APP + pathname, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(strict ? { 'X-ContentPipe-Strict': '1' } : {}) }, body: JSON.stringify(body) });
+  return { status: res.status, headers: res.headers, body: (await res.json()) as any };
+}
+const SCRIPT_REQ = {
+  videoPlan: { title: 'T', tone: 'Deep Dive Documentary', targetDurationSec: 60, format: '16:9' },
+  researchData: { topicTitle: 'T', summary: 's', retrievedSources: [] },
+  channelBrandName: 'Blast Radius',
+};
+const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [] }, over);
+
+/** Independent of server/quota.ts: seconds until the next 00:00 in America/Los_Angeles. */
+function secondsToNextPacificMidnight(): number {
+  const now = new Date();
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: 'numeric', minute: 'numeric', second: 'numeric' }).formatToParts(now).filter((p) => p.type !== 'literal').map((p) => [p.type, Number(p.value)]));
+  return 86400 - (parts.hour * 3600 + parts.minute * 60 + parts.second); // valid except on the two DST-transition days
+}
+
+test('STRICT: a daily-quota hit mid-script answers 429 + Retry-After with runId/progress — never a truncated or canned script', async () => {
+  reset({ failNarrFrom: 4 });
+  await startApp();
+  const r = await post('/api/script', SCRIPT_REQ, true);
+  assert.equal(r.status, 429);
+  assert.ok(Math.abs(Number(r.headers.get('retry-after')) - secondsToNextPacificMidnight()) <= 10 || Math.abs(Number(r.headers.get('retry-after')) - secondsToNextPacificMidnight()) >= 3500, 'Retry-After ≈ next midnight Pacific (an hour off is tolerated only on DST days)');
+  assert.equal(r.body.kind, 'per_day');
+  assert.equal(r.body.retryable, true);
+  assert.deepEqual(r.body.progress, { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, scenesSoFar: 3 });
+  assert.ok(r.body.runId);
+  assert.equal(r.body.scenes, undefined);
+  assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4']);
+});
+
+test('CRASH: kill -9, restart, quota reset → the identical request resumes and re-spends ONLY the unfinished calls', async () => {
+  // Continues the previous scenario: the journal it left in runsDir must survive the crash.
+  assert.ok((await fs.readdir(runsDir)).some((f) => f.endsWith('.json')), 'journal on disk before the crash');
+  await stopApp(); // SIGKILL — no graceful shutdown
+  reset();
+  await startApp();
+  const r = await post('/api/script', SCRIPT_REQ, true);
+  assert.equal(r.status, 200);
+  assert.deepEqual(stub.log, ['narr@4', 'art@1'], 'bible and the first chunk must not be requested again');
+  assert.equal(r.body.scenes.length, 5);
+  assert.ok(r.body.scenes.every((s: any) => s.visual && s.motion));
+  assert.equal(r.body.generation.complete, true);
+  assert.equal(r.body.generation.resumed, true);
+  assert.deepEqual(r.body.scenes.map((s: any) => s.sceneNumber), [1, 2, 3, 4, 5]);
+  assert.equal(r.body.signatureIntro, '', 'documentary tone opens cold — no "Welcome back"');
+});
+
+test('REGENERATE after delivery starts a fresh run instead of replaying the delivered one', async () => {
+  await new Promise((r) => setTimeout(r, 300)); // markDelivered runs on the response "finish" event
+  reset();
+  const r = await post('/api/script', SCRIPT_REQ, true);
+  assert.equal(r.status, 200);
+  assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4', 'art@1']);
+  assert.ok(!r.body.generation.resumed);
+});
+
+test('UI path (no strict header): the same fault still returns 200 with a partial script, disclosed in generation', async () => {
+  await stopApp();
+  await fs.rm(runsDir, { recursive: true, force: true });
+  reset({ failNarrFrom: 4 });
+  await startApp();
+  const r = await post('/api/script', SCRIPT_REQ, false);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.scenes.length, 3);
+  assert.equal(r.body.generation.complete, false);
+  assert.ok(r.body.generation.degraded.some((d: string) => /stops at 3\/5/.test(d)));
+  assert.ok(r.body.qualityChecks.some((c: any) => c.id === 'generation-incomplete' && c.severity === 'error'));
+});
+
+test('STRICT + overload: 503 + Retry-After after one bounded wait; the UI path gets its usual canned fallback', async () => {
+  await stopApp();
+  reset({ overloaded: true });
+  await startApp();
+  const t0 = Date.now();
+  const strict = await post('/api/research', { messageText: 'no links here' }, true);
+  assert.equal(strict.status, 503);
+  assert.equal(strict.headers.get('retry-after'), '30');
+  assert.ok(Date.now() - t0 >= 7000, 'waited the 8 s overload pause once before giving up');
+  assert.equal(stub.log.filter((l) => l === 'overloaded-call').length, 6, '3 tiers x 2 passes');
+  const ui = await post('/api/research', { messageText: 'no links here' }, false);
+  assert.equal(ui.status, 200);
+  assert.equal(ui.body.isQuotaFallback, true);
+});
+
+test('CONCURRENCY: an identical request while the first run is in flight gets 409, not a second run', async () => {
+  await stopApp();
+  await fs.rm(runsDir, { recursive: true, force: true });
+  reset({ delayMs: 800 });
+  await startApp();
+  const first = post('/api/script', SCRIPT_REQ, true);
+  await new Promise((r) => setTimeout(r, 1200));
+  const second = await post('/api/script', SCRIPT_REQ, true);
+  assert.equal(second.status, 409);
+  assert.equal(second.body.kind, 'in_progress');
+  const done = await first;
+  assert.equal(done.status, 200);
+  assert.equal(done.body.generation.complete, true);
+});
+
+test('SSRF: internal URLs are refused and never fetched; a bad runId is rejected instead of becoming a filename', async () => {
+  await stopApp();
+  reset();
+  await startApp();
+  const r = await post('/api/research', { messageText: 'story', sourceUrls: ['http://169.254.169.254/latest/meta-data/', 'http://localhost:3192/api/health'] }, false);
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.retrievedSources.map((s: any) => s.ok), [false, false]);
+  assert.ok(r.body.retrievedSources.every((s: any) => /^Blocked:/.test(s.error)), JSON.stringify(r.body.retrievedSources));
+  const bad = await post('/api/script', { ...SCRIPT_REQ, runId: '../../etc/passwd' }, false);
+  assert.equal(bad.status, 400);
+});

@@ -18,6 +18,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
 }) => {
   const [inputMode, setInputMode] = useState<'custom' | 'telegram' | 'presets'>('custom');
   const [customText, setCustomText] = useState(currentMessage.text);
+  const [sourceUrlsText, setSourceUrlsText] = useState((currentMessage.sourceUrls || []).join('\n'));
   const [channelName, setChannelName] = useState(currentMessage.channelName || 'Custom Input');
   const [senderHandle, setSenderHandle] = useState(currentMessage.senderHandle || '@techlead');
   const [selectedSampleId, setSelectedSampleId] = useState<string>(SAMPLE_TELEGRAM_MESSAGES[0].id);
@@ -44,6 +45,8 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
       channelName: channelName.trim() || 'Custom Story',
       senderHandle: senderHandle.trim() || '@creator',
       timestamp: 'Just now',
+      // Only real http(s) links are sent; anything else on the line is ignored rather than guessed at.
+      sourceUrls: sourceUrlsText.split(/\s+/).filter((u) => /^https?:\/\//i.test(u)),
     };
     onUpdateMessage(updated);
     onStartResearch(updated);
@@ -183,6 +186,20 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
 - An incident postmortem, Linux kernel bug, or distributed systems outage
 - Your startup pitch or engineering technical deep dive..."
                 className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800 p-4 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 resize-y leading-relaxed font-sans transition-all"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="source-urls-textarea" className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                Source links <span className="normal-case font-normal text-zinc-500">(optional, one per line — these are actually fetched and read)</span>
+              </label>
+              <textarea
+                id="source-urls-textarea"
+                rows={3}
+                value={sourceUrlsText}
+                onChange={(e) => setSourceUrlsText(e.target.value)}
+                placeholder={'https://example.com/advisory\nhttps://news.ycombinator.com/item?id=39865810'}
+                className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800 p-3 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 resize-y font-mono"
               />
             </div>
 

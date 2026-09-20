@@ -42,7 +42,7 @@ export const researchSchema = {
                 enum: ['skeptical', 'excited', 'cynical', 'insightful'],
               },
             },
-            required: ['author', 'karma', 'comment', 'vibe'],
+            required: ['author', 'comment', 'vibe'],
           },
         },
       },
@@ -251,7 +251,7 @@ const infographicSchema = {
         comment: { type: Type.STRING },
         vibe: { type: Type.STRING },
       },
-      required: ['author', 'karma', 'comment', 'vibe'],
+      required: ['author', 'comment', 'vibe'],
     },
   },
   required: ['type', 'title'],
@@ -466,4 +466,62 @@ export const productionBibleSchema = {
   },
   required: ['characterBible', 'styleGuide'],
   propertyOrdering: ['characterBible', 'styleGuide'],
+};
+
+/**
+ * Publish-package pass: titles, thumbnail concepts and description copy only.
+ *
+ * Deliberately small and flat — two arrays of shallow objects and three arrays of
+ * strings, no nesting inside the items — because large/deep response schemas silently
+ * lose required fields or hard-fail (see scriptSceneItemSchema). Everything checkable
+ * (chapters, mid-rolls, sources, hashtag/tag hygiene, title linting, the recommendation)
+ * is computed in server/publishPackage.ts, not requested from the model.
+ */
+export const publishPackageSchema = {
+  type: Type.OBJECT,
+  properties: {
+    titles: {
+      type: Type.ARRAY,
+      minItems: 5,
+      maxItems: 5,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          structure: {
+            type: Type.STRING,
+            enum: ['how_entity_verb_object', 'truth_about', 'inside_event', 'why_concept_is_stakes', 'number_things_got_wrong'],
+          },
+          angle: { type: Type.STRING },
+          bestThumbnail: { type: Type.STRING, enum: ['A', 'B', 'C'] },
+        },
+        required: ['title', 'structure', 'angle', 'bestThumbnail'],
+        propertyOrdering: ['title', 'structure', 'angle', 'bestThumbnail'],
+      },
+    },
+    thumbnails: {
+      type: Type.ARRAY,
+      minItems: 3,
+      maxItems: 3,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          variant: { type: Type.STRING, enum: ['A', 'B', 'C'] },
+          concept: { type: Type.STRING },
+          imagePrompt: { type: Type.STRING },
+          textOverlay: { type: Type.STRING },
+          layout: { type: Type.STRING },
+          rationale: { type: Type.STRING },
+        },
+        required: ['variant', 'concept', 'imagePrompt', 'textOverlay', 'layout', 'rationale'],
+        propertyOrdering: ['variant', 'concept', 'imagePrompt', 'textOverlay', 'layout', 'rationale'],
+      },
+    },
+    descriptionHook: { type: Type.STRING },
+    learnBullets: { type: Type.ARRAY, minItems: 3, maxItems: 5, items: { type: Type.STRING } },
+    tags: { type: Type.ARRAY, minItems: 15, maxItems: 25, items: { type: Type.STRING } },
+    hashtags: { type: Type.ARRAY, minItems: 3, maxItems: 5, items: { type: Type.STRING } },
+  },
+  required: ['titles', 'thumbnails', 'descriptionHook', 'learnBullets', 'tags', 'hashtags'],
+  propertyOrdering: ['titles', 'thumbnails', 'descriptionHook', 'learnBullets', 'tags', 'hashtags'],
 };

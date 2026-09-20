@@ -165,7 +165,7 @@ export const exportScriptToGoogleDoc = async (
   let bodyText = `HACKER NEWS INFOTAINMENT PRODUCTION SCRIPT\n`;
   bodyText += `Title: ${videoScript.title}\n`;
   bodyText += `Target Platform: ${videoScript.targetPlatform} | Aspect Ratio: ${videoScript.aspectRatio}\n`;
-  bodyText += `Virality Score: ${videoScript.viralityScore || 95}/100 | Estimated Duration: ~${totalDuration}s\n`;
+  bodyText += `Estimated Duration: ~${totalDuration}s\n`;
   bodyText += `Total Words: ${totalWords} (~${wpm} WPM) | Total Scenes: ${videoScript.scenes.length}\n`;
   bodyText += `Exported Date: ${new Date().toLocaleString()}\n\n`;
 
@@ -248,7 +248,7 @@ export const exportScriptToGoogleDoc = async (
       }
 
       if (scene.infographic.commentQuote) {
-        bodyText += `• Featured Hacker News Quote: "${scene.infographic.commentQuote.comment}" -- by ${scene.infographic.commentQuote.author} (${scene.infographic.commentQuote.karma} upvotes)\n`;
+        bodyText += `• Featured Hacker News Quote: "${scene.infographic.commentQuote.comment}" -- by ${scene.infographic.commentQuote.author} ${scene.infographic.commentQuote.karma != null ? `(${scene.infographic.commentQuote.karma} upvotes)` : ''}\n`;
       }
       bodyText += `\n`;
     }
@@ -415,7 +415,6 @@ export const exportScriptToGoogleSheet = async (
     ['Episode Script Title', videoScript.title, 'Hacker News viral adaptation'],
     ['Target Platform', videoScript.targetPlatform, 'Optimized layout & pacing'],
     ['Aspect Ratio', videoScript.aspectRatio, 'Format framing'],
-    ['Virality Score', `${videoScript.viralityScore || 95} / 100`, 'High-retention structure'],
     ['Total Scene Count', String(videoScript.scenes.length), 'Full narrative arc'],
     ['Total Duration Est.', `~${totalDuration} seconds`, 'Calculated run time'],
     ['Total Word Count', `${totalWords} words`, `Target speed: ~${wpm} WPM`],

@@ -8,6 +8,7 @@ import { VideoStudio } from './components/VideoStudio';
 import { IPBrandingChatbot } from './components/IPBrandingChatbot';
 import { GoogleWorkspaceExportModal } from './components/GoogleWorkspaceExportModal';
 import { SAMPLE_TELEGRAM_MESSAGES } from './data/sampleMessages';
+import { PLAN_PRESETS, PlanPresetKey } from './data/planPresets';
 import { TelegramMessage, ResearchData, VideoPlan, VideoScript, IPBranding, WorkflowStep } from './types';
 import { AlertCircle } from 'lucide-react';
 
@@ -48,6 +49,7 @@ export default function App() {
         body: JSON.stringify({
           messageText: msg.text,
           channelName: msg.channelName,
+          ...(msg.sourceUrls?.length ? { sourceUrls: msg.sourceUrls } : {}),
         }),
       });
       const data = await response.json();
@@ -63,11 +65,22 @@ export default function App() {
   };
 
   // 2. Trigger Video Planning from Research
-  const handleProceedToPlan = async (selectedAngleTitle?: string) => {
+  const handleProceedToPlan = async (selectedAngleTitle?: string, presetKey?: PlanPresetKey) => {
     if (!researchData) return;
     setIsPlanLoading(true);
     setErrorMessage(null);
     setCurrentStep('plan');
+    // A regeneration keeps whatever was set on the blueprint (format, tone, duration). A first plan
+    // uses the preset chosen on the research screen; 'short' is exactly what was hardcoded before.
+    const preset = PLAN_PRESETS[presetKey ?? 'short'];
+    const settings =
+      videoPlan && !presetKey
+        ? {
+            targetFormat: videoPlan.format === '16:9' ? PLAN_PRESETS.documentary.targetFormat : PLAN_PRESETS.short.targetFormat,
+            targetTone: videoPlan.tone,
+            targetDurationSec: videoPlan.targetDurationSec || preset.targetDurationSec,
+          }
+        : { targetFormat: preset.targetFormat, targetTone: preset.targetTone, targetDurationSec: preset.targetDurationSec };
     try {
       const response = await fetch('/api/plan', {
         method: 'POST',
@@ -77,8 +90,7 @@ export default function App() {
             ...researchData,
             selectedAngle: selectedAngleTitle,
           },
-          targetFormat: '9:16 (Shorts / Reels / TikTok)',
-          targetTone: 'Witty Tech & Sarcastic',
+          ...settings,
         }),
       });
       const data = await response.json();
@@ -190,6 +202,7 @@ export default function App() {
             onRegenerateScript={handleProceedToScript}
             plan={videoPlan}
             research={researchData}
+            channelBrandName={activeIp?.name}
           />
         )}
 

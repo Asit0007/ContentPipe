@@ -56,8 +56,17 @@ export const PlanStage: React.FC<PlanStageProps> = ({
     onUpdatePlan({ ...videoPlan, tone: newTone });
   };
 
+  const durationLabel = (sec: number) => (sec < 120 ? `${sec} seconds` : `${Math.round((sec / 60) * 10) / 10} minutes (${sec}s)`);
+  const durations = Array.from(new Set([60, 180, 300, 540, 600, videoPlan.targetDurationSec || 60])).sort((a, b) => a - b);
+
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
+      {videoPlan.isQuotaFallback && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-xs text-rose-200">
+          <strong>Canned placeholder blueprint.</strong> AI generation was unavailable, so this plan is sample content, not a plan for your story.
+          Regenerate once quota is back.
+        </div>
+      )}
       {/* Top Banner with Controls */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 sm:p-8 shadow-xl space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -141,8 +150,20 @@ export const PlanStage: React.FC<PlanStageProps> = ({
             <span className="text-xs font-semibold text-zinc-400 block mb-2">Target Pacing Duration</span>
             <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-300">
               <Clock className="h-4 w-4 text-orange-400" />
-              <span>~{videoPlan.targetDurationSec || 60} seconds total</span>
+              <select
+                id="plan-duration-select"
+                value={videoPlan.targetDurationSec || 60}
+                onChange={(e) => onUpdatePlan({ ...videoPlan, targetDurationSec: Number(e.target.value) })}
+                className="flex-1 bg-transparent text-xs font-medium text-zinc-200 focus:outline-none"
+              >
+                {durations.map((d) => (
+                  <option key={d} value={d} className="bg-zinc-900">
+                    ~{durationLabel(d)} total
+                  </option>
+                ))}
+              </select>
             </div>
+            <p className="mt-1 text-[10px] text-zinc-500">Changing duration, format or tone? Regenerate the blueprint to apply it.</p>
           </div>
         </div>
       </div>

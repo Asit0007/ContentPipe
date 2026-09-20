@@ -12,3 +12,9 @@ firebase-applet-config.json
 
 # Generated script briefs — local working output
 exports/
+
+# Personal prompt library for a separate project — local only
+cyberpipeline-prompts.md
+
+# Script-run checkpoints (server/runJournal.ts) — local, disposable
+.runs/

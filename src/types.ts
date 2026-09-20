@@ -15,9 +15,12 @@ export interface TelegramMessage {
   tags: string[];
   views?: string;
   sourceUrl?: string;
+  /** Explicit source links to read for this story (in addition to any URLs in the text). */
+  sourceUrls?: string[];
 }
 
-export type FetchVia = 'direct' | 'jina' | 'wayback';
+/** 'hn-api' = an HN discussion thread read via the Algolia API (comments, not the linked article). */
+export type FetchVia = 'direct' | 'jina' | 'wayback' | 'hn-api';
 
 export interface RetrievedSource {
   /** Stable tag used in prompts and citations, e.g. "S1". */
@@ -98,7 +101,8 @@ export interface ResearchData {
     contrarianView: string;
     topHnComments: Array<{
       author: string;
-      karma: number;
+      /** Not provided by the HN API for comments; only ever present on legacy/canned data. */
+      karma?: number;
       comment: string;
       vibe: 'skeptical' | 'excited' | 'cynical' | 'insightful';
     }>;
@@ -149,6 +153,8 @@ export interface VideoPlan {
   }>;
   viralRetentionHooks: string[];
   callToAction: string;
+  /** True when this is canned fallback content (AI generation was unavailable). */
+  isQuotaFallback?: boolean;
 }
 
 export interface SceneInfographicStep {
@@ -186,7 +192,7 @@ export interface SceneInfographic {
   codeSnippet?: SceneInfographicCode;
   commentQuote?: {
     author: string;
-    karma: number;
+    karma?: number;
     comment: string;
     vibe: string;
   };
@@ -227,6 +233,93 @@ export interface VideoScriptScene {
   imageError?: string;
 }
 
+/** Mirrors ScriptGeneration in server/scriptPipeline.ts — change both together. */
+export interface ScriptGeneration {
+  runId?: string;
+  /** True when this response continued an interrupted run instead of starting one. */
+  resumed?: boolean;
+  requestedDurationSec: number;
+  requestedScenes: number;
+  producedScenes: number;
+  producedDurationSec: number;
+  /** Every requested scene exists, every scene is art-directed, and the production bible exists. */
+  complete: boolean;
+  /** Human-readable notes on what degraded; empty when complete. */
+  degraded: string[];
+}
+
+/** The four types below mirror server/timeline.ts — change both together. */
+export interface TimelineEntry {
+  sceneNumber: number;
+  startSec: number;
+  endSec: number;
+}
+export interface Chapter {
+  startSec: number;
+  timestamp: string;
+  label: string;
+}
+export interface MidrollMarker {
+  /** 1 = after the problem is set up, 2 = before the fix / conclusion. */
+  index: 1 | 2;
+  targetSec: number;
+  afterSceneNumber: number;
+  atSec: number;
+  timestamp: string;
+  reason: string;
+}
+export interface QualityCheck {
+  id: string;
+  severity: 'error' | 'warn' | 'info';
+  message: string;
+  sceneNumbers?: number[];
+}
+
+/** Mirrors the publish types in server/publishPackage.ts — change both together. */
+export interface LintIssue {
+  rule: string;
+  severity: 'error' | 'warn' | 'info';
+  message: string;
+}
+export interface TitleCandidate {
+  title: string;
+  structure: string;
+  angle: string;
+  bestThumbnail: 'A' | 'B' | 'C';
+  chars: number;
+  lint: LintIssue[];
+  /** No lint errors. Warnings and info do not disqualify a title. */
+  passesLint: boolean;
+}
+export interface ThumbnailConcept {
+  variant: 'A' | 'B' | 'C';
+  concept: string;
+  imagePrompt: string;
+  textOverlay: string;
+  layout: string;
+  rationale: string;
+  lint: LintIssue[];
+}
+export interface PublishPackage {
+  titles: TitleCandidate[];
+  thumbnails: ThumbnailConcept[];
+  /** Chosen by the linter (best-passing title), never by the model. */
+  recommendedTitle?: string;
+  recommendedThumbnail?: 'A' | 'B' | 'C';
+  description: string;
+  descriptionWordCount: number;
+  chapters: Chapter[];
+  midrollTimestamps: string[];
+  tags: string[];
+  hashtags: string[];
+  /** Things a human still has to do (unfilled {{PLACEHOLDER}}s, ineligible mid-roll, …). */
+  todos: string[];
+  /** True when the model was unavailable and only the deterministic parts were produced. */
+  deterministicOnly?: boolean;
+  isQuotaFallback?: boolean;
+  generatedAt: string;
+}
+
 export interface VideoScript {
   title: string;
   targetPlatform: 'Shorts/Reels/TikTok (9:16)' | 'YouTube Long-form (16:9)';
@@ -234,8 +327,20 @@ export interface VideoScript {
   estimatedTotalDuration: number;
   totalWordCount?: number;
   targetWpm?: number;
+  /** Retired: it was a hardcoded default, never a measurement. Kept only so old saved scripts still type-check. */
   viralityScore?: number;
   tonePacing?: string;
+  /** True when this is canned fallback content (AI generation was unavailable). */
+  isQuotaFallback?: boolean;
+  /** How much of the request was actually produced, and what degraded. */
+  generation?: ScriptGeneration;
+  /** Computed deterministically server-side from the scenes; absent on scripts generated before it existed. */
+  timeline?: TimelineEntry[];
+  chapters?: Chapter[];
+  midrollMarkers?: MidrollMarker[];
+  qualityChecks?: QualityCheck[];
+  /** Titles, thumbnails, description and tags; produced on demand by /api/publish-package. */
+  publish?: PublishPackage;
   signatureIntro: string;
   signatureOutro: string;
   /** Cast defined once; scenes reference these by id for visual consistency. */

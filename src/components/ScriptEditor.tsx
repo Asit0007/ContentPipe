@@ -23,7 +23,6 @@ import {
   Clock,
   Zap,
   AlignLeft,
-  Flame,
   Film,
   Camera,
   MessageSquare
@@ -31,6 +30,7 @@ import {
 import { VideoScript, VideoScriptScene, ImageResolution, VoiceName, VideoPlan, ResearchData } from '../types';
 import { playAudioFromBase64, pcmBase64ToWavDataUrl, speakWithBrowserSpeech, stopAllSpeechAndAudio, playWebAudioSFX } from '../utils/audioUtils';
 import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
+import { ScriptQualityPanel } from './ScriptQualityPanel';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -40,6 +40,7 @@ interface ScriptEditorProps {
   onRegenerateScript: () => void;
   plan?: VideoPlan | null;
   research?: ResearchData | null;
+  channelBrandName?: string;
 }
 
 export const ScriptEditor: React.FC<ScriptEditorProps> = ({
@@ -50,6 +51,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   onRegenerateScript,
   plan,
   research,
+  channelBrandName,
 }) => {
   const [viewMode, setViewMode] = useState<'director' | 'document' | 'teleprompter'>('director');
   const [selectedVoice, setSelectedVoice] = useState<VoiceName>('Puck');
@@ -338,6 +340,14 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
+      <ScriptQualityPanel
+        videoScript={videoScript}
+        research={research}
+        plan={plan}
+        channelBrandName={channelBrandName}
+        onUpdateScript={onUpdateScript}
+      />
+
       {/* Top Banner: Master Script Dossier */}
       <div className="rounded-2xl border border-orange-500/30 bg-gradient-to-br from-zinc-900 via-zinc-900 to-orange-950/20 p-6 sm:p-8 shadow-xl space-y-6 relative overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -345,9 +355,6 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 px-3 py-1 text-xs font-semibold text-orange-400">
               <Sparkles className="h-3.5 w-3.5" />
               <span>Final Destination • Master Detailed Script</span>
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
-              <Flame className="h-3 w-3" /> Virality Score: {videoScript.viralityScore || 96}/100
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/20 px-2.5 py-0.5 text-xs font-semibold text-sky-300">
               {videoScript.targetPlatform}
