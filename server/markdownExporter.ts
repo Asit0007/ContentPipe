@@ -127,17 +127,36 @@ export function renderScriptMarkdown(payload: {
   if (retrieved.length) {
     out.push(
       table(
-        ['ID', 'Title', 'URL', 'Status', 'Retrieval'],
+        // "Published" is what the page says about itself, and is the column that decides whether a
+        // story is current. It is separate from the retrieval date on purpose.
+        ['ID', 'Title', 'URL', 'Published', 'Status', 'Retrieval'],
         retrieved.map((r) => [
           r.id,
           r.title || '—',
           r.url,
-          r.ok ? `read (${r.wordCount} words)` : `NOT READ — ${r.error || 'unavailable'}`,
+          r.ok ? (r.publishedAt ? r.publishedAt.slice(0, 10) : 'not stated') : '—',
+          r.ok
+            ? `read (${r.wordCount} words)${r.truncated ? ` — truncated from ${r.retrievedChars}` : ''}`
+            : `NOT READ — ${r.error || 'unavailable'}`,
           retrievalLabel(r),
         ])
       )
     );
     out.push('');
+    const truncated = readSources.filter((r) => r.truncated);
+    if (truncated.length) {
+      out.push(
+        `> **${truncated.length} source(s) were read only in part** (${truncated.map((r) => r.id).join(', ')}). The dossier saw their opening, not the whole document — an absence in them is not evidence of absence.`
+      );
+      out.push('');
+    }
+    const undated = readSources.filter((r) => !r.publishedAt);
+    if (undated.length) {
+      out.push(
+        `> **${undated.length} source(s) state no publication date** (${undated.map((r) => r.id).join(', ')}). Do not describe anything resting on them as recent without checking.`
+      );
+      out.push('');
+    }
   }
   if (readSources.length === 0) {
     out.push('> **No sources were retrieved for this script.** Every factual claim below is unverified model output. Do not publish without checking.');

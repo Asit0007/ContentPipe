@@ -36,6 +36,12 @@ export interface RetrievedSource {
   retrievalUrl?: string;
   /** ISO timestamp of the archived capture. Only set when `via === 'wayback'`. */
   snapshotDate?: string;
+  /** The date the PAGE states for itself. Absent means the page did not say — not that it is new. */
+  publishedAt?: string;
+  /** The document was longer than the per-source cap; only its opening was read. */
+  truncated?: boolean;
+  /** Characters retrieved before truncation. Only set when `truncated`. */
+  retrievedChars?: number;
   error?: string;
 }
 
@@ -113,6 +119,9 @@ export interface ResearchData {
     whyItGoesViral: string;
   }>;
   keyFacts: string[];
+  /** What a full-length script still needs that the retrieved sources do not answer. The honest
+   *  alternative to padding keyFacts up to its floor — thin research says so here. */
+  researchGaps?: string[];
   timeline: Array<{
     dateOrPhase: string;
     event: string;
@@ -131,6 +140,18 @@ export interface ResearchData {
     fact: string;
     sourceIds: string[];
   }>;
+  /** Computed server-side, not by the model: how much of this dossier is actually backed by a
+   *  retrieved document. `uncitedFacts` is the number the script will have to carry on trust. */
+  researchCoverage?: {
+    sourcesUsable: number;
+    sourcesTruncated: number;
+    sourcesUndated: number;
+    keyFacts: number;
+    citedFacts: number;
+    uncitedFacts: number;
+    /** Where the full retrieved text was kept, so a later per-claim check can re-read it. */
+    sourceArchiveId?: string;
+  };
   isQuotaFallback?: boolean;
   selectedAngle?: string;
 }

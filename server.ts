@@ -13,7 +13,7 @@ import {
   generateFallbackIpList,
   generateFallbackNotebookLMPodcast,
 } from './server/fallbackGenerators';
-import { researchSchema, planSchema } from './server/schemas';
+import { researchSchema, planSchema, KEY_FACT_TARGET_WITH_SOURCES } from './server/schemas';
 import { getAIClient, generateGeminiJson, generateGeminiText, TEXT_MODELS } from './server/gemini';
 import {
   generateProductionBible,
@@ -26,6 +26,8 @@ import { analyzeScript } from './server/timeline';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
 import { extractUrls, fetchSources, buildSourceContext, sourceId } from './server/sourceFetcher';
+import { writeSourceArchive } from './server/sourceArchive';
+import { measureCoverage } from './server/researchCoverage';
 import { generateSceneImage } from './server/imageProviders';
 import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import { DEFAULT_CHANNEL_BRAND } from './shared/brand';
@@ -50,8 +52,12 @@ app.get('/api/health', (req, res) => {
 
 // 1. Research Agent: Takes input message, extracts topic, and conducts deep technical research
 app.post('/api/research', async (req, res) => {
-  const { messageText, channelName, sourceUrls } = req.body;
+  const { messageText, channelName, sourceUrls, targetDurationSec } = req.body;
   const strict = isStrict(req);
+  // Optional, and deliberately not defaulted: how much research a dossier needs depends entirely on
+  // the length of the script it has to carry, and guessing a length would either ask a 60-second
+  // short for nine minutes of depth or let a nine-minute documentary settle for four facts.
+  const researchForSec = Number(targetDurationSec) > 0 ? Number(targetDurationSec) : null;
   if (!messageText) {
     return res.status(400).json({ error: 'messageText is required' });
   }
@@ -77,6 +83,8 @@ app.post('/api/research', async (req, res) => {
     via: f.via,
     ...(f.retrievalUrl ? { retrievalUrl: f.retrievalUrl } : {}),
     ...(f.snapshotDate ? { snapshotDate: f.snapshotDate } : {}),
+    ...(f.publishedAt ? { publishedAt: f.publishedAt } : {}),
+    ...(f.truncated ? { truncated: true, retrievedChars: f.retrievedChars } : {}),
     ...(f.error ? { error: f.error } : {}),
   }));
   // Shared by the success and fallback paths below so both stay in sync — a
@@ -87,8 +95,12 @@ app.post('/api/research', async (req, res) => {
     url: f.url,
     via: f.via,
     ...(f.snapshotDate ? { snapshotDate: f.snapshotDate } : {}),
+    ...(f.publishedAt ? { publishedAt: f.publishedAt } : {}),
   }));
   const sourcesUnavailable = usable.length === 0;
+  // Keep what was read, so a later per-claim check has something to check against. Best-effort:
+  // a failed write is logged inside and never fails the request.
+  const sourceArchiveId = await writeSourceArchive(fetched);
 
   try {
     const ai = getAIClient();
@@ -104,10 +116,17 @@ ${messageText}
 </input>
 
 CRITICAL INSTRUCTIONS:
-0. SOURCE DISCIPLINE: Every specific figure, date, CVE id, version number, company name and direct quote must come from the PRIMARY SOURCE DOCUMENTS above. Populate "factCitations" mapping each entry of "keyFacts" to the source ids (S1, S2, …) that support it. If the sources do not cover a detail, omit it rather than inventing it. If no sources were retrieved, keep claims general and leave factCitations empty.
+0. SOURCE DISCIPLINE: Every specific figure, date, CVE id, version number, company name and direct quote must come from the PRIMARY SOURCE DOCUMENTS above. Populate "factCitations" mapping each entry of "keyFacts" to the source ids (S1, S2, …) that support it — every key fact gets an entry, because a fact nobody can trace is a fact the video cannot defend. If the sources do not cover a detail, omit it rather than inventing it. If no sources were retrieved, keep claims general and leave factCitations empty.
 1. Ground your entire research directly in the exact topic, technologies, vulnerabilities, tools, or events described in the Input Content above (e.g. if it is about JFrog Artifactory auth bypass or token minting, research and explain THAT exact story in detail; do NOT substitute generic frontend or framework topics).
 2. Synthesize the key facts, technical context, how the vulnerability or technology works under the hood, and angles suitable for short/long video content. Be precise and measured: state what is known, and mark what is not.
 3. COMMUNITY REACTION comes ONLY from a source document whose retrieval note says it was read via the Hacker News API. If there is none, set "hnCommunitySentiment" to {"consensus": "No Hacker News discussion was retrieved for this story.", "contrarianView": "No Hacker News discussion was retrieved for this story.", "topHnComments": []}. Never write a comment, handle or reaction that is not printed in a retrieved document — inventing a commenter is fabrication. When such a document exists, each "topHnComments" entry uses an author handle exactly as printed and a "comment" copied verbatim (shortening with … is fine); leave out any point/karma figure, the API does not provide one; "consensus" and "contrarianView" must be supportable from the comments actually shown there.
+4. DEPTH, AND WHAT TO DO WHEN THERE ISN'T ANY. ${
+      researchForSec
+        ? `This dossier has to carry a ${researchForSec}-second script — roughly ${Math.round((researchForSec * 150) / 60)} words of narration.`
+        : 'This dossier has to carry a full video script.'
+    } Aim for at least ${KEY_FACT_TARGET_WITH_SOURCES} distinct, citable entries in "keyFacts", and count as a fact anything concrete the documents state: the mechanism, affected versions and products, dates, who found it and how, numbers of systems or users, the vendor's response, the mitigation, what is still unresolved. Distinct is the point — one finding restated five ways is one fact.
+   When the retrieved documents genuinely do not support that many, return the ones they do support and put the shortfall in "researchGaps": one short line per missing piece, naming what the script still needs and what would answer it (for example "no affected version range stated — the vendor advisory would give it"). A short "keyFacts" plus an honest "researchGaps" is the correct answer here; padding the list to reach a number is a failure, because every unsupported line becomes a sentence a narrator says on camera.
+5. DATES: take "when" from each document's \`published\` attribute, not from \`retrieved\` (which is only when this tool read the page) and not from today's date. Where \`published\` is "not stated by the page", write the timing as unknown or leave it out.
 
 Return strictly a valid JSON object matching this schema:
 {
@@ -133,7 +152,13 @@ Return strictly a valid JSON object matching this schema:
       "whyItGoesViral": "Why viewers will care about this angle"
     }
   ],
-  "keyFacts": ["Fact 1", "Fact 2", "Fact 3", "Fact 4"],
+  "keyFacts": [
+    "One concrete, checkable statement drawn from the documents — the mechanism, a version range, a date, a number, the vendor response, the mitigation, or what remains unresolved",
+    "… as many distinct ones as the documents actually support"
+  ],
+  "researchGaps": [
+    "What a script this long still needs that the documents do not answer, and what would answer it — empty array if nothing is missing"
+  ],
   "factCitations": [
     { "fact": "the exact text of one keyFacts entry", "sourceIds": ["S1"] }
   ],
@@ -162,9 +187,17 @@ Return strictly a valid JSON object matching this schema:
     // a source the agent had consulted, which it never had.
     parsedData.retrievedSources = retrievedSources;
     parsedData.groundingSources = groundingSources;
+    parsedData.researchCoverage = measureCoverage(parsedData, fetched, sourceArchiveId);
     if (sourcesUnavailable) {
       parsedData.sourcesUnavailable = true;
     }
+    const cov = parsedData.researchCoverage;
+    console.log(
+      `[Research Agent] coverage: ${cov.citedFacts}/${cov.keyFacts} key facts cited from ${cov.sourcesUsable} source(s)` +
+        `${cov.sourcesTruncated ? `, ${cov.sourcesTruncated} truncated` : ''}` +
+        `${cov.sourcesUndated ? `, ${cov.sourcesUndated} undated` : ''}` +
+        `${parsedData.researchGaps?.length ? `, ${parsedData.researchGaps.length} gap(s) reported` : ''}`
+    );
 
     res.json(parsedData);
   } catch (error: any) {
@@ -177,6 +210,7 @@ Return strictly a valid JSON object matching this schema:
       ...fallback,
       retrievedSources,
       groundingSources,
+      researchCoverage: measureCoverage(fallback, fetched, sourceArchiveId),
       ...(sourcesUnavailable ? { sourcesUnavailable: true } : {}),
     });
   }

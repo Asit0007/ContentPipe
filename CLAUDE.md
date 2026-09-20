@@ -164,6 +164,44 @@ Strict mode rethrows *retryable* failures instead of absorbing them into a short
 
 A 9-minute script is ~25 sequential Gemini calls against ~20 requests/day per model, so restarting from zero after a quota hit at call 22 never converges. Each finished chunk is written to `.runs/<key>.json` (atomic temp+rename). **A run resumes iff its journal exists, its input hash matches, and it has not been delivered.** The key is `runId` from the body if given, else a hash of plan + research + brand — so an interrupted strict run resumes on the identical re-POST with no client cooperation, while "regenerate" after a delivered script starts fresh. A run that finished while its client was gone is served from the journal without regenerating. `fresh: true` discards. One in-flight run per key (409). Journals older than 7 days are pruned at startup. `CONTENTPIPE_RUNS_DIR` relocates it (the e2e test uses this).
 
+## What the retrieval layer promises about its own sources
+
+Everything here exists because the previous failure mode was not a crash — it was a dossier that
+looked fine and was not.
+
+**Binary is never text.** `res.text()` decodes a PDF into mojibake that has no tags, survives
+`htmlToText`, clears the 120-character floor, and is then reported as `ok: true, via: 'direct'` — a
+clean read. `unreadableAs()` (`server/sourceFetcher.ts`) refuses it by magic bytes, by content-type,
+and by the density of replacement/control characters in the decoded text, in that order, because
+content-type is often wrong or missing. A refused PDF is **not lost**: the direct rung fails, and
+r.jina.ai extracts PDF text properly on the next rung.
+
+**Two different dates, never merged.** `published` is what the page states about itself and is the
+only basis for "when"; `retrieved` is just when this tool read the page. A page that states no date
+gets `published="not stated by the page"` and the prompt forbids inferring one. A bare
+`<time datetime>` is deliberately not read — on an article page it is as likely to be a comment.
+
+**Truncation is disclosed, not silent.** The cap is 40k characters per source (raised from 12k,
+which cut most long-form write-ups off mid-article) and is applied in exactly one place,
+`fetchSource`, so every rung is capped alike. Whatever still overflows sets `truncated` and says so
+in the prompt and the exported brief: the model must not report an absence in a document it only
+half read.
+
+**The source text is kept.** `server/sourceArchive.ts` writes the exact text the model saw to
+`.runs/sources-<id>.json`, so the question "is this line in the script actually supported?" is
+answerable after the fact. It is on disk rather than in the response because six sources at the cap
+is ~240 KB that would otherwise ride in every research response, every CyberPipe job row, and every
+plan and script body that echoes the dossier back. Same 7-day `pruneOldRuns` sweep as the journals.
+
+**Depth is asked for in the prompt and measured in code.** `keyFacts` has a schema floor of 3 — only
+enough to catch a degenerate one-fact response. The real target (`KEY_FACT_TARGET_WITH_SOURCES`, 8)
+lives in the prompt, scaled by `targetDurationSec` when the caller supplies one, because a hard
+`minItems` on a thin story does not produce research, it produces invention. The prompt's honest way
+out is `researchGaps`: name what the script still needs and what would answer it. `measureCoverage`
+(`server/researchCoverage.ts`) then counts what is actually cited, server-side, so thin research is
+visible in `researchCoverage` rather than silently accepted — a model's own account of its sourcing
+would itself need checking.
+
 ## Retention audit and publish package
 
 `server/timeline.ts` is pure and deterministic — no model call, no quota. `/api/script` adds `timeline`, `chapters`, `midrollMarkers` and `qualityChecks` to the script: mid-rolls at ~2:30 and ~6:00 snapped to real scene boundaries (a semantic bonus for "after the problem is set up" / "before the fix"), **none and a warning if the runtime is under 8:00**, chapters grouped by `actPhase` (≥3, ≥10 s each, ≤12), and checks for missing hook, 30 s+ runs with no pattern interrupt, duration shortfall, narration that can't fit its scene, an AI-slideshow-risk evidence mix, and **specifics in the narration or on-screen text (CVE ids, %, $, large numbers, versions) that are not in the research dossier**. The matcher compares whole canonical tokens (`specificKey`: `pct:83.5`, `usd:1500000000`, `ver:5.6.1`, `num:5:gb`), never substrings — an earlier `includes()` over a squashed blob let `45%` pass on `2045`, `CVE-2024-3094` on `CVE-2024-30945` and `5.6.1` on `5.6.10`. Kind and named unit are part of the claim (`%` ≠ `$`, GB ≠ TB), spellings of one claim are equal (`83 percent` = `83%`, `$1.5B` = `$1.5 billion`, `1,200,000` = `1.2 million`), and the dossier is tokenised field by field. On-screen coverage is `onScreenText` plus infographic title/badge/summary/steps/metrics; code snippets are excluded on purpose (terminal lines look like versions). Bare numbers, years and CVSS scores like `9.8` are still not specifics — only the patterns in `SPECIFIC_RE` are checked. Thresholds are named constants at the top of the file; they encode the spec's targets, not measured truths, and the 8:00 rule should be re-verified against YouTube's current policy.

@@ -112,3 +112,30 @@ test('a deterministic-only package says loudly that no titles were produced', ()
   const md = render(longScript({ publish: { titles: [], thumbnails: [], description: 'd', descriptionWordCount: 1, chapters: [], midrollTimestamps: [], tags: [], hashtags: [], todos: [], deterministicOnly: true, isQuotaFallback: true, generatedAt: 'x' } }));
   assert.match(md, /AI generation was unavailable\*\* — no titles, thumbnails or tags were produced/);
 });
+
+test('the sources table separates the publication date from the retrieval, and flags what is missing', () => {
+  const md = render({ title: 'T', scenes: [] }, {
+      retrievedSources: [
+        { id: 'S1', url: 'https://a.example/1', title: 'Dated', ok: true, wordCount: 500, via: 'direct', publishedAt: '2026-03-29T10:15:00.000Z' },
+        { id: 'S2', url: 'https://b.example/2', title: 'Undated', ok: true, wordCount: 400, via: 'direct' },
+        { id: 'S3', url: 'https://c.example/3', title: 'Long', ok: true, wordCount: 6000, via: 'jina', truncated: true, retrievedChars: 91000 },
+      ],
+  });
+  assert.match(md, /\| Published \|/);
+  assert.match(md, /2026-03-29/);
+  assert.match(md, /not stated/);
+  assert.match(md, /truncated from 91000/);
+  assert.match(md, /1 source\(s\) were read only in part\*\* \(S3\)/);
+  // S3 is undated as well as truncated, so it is named in both warnings — the counts are per problem.
+  assert.match(md, /2 source\(s\) state no publication date\*\* \(S2, S3\)/);
+});
+
+test('sources that are all dated and complete get no warnings about dates or truncation', () => {
+  const md = render({ title: 'T', scenes: [] }, {
+      retrievedSources: [
+        { id: 'S1', url: 'https://a.example/1', title: 'Dated', ok: true, wordCount: 500, via: 'direct', publishedAt: '2026-03-29T10:15:00.000Z' },
+      ],
+  });
+  assert.doesNotMatch(md, /read only in part/);
+  assert.doesNotMatch(md, /state no publication date/);
+});

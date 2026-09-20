@@ -17,6 +17,22 @@ const groundingSource = {
   required: ['title', 'url'],
 };
 
+/**
+ * Key-fact depth, split deliberately into a schema floor and a prompt target.
+ *
+ * A 9-minute script is ~1,350 words of narration and four facts cannot carry it — that is how a
+ * long-form draft ends up restating one point five ways. The obvious fix, a high `minItems`, is
+ * the wrong one: `minItems` is a hard constraint, so on a thin story it does not produce research,
+ * it produces invention, which is the exact failure this pipeline is built to avoid.
+ *
+ * So the schema floor stays low and always satisfiable — it only catches the degenerate "returned
+ * one fact" response. The real depth target is asked for in the prompt, where it can come with a
+ * reason and an honest way out (`researchGaps`), and compliance is then measured server-side into
+ * `researchCoverage` so thin research is visible rather than silently accepted.
+ */
+export const MIN_KEY_FACTS = 3;
+export const KEY_FACT_TARGET_WITH_SOURCES = 8;
+
 export const researchSchema = {
   type: Type.OBJECT,
   properties: {
@@ -60,7 +76,13 @@ export const researchSchema = {
         required: ['title', 'hook', 'whyItGoesViral'],
       },
     },
-    keyFacts: { type: Type.ARRAY, items: { type: Type.STRING } },
+    keyFacts: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+      // The SDK types minItems as a string (it is an int64 over the wire).
+      minItems: String(MIN_KEY_FACTS),
+    },
+    researchGaps: { type: Type.ARRAY, items: { type: Type.STRING } },
     timeline: {
       type: Type.ARRAY,
       items: {
@@ -103,11 +125,14 @@ export const researchSchema = {
     'hnCommunitySentiment',
     'infotainmentAngles',
     'keyFacts',
+    'researchGaps',
     'timeline',
     'groundingSources',
     'factCitations',
   ],
 };
+
+
 
 export const planSchema = {
   type: Type.OBJECT,
