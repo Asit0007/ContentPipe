@@ -29,11 +29,11 @@ curl -s -m 240 -X POST localhost:3100/api/research \
   -o /tmp/r.json
 
 # 2. Plan
-python3 -c "import json;r=json.load(open('/tmp/r.json'));json.dump({'researchData':r,'targetFormat':'9:16','targetTone':'Cyberpunk Drama'},open('/tmp/pq.json','w'))"
+python3 -c "import json;r=json.load(open('/tmp/r.json'));json.dump({'researchData':r,'targetFormat':'9:16','targetTone':'Deep Dive Documentary'},open('/tmp/pq.json','w'))"
 curl -s -m 240 -X POST localhost:3100/api/plan -H 'Content-Type: application/json' -d @/tmp/pq.json -o /tmp/p.json
 
 # 3. Script — three passes server-side, slowest stage
-python3 -c "import json;r=json.load(open('/tmp/r.json'));p=json.load(open('/tmp/p.json'));json.dump({'videoPlan':p,'researchData':r,'channelBrandName':'The Orange Thread'},open('/tmp/sq.json','w'))"
+python3 -c "import json;r=json.load(open('/tmp/r.json'));p=json.load(open('/tmp/p.json'));json.dump({'videoPlan':p,'researchData':r,'channelBrandName':'Blast Radius'},open('/tmp/sq.json','w'))"
 curl -s -m 600 -X POST localhost:3100/api/script -H 'Content-Type: application/json' -d @/tmp/sq.json -o /tmp/s.json
 
 # 4. Export
