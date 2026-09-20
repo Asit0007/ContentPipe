@@ -206,31 +206,69 @@ export function placeMidrolls(scenes: any[], timeline: TimelineEntry[]): { marke
 
 // ---- specifics that must trace to the dossier ---------------------------------------------------------
 
-const SPECIFIC_PATTERNS: RegExp[] = [
-  /CVE-\d{4}-\d{4,7}/gi,
-  /\b\d+(?:\.\d+)?\s?%/g,
-  /\$\s?\d[\d,.]*(?:\s?(?:million|billion|thousand|[kmb]n?)\b)?/gi,
-  /\b\d{1,3}(?:,\d{3})+\b/g,
-  /(?<![\d,.])\d+(?:\.\d+)?\s?(?:million|billion|thousand|users|devices|servers|records|customers|GB|TB|MB)\b/gi,
-  /\bv?\d+\.\d+(?:\.\d+)+\b/g,
-];
-// "v5.6.1" and "Version 5.6.1" are the same claim; so are "1,200,000" and "1200000".
-export const normalizeSpecific = (s: string) => s.toLowerCase().replace(/^v(?=\d)/, '').replace(/[^a-z0-9.]/g, '');
+// A "specific" is a figure a viewer would repeat: a CVE id, a percentage, a dollar amount, a count or size,
+// a version. Each is parsed into a canonical key (`pct:83.5`, `usd:1500000000`, `ver:5.6.1`, ...) and compared
+// as a whole token. The first version squashed the dossier to `[a-z0-9.]` and used `includes()`, so "45%" was
+// "supported" by 2045, CVE-2024-3094 by CVE-2024-30945 and 5.6.1 by 5.6.10, and "$5" + "million users" in two
+// unrelated facts read as "5million".
+
+const DASHES = '\\u2010-\\u2015\\u2212'; // hyphen, non-breaking hyphen, en/em dash, minus: models emit all of them in CVE ids
+const NUM = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
+const SCALE = 'trillion|billion|million|thousand';
+const UNIT = 'users|devices|servers|records|customers|gb|tb|mb';
+const NOT_INSIDE_A_NUMBER = String.raw`(?<![\d,.])`;
+
+// One pass, first alternative wins at a given position, so "$5 million" is one token rather than also
+// yielding "5 million", and "1,200,000" is never split at its own comma.
+const SPECIFIC_RE = new RegExp(
+  [
+    String.raw`\bCVE[-${DASHES}]\d{4}[-${DASHES}]\d{4,7}(?!\d)`,
+    String.raw`\$\s?${NUM}(?:\s?(?:${SCALE}|[kmb]n?)\b)?`,
+    String.raw`${NOT_INSIDE_A_NUMBER}${NUM}(?:\s?(?:${SCALE}))?\s?(?:dollars|usd)\b`,
+    String.raw`${NOT_INSIDE_A_NUMBER}${NUM}\s?(?:%|percent\b|per cent\b)`,
+    String.raw`(?<![\w.])v?\d+\.\d+(?:\.\d+)+\b`,
+    String.raw`${NOT_INSIDE_A_NUMBER}(?:\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:\s?(?:${SCALE}))?(?:\s?(?:${UNIT}))?` +
+      String.raw`|\d+(?:\.\d+)?\s?(?:${SCALE})(?:\s?(?:${UNIT}))?` +
+      String.raw`|\d+(?:\.\d+)?\s?(?:${UNIT}))\b`,
+  ].join('|'),
+  'gi',
+);
 
 export function extractSpecifics(text: string): string[] {
   const found = new Set<string>();
-  for (const re of SPECIFIC_PATTERNS) for (const m of text.match(re) || []) found.add(m.trim());
-  // Patterns overlap ("$5 million" also matches "5 million", and their normalised forms are equal).
-  // Take the longest raw form first and keep a token only if no kept token already contains it.
-  const kept: string[] = [];
-  for (const t of [...found].sort((a, b) => b.length - a.length)) {
-    if (!kept.some((k) => normalizeSpecific(k).includes(normalizeSpecific(t)))) kept.push(t);
-  }
-  return kept;
+  for (const m of String(text || '').matchAll(SPECIFIC_RE)) found.add(m[0].trim());
+  return [...found];
 }
 
-export function dossierBlob(research: any): string {
-  const parts: string[] = [
+const SCALE_MULTIPLIER: Record<string, number> = { thousand: 1e3, k: 1e3, million: 1e6, m: 1e6, mn: 1e6, billion: 1e9, b: 1e9, bn: 1e9, trillion: 1e12 };
+// toPrecision first: 1.1 * 1e3 is 1100.0000000000002 in floating point.
+const value = (n: string, scale?: string) => String(Number((parseFloat(n.replace(/,/g, '')) * (SCALE_MULTIPLIER[scale || ''] ?? 1)).toPrecision(15)));
+
+const KEY_USD_SYMBOL = new RegExp(String.raw`^\$\s?(${NUM})(?:\s?(${SCALE}|[kmb]n?))?$`);
+const KEY_USD_WORD = new RegExp(String.raw`^(${NUM})(?:\s?(${SCALE}))?\s?(?:dollars|usd)$`);
+const KEY_PERCENT = new RegExp(String.raw`^(${NUM})\s?(?:%|percent|per cent)$`);
+const KEY_COUNT = new RegExp(String.raw`^(${NUM})(?:\s?(${SCALE}))?(?:\s?(${UNIT}))?$`);
+
+/**
+ * The claim a token makes, independent of how it is written: "v5.6.1" = "5.6.1", "83 percent" = "83%",
+ * "$1.5B" = "$1.5 billion", "1,200,000" = "1.2 million". The kind is part of the key (a % is not a $) and so is
+ * a named unit (5 GB is not 5 TB).
+ */
+export function specificKey(token: string): string {
+  const t = token.trim().toLowerCase().replace(new RegExp(`[${DASHES}]`, 'g'), '-');
+  if (t.startsWith('cve-')) return t;
+  const ver = /^v?(\d+(?:\.\d+){2,})$/.exec(t);
+  if (ver) return `ver:${ver[1]}`;
+  let m: RegExpExecArray | null;
+  if ((m = KEY_USD_SYMBOL.exec(t)) || (m = KEY_USD_WORD.exec(t))) return `usd:${value(m[1], m[2])}`;
+  if ((m = KEY_PERCENT.exec(t))) return `pct:${value(m[1])}`;
+  if ((m = KEY_COUNT.exec(t))) return `num:${value(m[1], m[2])}${m[3] ? `:${m[3]}` : ''}`;
+  return `raw:${t}`;
+}
+
+/** Every specific the dossier states, as keys. Extracted field by field so a figure can't be assembled across two facts. */
+export function dossierSpecifics(research: any): Set<string> {
+  const fields: unknown[] = [
     research?.topicTitle,
     research?.oneLineHook,
     research?.summary,
@@ -238,8 +276,48 @@ export function dossierBlob(research: any): string {
     ...(research?.keyFacts || []),
     ...(research?.timeline || []).flatMap((t: any) => [t?.dateOrPhase, t?.event]),
     ...(research?.factCitations || []).map((f: any) => f?.fact),
-  ].filter(Boolean);
-  return normalizeSpecific(parts.join(' '));
+  ];
+  const keys = new Set<string>();
+  for (const field of fields) {
+    for (const token of extractSpecifics(typeof field === 'string' ? field : '')) {
+      const key = specificKey(token);
+      keys.add(key);
+      const unit = /^num:([^:]+):/.exec(key);
+      if (unit) keys.add(`numv:${unit[1]}`); // the same figure with its unit dropped, for narration that omits the unit
+    }
+  }
+  return keys;
+}
+
+/**
+ * Whether the dossier states this token. The unit vocabulary is small, so a dossier that says "5 million" and
+ * narration that says "5 million devices" is not a contradiction; a dossier that says "5 million devices" and
+ * narration that says "5 million servers" is.
+ */
+export function isSupportedSpecific(token: string, dossier: Set<string>): boolean {
+  const key = specificKey(token);
+  if (dossier.has(key)) return true;
+  const named = /^num:([^:]+):/.exec(key);
+  if (named) return dossier.has(`num:${named[1]}`);
+  return key.startsWith('num:') && dossier.has(`numv:${key.slice(4)}`);
+}
+
+/**
+ * Text a viewer reads on screen, one string per field so a figure can't straddle two of them. Code snippets are
+ * left out on purpose: terminal lines are illustrative and full of addresses and flags that look like versions.
+ */
+export function onScreenTexts(scene: any): string[] {
+  const g = scene?.infographic;
+  return [
+    scene?.onScreenText,
+    g?.title,
+    g?.badge,
+    g?.summary,
+    ...(g?.steps || []).flatMap((s: any) => [s?.label, s?.detail]),
+    ...(g?.metrics || []).flatMap((m: any) => [m?.label, m?.value, m?.subtext]),
+  ]
+    .filter((x) => x !== undefined && x !== null && x !== '')
+    .map(String);
 }
 
 // ---- audit ---------------------------------------------------------------------------------------------------
@@ -323,29 +401,43 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
     }
   }
 
-  // Specifics must trace to the dossier; anything else is the model's own addition.
+  // Specifics must trace to the dossier; anything else is the model's own addition. Narration and on-screen
+  // text are both checked: a figure in an infographic badge is read as a claim just like a spoken one.
   const research = opts.research;
   const hasSources = (research?.retrievedSources || []).some((r: any) => r.ok);
   if (research && Object.keys(research).length > 0) {
-    const blob = dossierBlob(research);
+    const known = dossierSpecifics(research);
     // One entry per distinct figure — a wrong CVE repeated across 47 scenes is one problem, not 47.
-    const unsupported = new Map<string, number[]>();
+    const unsupported = new Map<string, { token: string; scenes: number[]; spoken: boolean; shown: boolean }>();
     const uncited: number[] = [];
     scenes.forEach((s, i) => {
-      const specifics = extractSpecifics(String(s.narration || ''));
-      for (const token of specifics) {
-        if (!blob.includes(normalizeSpecific(token))) unsupported.set(token, [...(unsupported.get(token) || []), sn(i)]);
+      const spoken = extractSpecifics(String(s.narration || ''));
+      const shown = onScreenTexts(s).flatMap(extractSpecifics);
+      for (const [tokens, isSpoken] of [[spoken, true], [shown, false]] as const) {
+        for (const token of tokens) {
+          if (isSupportedSpecific(token, known)) continue;
+          const key = specificKey(token);
+          const entry = unsupported.get(key) || { token, scenes: [], spoken: false, shown: false };
+          if (!entry.scenes.includes(sn(i))) entry.scenes.push(sn(i));
+          if (isSpoken) entry.spoken = true;
+          else entry.shown = true;
+          unsupported.set(key, entry);
+        }
       }
-      if (hasSources && specifics.length && !(s.citations || []).length) uncited.push(sn(i));
+      if (hasSources && (spoken.length || shown.length) && !(s.citations || []).length) uncited.push(sn(i));
     });
     if (unsupported.size) {
-      const where = (n: number[]) => (n.length === 1 ? `scene ${n[0]}` : `scenes ${n.slice(0, 3).join(', ')}${n.length > 3 ? `, +${n.length - 3} more` : ''}`);
-      const entries = [...unsupported].map(([token, sc]) => `"${token}" (${where(sc)})`);
+      const where = (e: { scenes: number[]; spoken: boolean; shown: boolean }) => {
+        const n = e.scenes;
+        const scenesText = n.length === 1 ? `scene ${n[0]}` : `scenes ${n.slice(0, 3).join(', ')}${n.length > 3 ? `, +${n.length - 3} more` : ''}`;
+        return e.shown ? `${scenesText}, ${e.spoken ? 'narration and ' : ''}on screen` : scenesText;
+      };
+      const entries = [...unsupported.values()].map((e) => `"${e.token}" (${where(e)})`);
       checks.push({
         id: 'unsupported-specifics',
         severity: 'warn',
-        message: `Narration states specifics that do not appear in the research dossier — verify each against a source before publishing: ${entries.slice(0, 8).join(', ')}${entries.length > 8 ? `, +${entries.length - 8} more` : ''}.`,
-        sceneNumbers: [...new Set([...unsupported.values()].flat())].sort((a, b) => a - b),
+        message: `Narration or on-screen text states specifics that do not appear in the research dossier — verify each against a source before publishing: ${entries.slice(0, 8).join(', ')}${entries.length > 8 ? `, +${entries.length - 8} more` : ''}.`,
+        sceneNumbers: [...new Set([...unsupported.values()].flatMap((e) => e.scenes))].sort((a, b) => a - b),
       });
     }
     if (uncited.length) {

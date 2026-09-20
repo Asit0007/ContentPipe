@@ -59,6 +59,14 @@ test('figures in a title must come from the dossier — an invented number is an
   assert.ok(!rules(ok).includes('unsupported-specific'));
 });
 
+test('a title figure that is only a substring of a dossier figure is still unsupported', () => {
+  // The dossier has CVE-2024-3094 and 5.6.1; "CVE-2024-309" / "5.6" style prefixes and "94%" must not ride along.
+  const research = { ...RESEARCH, keyFacts: ['Tracked as CVE-2024-30945.', 'Affects xz 5.6.10.', 'Cost 2094 hours.'] };
+  const bad = lintTitle('CVE-2024-3094 in xz 5.6.1 Hit 94% of Builds Overnight', { research });
+  const flagged = bad.filter((i) => i.rule === 'unsupported-specific').map((i) => i.message);
+  for (const t of ['CVE-2024-3094', '5.6.1', '94%']) assert.ok(flagged.some((m) => m.includes(`"${t}"`)), `${t}: ${JSON.stringify(flagged)}`);
+});
+
 test('front-loading is only advisory (info): a title that buries the keyword is noted, not rejected', () => {
   const buried = lintTitle('A Quiet Threat Nobody Noticed for Years, and Why', { research: RESEARCH });
   assert.equal(buried.find((i) => i.rule === 'keyword-not-front-loaded')?.severity, 'info');

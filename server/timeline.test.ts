@@ -8,6 +8,7 @@ import {
   auditScript,
   analyzeScript,
   extractSpecifics,
+  specificKey,
   MIDROLL_MIN_VIDEO_SEC,
 } from './timeline';
 
@@ -185,10 +186,97 @@ test('audit: canned fallback and an incomplete generation are errors that carry 
 
 test('extractSpecifics finds CVEs, percentages, money, comma-numbers, unit-numbers and versions', () => {
   const got = extractSpecifics('CVE-2024-3094 hit 83% of hosts, cost $1.5 billion, 1,200,000 users, 300 servers, in v5.6.1.');
-  for (const want of ['CVE-2024-3094', '83%', '$1.5 billion', '1,200,000', '300 servers', 'v5.6.1']) assert.ok(got.includes(want), `${want} in ${JSON.stringify(got)}`);
+  for (const want of ['CVE-2024-3094', '83%', '$1.5 billion', '1,200,000 users', '300 servers', 'v5.6.1']) assert.ok(got.includes(want), `${want} in ${JSON.stringify(got)}`);
   // Overlapping matches collapse to the longest form, and a number is never split at its own comma.
   assert.ok(!got.includes('1.5 billion'), '"$1.5 billion" must not also be reported as "1.5 billion"');
   assert.ok(!got.some((g) => g.startsWith('000')), `"1,200,000 users" must not yield a "000 users" fragment: ${JSON.stringify(got)}`);
+});
+
+// ---- the specifics matcher: exact tokens, not substrings -------------------------------------------------
+
+const unsupportedIn = (research: any, ...sceneOverrides: any[]) => {
+  const c = auditScript({ scenes: sceneOverrides.map((o, i) => scene(i + 1, o)) }, { research });
+  return find(c, 'unsupported-specifics');
+};
+const dossier = (...keyFacts: string[]) => ({ topicTitle: 't', summary: 's', keyFacts, timeline: [] });
+
+test('matcher: a figure is not "supported" because it is a substring of a different figure', () => {
+  // These three each passed under the old substring match (2045, CVE-2024-30945, 5.6.10).
+  const u = unsupportedIn(
+    dossier('The campaign ran until 2045 by one estimate.', 'A different bug is CVE-2024-30945.', 'The fixed release is 5.6.10.'),
+    { narration: 'It hit 45% of hosts, is tracked as CVE-2024-3094, and shipped in 5.6.1.' },
+  );
+  assert.ok(u, 'expected an unsupported-specifics check');
+  for (const t of ['45%', 'CVE-2024-3094', '5.6.1']) assert.ok(u.message.includes(`"${t}"`), `${t} should be flagged: ${u.message}`);
+});
+
+test('matcher: 83% does not match 83.5%, and a unit is part of the claim (GB is not TB, % is not $)', () => {
+  const u = unsupportedIn(dossier('It affected 83.5% of hosts.', 'The dump was 5 TB.', 'It cost $45.'), {
+    narration: 'It hit 83% of hosts, the dump was 5 GB, and 45% of it was leaked.',
+  });
+  for (const t of ['83%', '5 GB', '45%']) assert.ok(u.message.includes(`"${t}"`), `${t} should be flagged: ${u.message}`);
+});
+
+test('matcher: the same figure written differently is still supported', () => {
+  const u = unsupportedIn(
+    dossier('It affected 83 percent of hosts, cost $1.5 billion, hit 1.2 million users, and shipped as version 5.6.1 (CVE-2024-3094).'),
+    { narration: 'It hit 83% of hosts, cost $1.5B, hit 1,200,000 users, in v5.6.1 — cve-2024-3094.' },
+  );
+  assert.equal(u, undefined);
+});
+
+test('matcher: a figure the dossier states without a unit we know still supports the narration that adds one', () => {
+  assert.equal(unsupportedIn(dossier('About 5 million were affected.'), { narration: 'It reached 5 million devices.' }), undefined);
+  assert.equal(unsupportedIn(dossier('It reached 5 million devices.'), { narration: 'About 5 million were affected.' }), undefined);
+  assert.ok(unsupportedIn(dossier('It reached 5 million devices.'), { narration: 'It reached 5 million servers.' }), 'a different named unit is a different claim');
+});
+
+test('matcher: a figure cannot be assembled across two dossier fields', () => {
+  // The old blob joined every field with the spaces stripped, so "$5" and "million users" in two
+  // unrelated facts read as "5million" and supported a "$5 million" claim.
+  assert.ok(unsupportedIn(dossier('The fee was $5', 'million users were affected'), { narration: 'It cost $5 million.' }));
+});
+
+test('specificKey: spellings of one claim share a key; different claims never do', () => {
+  const same = [
+    ['v5.6.1', '5.6.1'], ['CVE-2024-3094', 'cve‑2024‑3094'], ['83%', '83 percent'], ['83%', '83.0%'],
+    ['$1.5 billion', '$1.5B'], ['$1.5 billion', '1.5 billion dollars'], ['1,200,000', '1.2 million'], ['5 GB', '5gb'],
+  ];
+  for (const [a, b] of same) assert.equal(specificKey(a), specificKey(b), `${a} vs ${b}`);
+  const different = [['45%', '$45'], ['5 GB', '5 TB'], ['5.6.1', '5.6.10'], ['CVE-2024-3094', 'CVE-2024-30945'], ['83%', '83.5%'], ['$5 million', '$5 thousand']];
+  for (const [a, b] of different) assert.notEqual(specificKey(a), specificKey(b), `${a} vs ${b}`);
+});
+
+test('matcher: a sentence-final period is not part of the figure', () => {
+  assert.equal(unsupportedIn(dossier('The fee was $5.'), { narration: 'It cost $5.' }), undefined);
+  assert.deepEqual(extractSpecifics('It cost $5. Then 12%.'), ['$5', '12%']);
+});
+
+test('audit: on-screen text and infographic fields are held to the dossier too, and reported as on screen', () => {
+  const research = dossier('Tracked as CVE-2024-3094.', 'Scored 10.0 by NVD.');
+  const u = unsupportedIn(
+    research,
+    { narration: 'A calm sentence with no figures at all in it.', onScreenText: 'CVE-2099-0001' },
+    {
+      narration: 'Another calm sentence with no figures.',
+      infographic: {
+        type: 'threat_scorecard', title: 'Hit 61% of hosts', badge: 'CVE-2024-3094',
+        steps: [{ label: 'Step', detail: 'affects 5.6.10', status: 'warning' }],
+        metrics: [{ label: 'Hosts', value: '1,000,000', subtext: '$9 million loss' }],
+      },
+    },
+  );
+  assert.ok(u);
+  for (const t of ['CVE-2099-0001', '61%', '5.6.10', '1,000,000', '$9 million']) assert.ok(u.message.includes(`"${t}"`), `${t} should be flagged: ${u.message}`);
+  assert.doesNotMatch(u.message, /"CVE-2024-3094"/);
+  assert.match(u.message, /"CVE-2099-0001" \(scene 1, on screen\)/);
+  assert.deepEqual(u.sceneNumbers, [1, 2]);
+});
+
+test('audit: a supported figure on screen with no citation on the scene is reported as uncited', () => {
+  const research = { ...dossier('Tracked as CVE-2024-3094.'), retrievedSources: [{ id: 'S1', ok: true }] };
+  const c = auditScript({ scenes: [scene(1, { onScreenText: 'CVE-2024-3094' })] }, { research });
+  assert.deepEqual(find(c, 'uncited-specifics').sceneNumbers, [1]);
 });
 
 test('analyzeScript: errors sort before warnings before info, and every part is present', () => {

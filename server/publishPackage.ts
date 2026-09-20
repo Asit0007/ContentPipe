@@ -2,7 +2,7 @@ import type { GoogleGenAI } from '@google/genai';
 import { generateGeminiJson, TEXT_MODELS } from './gemini';
 import { publishPackageSchema } from './schemas';
 import { orFallback } from './strict';
-import { analyzeScript, dossierBlob, extractSpecifics, normalizeSpecific, formatTimestamp, type Chapter } from './timeline';
+import { analyzeScript, dossierSpecifics, extractSpecifics, isSupportedSpecific, formatTimestamp, type Chapter } from './timeline';
 
 /**
  * Publish package (spec Prompt 6): titles, thumbnail concepts, description, tags.
@@ -58,9 +58,9 @@ export function lintTitle(title: string, opts: { topicTitle?: string; research?:
 
   // Numbers, ids and versions in a title are claims: they must come from the dossier.
   if (opts.research && Object.keys(opts.research).length) {
-    const blob = dossierBlob(opts.research);
+    const known = dossierSpecifics(opts.research);
     for (const token of extractSpecifics(t)) {
-      if (!blob.includes(normalizeSpecific(token))) add('unsupported-specific', 'error', `"${token}" does not appear in the research dossier; titles may not state figures the sources don't.`);
+      if (!isSupportedSpecific(token, known)) add('unsupported-specific', 'error', `"${token}" does not appear in the research dossier; titles may not state figures the sources don't.`);
     }
   }
 
