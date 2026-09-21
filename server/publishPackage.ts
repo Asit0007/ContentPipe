@@ -1,5 +1,6 @@
 import type { GoogleGenAI } from '@google/genai';
-import { generateGeminiJson, TEXT_MODELS } from './gemini';
+import { TEXT_MODELS } from './gemini';
+import { generateJson } from './llm/chain';
 import { publishPackageSchema } from './schemas';
 import { orFallback } from './strict';
 import { analyzeScript, dossierSpecifics, extractSpecifics, isSupportedSpecific, formatTimestamp, type Chapter } from './timeline';
@@ -295,12 +296,12 @@ export async function buildPublishPackage(ai: GoogleGenAI, input: PublishInput, 
   const generated = await orFallback<any | null>(
     !!opts.strict,
     async () => {
-      let raw: any = await generateGeminiJson(ai, buildPrompt(input), 'You write precise, honest YouTube packaging for a cybersecurity documentary channel. Output strictly valid JSON matching the schema.', TEXT_MODELS, publishPackageSchema);
+      let raw: any = await generateJson(ai, buildPrompt(input), 'You write precise, honest YouTube packaging for a cybersecurity documentary channel. Output strictly valid JSON matching the schema.', TEXT_MODELS, publishPackageSchema);
       let linted = lintAll(raw, input);
       if (linted.titles.filter((t) => t.passesLint).length < MIN_PASSING_TITLES) {
         // One retry, telling the model exactly which rules it broke.
         try {
-          const retry: any = await generateGeminiJson(ai, buildPrompt(input, feedbackFor(linted.titles, linted.thumbnails)), 'You write precise, honest YouTube packaging for a cybersecurity documentary channel. Output strictly valid JSON matching the schema.', TEXT_MODELS, publishPackageSchema);
+          const retry: any = await generateJson(ai, buildPrompt(input, feedbackFor(linted.titles, linted.thumbnails)), 'You write precise, honest YouTube packaging for a cybersecurity documentary channel. Output strictly valid JSON matching the schema.', TEXT_MODELS, publishPackageSchema);
           const relinted = lintAll(retry, input);
           if (relinted.titles.filter((t) => t.passesLint).length >= linted.titles.filter((t) => t.passesLint).length) {
             raw = retry;

@@ -1,5 +1,6 @@
 import type { GoogleGenAI } from '@google/genai';
-import { generateGeminiJson, TEXT_MODELS } from './gemini';
+import { TEXT_MODELS } from './gemini';
+import { generateJson } from './llm/chain';
 import { buildScriptScenesSchema, buildVisualDirectionSchema, productionBibleSchema } from './schemas';
 import { isRetryableError } from './quota';
 import type { RunJournal } from './runJournal';
@@ -133,7 +134,7 @@ Documentary visual discipline: favour restrained, evidence-led imagery — real 
   }`;
 
   try {
-    const bible: any = await generateGeminiJson(
+    const bible: any = await generateJson(
       ai,
       prompt,
       'You are a precise production designer. Output strictly valid JSON matching the schema.',
@@ -216,7 +217,7 @@ For EVERY scene above return an object with:
 
 Return exactly ${chunkScenes.length} entries, one per scene above, in order.`;
 
-  const direction: any = await generateGeminiJson(
+  const direction: any = await generateJson(
     ai,
     prompt,
     'You are a precise art director. Output strictly valid JSON matching the schema. Reuse character promptAnchor strings verbatim so characters stay identical between scenes.',
@@ -400,7 +401,7 @@ Return strictly a JSON object: { "scenes": [ ...exactly ${sceneCount} scene obje
   // and maxItems 4 hard-fails regardless of minItems (see
   // NARRATIVE_SCENES_PER_CHUNK's comment) — a "helpful" +1 here would have
   // silently turned a 3-scene chunk's maxItems into 4 and broken it.
-  const result = await generateGeminiJson<{ scenes: any[] }>(
+  const result = await generateJson<{ scenes: any[] }>(
     ai,
     prompt,
     systemInstruction,

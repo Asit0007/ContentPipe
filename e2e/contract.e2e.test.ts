@@ -114,7 +114,7 @@ async function startApp() {
     cwd: REPO,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
+    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
   });
   for (let i = 0; i < 120; i++) {
     try {

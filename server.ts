@@ -14,7 +14,8 @@ import {
   generateFallbackNotebookLMPodcast,
 } from './server/fallbackGenerators';
 import { researchSchema, planSchema, KEY_FACT_TARGET_WITH_SOURCES } from './server/schemas';
-import { getAIClient, generateGeminiJson, generateGeminiText, TEXT_MODELS } from './server/gemini';
+import { getAIClient, TEXT_MODELS } from './server/gemini';
+import { generateJson, generateText, describeChain } from './server/llm/chain';
 import {
   generateProductionBible,
   generateSceneChunks,
@@ -176,7 +177,7 @@ Return strictly a valid JSON object matching this schema:
 
     const parsedData: any = await orFallback(
       strict,
-      () => generateGeminiJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, researchSchema),
+      () => generateJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, researchSchema),
       (aiErr: any) => {
         console.warn('[Research Agent] Live AI tiers unavailable, utilizing dynamic research synthesizer:', aiErr?.message || aiErr);
         return generateFallbackResearch(messageText, channelName);
@@ -378,7 +379,7 @@ REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum
 
     const plan: any = await orFallback(
       strict,
-      () => generateGeminiJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, planSchema),
+      () => generateJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, planSchema),
       (aiErr: any) => {
         console.warn('[Plan Agent] Live AI tiers unavailable, utilizing dynamic plan generator:', aiErr?.message || aiErr);
         return generateFallbackPlan(researchData, targetFormat, targetTone);
@@ -766,13 +767,16 @@ You help refine voiceover scripts, inject developer humor, punch up hooks, sharp
     });
 
     let replyText = '';
+    let modelUsed = preferredModel;
     try {
-      replyText = await generateGeminiText(ai, contents, systemInstruction, [
+      // customModel only steers the Gemini tier; the provider chain picks who answers first.
+      const chat = await generateText(ai, contents, systemInstruction, [
         preferredModel,
-        'gemini-3.7-flash',
         'gemini-3.7-flash',
         'gemini-3.1-flash-lite',
       ]);
+      replyText = chat.text;
+      modelUsed = chat.via;
     } catch (chatErr: any) {
       console.warn('[Chatbot] AI tiers busy, returning strategist reply:', chatErr?.message || chatErr);
       replyText = generateFallbackChatReply(message, rolePreset);
@@ -786,7 +790,7 @@ You help refine voiceover scripts, inject developer humor, punch up hooks, sharp
 
     res.json({
       reply: replyText,
-      modelUsed: preferredModel,
+      modelUsed,
       rolePreset,
     });
   } catch (error: any) {
@@ -832,11 +836,14 @@ Return strictly a JSON array of 5 IP brand identity objects, shaped like this (i
 
     let ipList: any = null;
     try {
-      ipList = await generateGeminiJson(ai, prompt, systemInstruction, [
-        'gemini-3.7-flash',
-        'gemini-3.1-pro-preview',
-        'gemini-3.1-flash-lite',
-      ]);
+      ipList = await generateJson(
+        ai,
+        prompt,
+        systemInstruction,
+        ['gemini-3.7-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite'],
+        undefined,
+        { rootArray: true } // this prompt asks for an array; json_object providers get {"items": [...]} and are unwrapped
+      );
     } catch (aiErr: any) {
       console.warn('[IP Names] AI tiers busy, returning curated brands:', aiErr?.message || aiErr);
       ipList = generateFallbackIpList(topicContext);
@@ -914,7 +921,7 @@ Output STRICTLY valid JSON adhering to this schema:
 
     let podcast: any = null;
     try {
-      podcast = await generateGeminiJson(ai, prompt, systemInstruction, TEXT_MODELS);
+      podcast = await generateJson(ai, prompt, systemInstruction, TEXT_MODELS);
     } catch (aiErr: any) {
       console.warn('[NotebookLM] Live AI tiers unavailable, returning dynamic podcast dialogue:', aiErr?.message || aiErr);
       podcast = generateFallbackNotebookLMPodcast(researchData, topicText);
@@ -997,6 +1004,7 @@ async function startServer() {
 
   app.listen(PORT, HOST, () => {
     console.log(`${DEFAULT_CHANNEL_BRAND} video-brief server running on http://${HOST}:${PORT}`);
+    console.log(`[LLM Chain] ${describeChain()}`);
   });
 }
 

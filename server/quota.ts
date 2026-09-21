@@ -175,8 +175,8 @@ export function summarizeQuotaFailures(failures: ClassifiedError[]): QuotaExhaus
     kind,
     retryAfterSec,
     kind === 'per_day'
-      ? `Daily Gemini quota exhausted on every model; earliest reset in ~${Math.round(retryAfterSec / 60)} min (midnight Pacific).`
-      : `Per-minute Gemini quota exhausted on every model; retry in ~${retryAfterSec}s.`
+      ? `Daily quota exhausted on every model of every configured provider; earliest reset in ~${Math.round(retryAfterSec / 60)} min.`
+      : `Per-minute quota exhausted on every model of every configured provider; retry in ~${retryAfterSec}s.`
   );
 }
 
