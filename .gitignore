@@ -18,3 +18,6 @@ cyberpipeline-prompts.md
 
 # Script-run checkpoints (server/runJournal.ts) — local, disposable
 .runs/
+
+# Rendered MP4s (server/assemble.ts) — large, regenerable
+renders/

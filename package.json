@@ -10,7 +10,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test server/*.test.ts",
-    "test:e2e": "tsx --test --test-concurrency=1 e2e/*.e2e.test.ts"
+    "test:e2e": "tsx --test --test-concurrency=1 e2e/*.e2e.test.ts",
+    "render:fixture": "tsx scripts/render-fixture.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
