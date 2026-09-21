@@ -149,7 +149,7 @@ Source ids: `S#` is a source's position in the **fetched** list (`sourceId()` in
 
 ## Failure contract for API clients (strict mode)
 
-Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:
+Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/tts` and `/api/generate-image`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:
 
 | Status | Meaning | Body |
 |---|---|---|
@@ -159,6 +159,8 @@ Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `
 | `409` | an identical `/api/script` run is already in flight | `{kind: 'in_progress', runId}` |
 
 Strict mode rethrows *retryable* failures instead of absorbing them into a shorter or flatter script; non-retryable ones (a rejected schema, unparseable output) still degrade — and say so in `generation.degraded`. Every `/api/script` response carries `generation` (`complete`, requested vs produced scenes/duration, `degraded[]`), so a partial script is self-describing in both modes.
+
+**Media endpoints under strict.** `/api/tts` degrades to a synthesized tone and `/api/generate-image` to an SVG placeholder for the UI; a render would publish either as if it were real, so strict callers never get them. TTS classifies every model's error together (`reduceModelErrors` in `server/quota.ts`, the same reduction `generateGeminiJson` applies to text: a daily quota is not masked by the other model's 404) and answers 429/503/502. Images: **Pollinations is a real provider and is still returned** (labelled `provider: 'pollinations'`); only the placeholder is refused, as `503 upstream_unavailable` with each provider's error in the message. `POLLINATIONS_BASE_URL` overrides the host so the e2e test needs no network.
 
 ## Run journal (`.runs/`, gitignored)
 
@@ -202,9 +204,30 @@ out is `researchGaps`: name what the script still needs and what would answer it
 visible in `researchCoverage` rather than silently accepted — a model's own account of its sourcing
 would itself need checking.
 
+## Video assembly (`server/assemble.ts`)
+
+Scene stills + narration → one MP4, by spawning the local `ffmpeg` (argument array, no shell). It is a module and a script, **not yet an endpoint or a CyberPipe stage** — nothing calls it with real assets yet.
+
+```bash
+npm run render:fixture                 # stub stills + sine-tone "narration" -> renders/fixture-stub-<ts>.mp4, no quota, no network
+npm run render:fixture -- --720 | --vertical
+```
+
+- **Refuse, don't degrade.** `validateScenes` checks every scene before any encoding and reports *all* problems: a placeholder image, an SVG or non-image body labelled `image/png` (bytes are sniffed, not the label), the synthesized quota-fallback tone (`audioIsFallback`), audio under 0.5 s, non-16-bit-mono WAV, mixed sample rates. One bad scene fails the render with `AssemblyInputError.problems`.
+- **Audio is joined once, in Node.** Each scene's PCM is padded with silence to a whole number of frames, everything is concatenated, and muxed with a single AAC encode (`loudnorm` to -14 LUFS) against stream-copied video segments. Per-scene AAC + concat adds encoder delay at every join and drifts. Verified on the 56.5 s fixture: audio and video are both exactly 56.500 s and each scene's silence starts within ~2 ms of the timeline's prediction.
+- **The result's `scenes[]` (`startSec`, `audioSec`, `durationSec`, `frames`) is the real timeline.** Feed it to `retimeFromAudio` (`server/timeline.ts`) to replace the model's `durationEst` guesses and recompute chapters, mid-rolls and the audit; it refuses timings that don't match the scenes one-to-one by `id`, and drops `script.publish` (its description embeds the old chapter times — rebuild via `/api/publish-package`).
+- **Captions** (`server/captions.ts`): pass each scene's spoken text as `captionText` (all scenes or none — a track with holes is refused) and the render also writes `<name>.en.srt`. Text is captioned verbatim (whitespace and `[S#]` markers cleaned, no word ever dropped — tested), split at sentence/clause boundaries into ≤ 2 lines of ≤ 42 chars, and spread across each scene's real speech window in proportion to how long each cue takes to say. Scene starts are exact; inside a scene it is an estimate with **no forced alignment**. Measured against macOS `say` speech (2026-09-21, 9 inner cue starts): median 0.29 s, worst 0.76 s, every error *early* (a caption appears just before the words, the safe direction). Re-check on real Gemini narration before trusting the constants in `speechWeight`.
+- Input shapes are what the endpoints return: `imageUrl` is a `data:` URL, `audioBase64` is raw s16le mono PCM at 24 kHz (the WAV header is parsed if present). Output goes to `renders/` (gitignored; `CONTENTPIPE_RENDERS_DIR` overrides), written under a temp name and copied in only after `ffprobe` confirms one video + one audio stream, the frame size and the duration.
+- Cost: 1080p stills with a 6 % push-in/pull-out took **0.29× the video's length** on this Mac (a 9-minute video ≈ 2.6 min). The zoom oversamples 2× to avoid jitter; `zoomOversample: 1` or `zoom: false` is faster.
+
+**Known gaps, all deliberate for now:**
+- **Captions are a sidecar SRT, not burned in; `onScreenText` and infographics are not rendered.** This Homebrew ffmpeg has no `drawtext` or `subtitles` filter (no libfreetype/libass — check with `ffmpeg -filters`). Burn-in means `brew install ffmpeg-full` (keg-only, so it does not replace this ffmpeg; pass its path as `ffmpegPath`; 47 dependencies) or a pre-rendered PNG overlay path — a decision, not a bug. Upload the `.en.srt` to YouTube as an English caption track.
+- **Nothing generates the per-scene assets.** One `/api/tts` call per scene is ~51 calls for a 585 s script; the free-tier TTS quota has not been measured, and the text tier is ~20/day/model. Assets need to be checkpointed to disk (like `.runs/` does for scripts) so a quota hit resumes instead of restarting.
+- `/api/tts` still uses one stock voice and a hardcoded "punchy infotainment" prompt (Tier 4).
+
 ## Retention audit and publish package
 
-`server/timeline.ts` is pure and deterministic — no model call, no quota. `/api/script` adds `timeline`, `chapters`, `midrollMarkers` and `qualityChecks` to the script: mid-rolls at ~2:30 and ~6:00 snapped to real scene boundaries (a semantic bonus for "after the problem is set up" / "before the fix"), **none and a warning if the runtime is under 8:00**, chapters grouped by `actPhase` (≥3, ≥10 s each, ≤12), and checks for missing hook, 30 s+ runs with no pattern interrupt, duration shortfall, narration that can't fit its scene, an AI-slideshow-risk evidence mix, and **specifics in the narration or on-screen text (CVE ids, %, $, large numbers, versions) that are not in the research dossier**. The matcher compares whole canonical tokens (`specificKey`: `pct:83.5`, `usd:1500000000`, `ver:5.6.1`, `num:5:gb`), never substrings — an earlier `includes()` over a squashed blob let `45%` pass on `2045`, `CVE-2024-3094` on `CVE-2024-30945` and `5.6.1` on `5.6.10`. Kind and named unit are part of the claim (`%` ≠ `$`, GB ≠ TB), spellings of one claim are equal (`83 percent` = `83%`, `$1.5B` = `$1.5 billion`, `1,200,000` = `1.2 million`), and the dossier is tokenised field by field. On-screen coverage is `onScreenText` plus infographic title/badge/summary/steps/metrics; code snippets are excluded on purpose (terminal lines look like versions). Bare numbers, years and CVSS scores like `9.8` are still not specifics — only the patterns in `SPECIFIC_RE` are checked. Thresholds are named constants at the top of the file; they encode the spec's targets, not measured truths, and the 8:00 rule should be re-verified against YouTube's current policy.
+`server/timeline.ts` is pure and deterministic — no model call, no quota. `/api/script` adds `timeline`, `chapters`, `midrollMarkers` and `qualityChecks` to the script: mid-rolls at ~2:30 and ~6:00 snapped to real scene boundaries (a semantic bonus for "after the problem is set up" / "before the fix"), **none and a warning if the runtime is under 8:00**, chapters grouped by `actPhase` (≥3, ≥10 s each, ≤12), and checks for missing hook, 30 s+ runs with no pattern interrupt, duration shortfall, narration that can't fit its scene, an AI-slideshow-risk evidence mix, and **specifics in the narration or on-screen text (CVE ids, %, $, large numbers, versions) that are not in the research dossier**. The matcher compares whole canonical tokens (`specificKey`: `pct:83.5`, `usd:1500000000`, `ver:5.6.1`, `num:5:gb`), never substrings — an earlier `includes()` over a squashed blob let `45%` pass on `2045`, `CVE-2024-3094` on `CVE-2024-30945` and `5.6.1` on `5.6.10`. Kind and named unit are part of the claim (`%` ≠ `$`, GB ≠ TB), spellings of one claim are equal (`83 percent` = `83%`, `$1.5B` = `$1.5 billion`, `1,200,000` = `1.2 million`), and the dossier is tokenised field by field. On-screen coverage is `onScreenText` plus infographic title/badge/summary/steps/metrics; code snippets are excluded on purpose (terminal lines look like versions). Bare numbers, years and CVSS scores like `9.8` are still not specifics — only the patterns in `SPECIFIC_RE` are checked. The shortfall error fires below **0.92** of the requested runtime (it was 0.85; 0.85 × the old 540 s default was 459 s, under the 480 s mid-roll floor) and the default target is now 585 s. Durations are the model's `durationEst` until `retimeFromAudio` replaces them with the rendered video's (`script.timingSource: 'audio'`). Thresholds are named constants at the top of the file; they encode the spec's targets, not measured truths, and the 8:00 rule should be re-verified against YouTube's current policy.
 
 Documentary tone (`Deep Dive Documentary`) now actually changes the output: no `signatureIntro` (cold open), a calm outro, and tone-conditional plan / bible / scene prompts. The plan prompt's inline example used to be infotainment-shaped regardless of tone, and the inline example wins over instructions.
 
@@ -217,7 +240,7 @@ Documentary tone (`Deep Dive Documentary`) now actually changes the output: no `
 ```bash
 npm run lint       # tsc --noEmit — the baseline is zero errors (tests are type-checked too)
 npm test           # unit tests (server/*.test.ts, node:test via tsx) — fast, no network, no quota
-npm run test:e2e   # the real server against a stub Gemini: 429/503/kill -9/resume/409/SSRF (~1 min)
+npm run test:e2e   # the real server against a stub Gemini (and stub Pollinations): 429/503/kill -9/resume/409/SSRF, strict TTS + image (~1 min)
 ```
 
 The SDK honours `GOOGLE_GEMINI_BASE_URL`, which is how `test:e2e` (and any ad-hoc check) exercises quota paths without spending quota: run the server with it pointed at a stub. Unit tests build fakes from **real captured bodies** in `server/__fixtures__/`; add a fixture when a new failure shape shows up live.

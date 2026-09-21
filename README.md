@@ -26,6 +26,8 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `NOTEBOOKLM_API_KEY` | No | Falls back to `GEMINI_API_KEY`. |
 | `APP_URL` | No | Self-referential links. |
 | `PORT` | No | Defaults to 3000. |
+| `CONTENTPIPE_RENDERS_DIR` | No | Where `server/assemble.ts` writes MP4s and captions. Defaults to `./renders` (gitignored). |
+| `POLLINATIONS_BASE_URL` | No | Overrides the image fallback host. Exists so the end-to-end test can stand in for Pollinations instead of reaching the network. |
 | `HOST` | No | Interface to bind. Defaults to `127.0.0.1` (this machine only) — the endpoints are unauthenticated and spend your Gemini quota. `HOST=0.0.0.0` to expose it, only behind something that authenticates callers. |
 | `VITE_FIREBASE_*` | Only for Google Docs export | Client-side Firebase Auth config. See [Google Workspace export](#google-workspace-export-optional). |
 
@@ -132,9 +134,26 @@ A chunk that fails (quota exhaustion, a weak fallback-tier model going degenerat
 
 The script also comes back with `timeline`, `chapters`, `midrollMarkers` (two, snapped to scene boundaries near 2:30 and 6:00 — and none, with a warning, under 8:00) and `qualityChecks`: hook, pattern-interrupt cadence, duration shortfall, evidence mix (a slideshow of AI stills is flagged), and any figure or CVE in the narration that is not in the research dossier. All of it is computed from the scenes — no model involved — and the exported brief carries it plus a manual pre-publish checklist.
 
+The shortfall error fires below **0.92** of the requested runtime, and the documentary preset and CyberPipe's default target are **585 s**: the old 540 s × 0.85 tolerance was 459 s, under the 480 s mid-roll minimum. Durations start as the model's `durationEst` guesses; `retimeFromAudio` (`server/timeline.ts`) replaces them with the rendered video's real scene durations and recomputes all of the above, so chapters and mid-rolls land on what actually plays. It refuses timings that don't match the scenes one-to-one by `id`, and drops any built publish package (its description embeds the old chapter times).
+
 ### Publish package
 
 `POST /api/publish-package` (or the button on the script screen) returns five linted titles, three thumbnail concepts, a description, tags and hashtags. The model writes the copy; code does the rest — title/thumbnail linting, chapters and mid-roll times, a sources list containing only URLs that were actually read, and `{{PLACEHOLDER}}`s (never invented links) for newsletter/social. The recommendation is the linter's, not the model's.
+
+### Video assembly
+
+`server/assemble.ts` turns scene stills and narration audio into an MP4 by running the local `ffmpeg`. It is a **module and a script — not yet an endpoint or a CyberPipe stage**, and nothing generates the per-scene assets for it yet.
+
+```bash
+npm run render:fixture                 # stub stills + tone "narration" -> renders/fixture-stub-<ts>.mp4 and .en.srt; no quota, no network
+npm run render:fixture -- --720        # faster; --vertical for 9:16
+```
+
+- **It refuses rather than degrades.** `/api/tts` and `/api/generate-image` fall back to a synthesized tone and an SVG placeholder so the UI never dead-ends; a render would publish those as if they were real. Every scene is validated before any encoding and *all* problems are reported: placeholder images, non-image bodies labelled `image/png`, the quota-fallback tone, audio under 0.5 s, unsupported WAVs, mixed sample rates, partial captions.
+- **Audio is joined once, sample-accurately,** and muxed with a single AAC encode (loudness-normalised to -14 LUFS) against stream-copied video. Encoding AAC per scene and concatenating drifts by an encoder delay at every join. On the 56.5 s fixture, audio and video are both exactly 56.500 s, and each scene's silence starts within ~2 ms of the timeline's prediction. 1080p with a slow push-in/pull-out encodes at about 0.3× the video's length.
+- **The result's `scenes[]` is the real timeline** (`startSec`, `audioSec`, `durationSec`) — feed it to `retimeFromAudio`.
+- **Captions are a sidecar SRT** (`server/captions.ts`). Pass each scene's spoken text as `captionText` and the render writes `<name>.en.srt` beside the MP4: the narration verbatim (never a dropped or reordered word — tested), at most two lines of 42 characters, spread across each scene's real speech window. Scene starts are exact; inside a scene the timing is an estimate with no forced alignment (measured against macOS `say`: median 0.29 s, worst 0.76 s, always early). Upload it to YouTube as an English caption track.
+- **Not built:** burned-in captions and on-screen text (this Homebrew ffmpeg has no `drawtext`/`subtitles` filter; `brew install ffmpeg-full` is keg-only and would add them), and the stage that generates and checkpoints per-scene TTS and images. One `/api/tts` call per scene is about 51 calls for a 585 s script and the free-tier TTS request quota has not been measured.
 
 ### Request parameters worth knowing
 
@@ -149,7 +168,7 @@ The script also comes back with `timeline`, `chapters`, `midrollMarkers` (two, s
 
 ### For automated callers: strict mode
 
-The browser UI always gets *something* — on quota exhaustion the endpoints fall back to canned sample content flagged `isQuotaFallback`. A pipeline must not mistake that for a real draft. Send `X-ContentPipe-Strict: 1` and you get real status codes instead: `429` + `Retry-After` for quota, `503` + `Retry-After` for overload, `502` for non-retryable failures, `409` if the same script run is already in flight. See CLAUDE.md for the full table.
+The browser UI always gets *something* — on quota exhaustion the endpoints fall back to canned sample content flagged `isQuotaFallback`. A pipeline must not mistake that for a real draft. Send `X-ContentPipe-Strict: 1` and you get real status codes instead: `429` + `Retry-After` for quota, `503` + `Retry-After` for overload, `502` for non-retryable failures, `409` if the same script run is already in flight. The same header covers `/api/tts` and `/api/generate-image`: a strict caller is never handed the synthesized tone or the SVG placeholder (Pollinations is a real provider and is still returned, labelled). See CLAUDE.md for the full table.
 
 ### Character consistency
 
@@ -197,7 +216,7 @@ Note that ListModels is not proof of access — `gemini-2.5-flash` appears in th
 | Capability | Free tier | Notes |
 |---|---|---|
 | Text generation | Works | Occasional `503` on 3.x Flash; the chain handles it |
-| TTS | Works | `gemini-3.1-flash-tts-preview` |
+| TTS | Works | `gemini-3.1-flash-tts-preview`. Free of charge, but its request quota is unmeasured — one call per scene is ~51 calls for a 585 s script. Check `aistudio.google.com/rate-limit`. |
 | **Gemini image generation** | **Blocked** | `limit: 0` on `generate_content_free_tier_requests` for every image model — not a rate limit, no quota exists. Needs billing. |
 | **Google Search grounding** | **Blocked** | 429 immediately. Needs billing, and not planned even then — see [Research is real, within limits](#research-is-real-within-limits). |
 
@@ -222,8 +241,9 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 169 unit tests — no network, no quota
-npm run test:e2e # real server vs a stub Gemini: 429, overload, crash-resume, SSRF (~1 min)
+npm test         # 200 unit tests — no network, no quota
+npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image (~1 min)
+npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
 npm start        # node dist/server.cjs
@@ -240,6 +260,9 @@ server/
   gemini.ts                   client, TEXT_MODELS chain, quota-aware generateGeminiJson
   quota.ts                    classifies Gemini errors (per-minute / per-day / limit: 0 / overload)
   strict.ts                   strict-mode status mapping (X-ContentPipe-Strict)
+  assemble.ts                 scene stills + narration -> MP4 via local ffmpeg; refuses placeholders and fallback audio
+  captions.ts                 verbatim English SRT, timed across each scene's real speech window
+  stubMedia.ts                stand-in TTS/image output for the assembler's tests and fixture render (never wired to an endpoint)
   scriptPipeline.ts           the three script passes and chunking
   runJournal.ts               on-disk checkpoints (.runs/) for /api/script
   sourceArchive.ts            keeps the text the model actually saw (.runs/sources-*.json)
@@ -264,6 +287,8 @@ src/
 exports/                      Generated briefs (gitignored)
 .runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days)
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
+scripts/                      render-fixture.ts (npm run render:fixture)
+renders/                      Assembled videos and captions (gitignored)
 ```
 
 `src/types.ts` and `server/schemas.ts` describe the same shapes in two languages. **Change both together** or the schema will quietly stop matching what the UI reads.
