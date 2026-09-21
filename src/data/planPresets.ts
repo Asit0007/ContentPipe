@@ -13,9 +13,9 @@ export const PLAN_PRESETS: Record<PlanPresetKey, { label: string; targetFormat: 
     targetDurationSec: 60,
   },
   documentary: {
-    label: 'Documentary · 9 min · 16:9 · Investigative',
+    label: 'Documentary · ~10 min · 16:9 · Investigative',
     targetFormat: '16:9 (YouTube long-form)',
     targetTone: 'Deep Dive Documentary',
-    targetDurationSec: 540,
+    targetDurationSec: 585, // 9:45 — 540 × the audit's old 0.85 tolerance (459 s) fell under the 480 s mid-roll floor
   },
 };

@@ -346,6 +346,8 @@ export interface VideoScript {
   targetPlatform: 'Shorts/Reels/TikTok (9:16)' | 'YouTube Long-form (16:9)';
   aspectRatio: AspectRatio;
   estimatedTotalDuration: number;
+  /** 'estimate' (default, absent): durations are the model's guesses. 'audio': re-timed from the rendered video. */
+  timingSource?: 'estimate' | 'audio';
   totalWordCount?: number;
   targetWpm?: number;
   /** Retired: it was a hardcoded default, never a measurement. Kept only so old saved scripts still type-check. */

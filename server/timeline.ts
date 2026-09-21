@@ -66,7 +66,9 @@ const MAX_UNCHANGED_RUN_SEC = 30;
 const MIN_SCENE_WPM = 110;
 const MAX_SCENE_WPM = 190;
 const MIN_EVIDENCE_SCENE_SHARE = 0.4;
-const DURATION_SHORTFALL_ERROR_RATIO = 0.85;
+// 0.85 of the old 540 s default target is 459 s — under MIDROLL_MIN_VIDEO_SEC, so a script the audit
+// passed as "within tolerance" could still be too short for mid-roll ads. 0.92 of the 585 s default is 538 s.
+const DURATION_SHORTFALL_ERROR_RATIO = 0.92;
 const DURATION_OVERSHOOT_WARN_RATIO = 1.25;
 const EVIDENCE_VISUAL_TYPES = new Set(['terminal', 'diagram', 'headline']);
 
@@ -85,10 +87,14 @@ export function formatTimestamp(totalSec: number): string {
 const dur = (scene: any): number => Number(scene?.durationEst) || 0;
 const wordsOf = (scene: any): number => String(scene?.narration || '').split(/\s+/).filter(Boolean).length;
 
+// Re-timed scenes carry fractional durations (whole video frames), and summing fifty 8.6 s floats ends at
+// 430.00000000000034. Rounding what is reported to the millisecond keeps the JSON clean and comparable.
+const toMs = (n: number): number => Math.round(n * 1000) / 1000;
+
 export function buildTimeline(scenes: any[]): TimelineEntry[] {
   let t = 0;
   return scenes.map((s, i) => {
-    const entry = { sceneNumber: Number(s?.sceneNumber) || i + 1, startSec: t, endSec: t + dur(s) };
+    const entry = { sceneNumber: Number(s?.sceneNumber) || i + 1, startSec: toMs(t), endSec: toMs(t + dur(s)) };
     t += dur(s);
     return entry;
   });
@@ -456,4 +462,75 @@ export function analyzeScript(script: any, opts: { requestedDurationSec?: number
   const { markers, checks: midrollChecks } = placeMidrolls(scenes, timeline);
   const qualityChecks = [...auditScript(script, opts), ...midrollChecks].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   return { timeline, chapters, midrollMarkers: markers, qualityChecks };
+}
+
+// ---- re-timing from real audio -------------------------------------------------------------------------------
+
+/** How long one scene is actually held in the rendered video (server/assemble.ts `SceneTiming`). */
+export interface AudioTiming {
+  id: string;
+  durationSec: number;
+}
+
+export class RetimeError extends Error {
+  problems: string[];
+  constructor(problems: string[]) {
+    super(`Cannot re-time the script: ${problems.slice(0, 4).join('; ')}${problems.length > 4 ? '; ...' : ''}`);
+    this.name = 'RetimeError';
+    this.problems = problems;
+  }
+}
+
+/**
+ * Replaces the model's `durationEst` guesses with the durations of the rendered video and recomputes
+ * everything derived from them — timeline, chapters, mid-roll markers and the audit — so what is published
+ * matches what plays. The estimates can be wrong by tens of seconds over a long script, which is enough to
+ * put a mid-roll or a chapter in the middle of a sentence, or to make a video look eligible for mid-rolls
+ * that it is too short to carry.
+ *
+ * Fails closed: the timings must match the script's scenes one-to-one by id. Returns a new script; the input
+ * is untouched. Any previously built `publish` package is dropped, because its description embeds the old
+ * chapter timestamps — rebuild it with /api/publish-package.
+ */
+export function retimeFromAudio(
+  script: any,
+  timings: AudioTiming[],
+  opts: { requestedDurationSec?: number; research?: any } = {}
+): any {
+  const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
+  const problems: string[] = [];
+  if (scenes.length === 0) problems.push('the script has no scenes');
+
+  const byId = new Map<string, AudioTiming>();
+  for (const t of timings || []) {
+    if (byId.has(t.id)) problems.push(`duplicate timing for scene ${t.id}`);
+    byId.set(t.id, t);
+    if (!Number.isFinite(t.durationSec) || t.durationSec <= 0) problems.push(`scene ${t.id} has an invalid duration (${t.durationSec})`);
+  }
+  const seen = new Set<string>();
+  for (const sc of scenes) {
+    const id = String(sc?.id ?? '');
+    if (!id) problems.push(`scene ${sc?.sceneNumber ?? '?'} has no id`);
+    else if (seen.has(id)) problems.push(`duplicate scene id ${id}`);
+    else if (!byId.has(id)) problems.push(`no timing for scene ${id}`);
+    seen.add(id);
+  }
+  for (const id of byId.keys()) if (!seen.has(id)) problems.push(`timing for unknown scene ${id}`);
+  if (problems.length > 0) throw new RetimeError(problems);
+
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+  const retimedScenes = scenes.map((sc) => {
+    const durationSec = round(byId.get(String(sc.id))!.durationSec);
+    // `motion.durationSec` is documented as matching durationEst; leave it alone only if there is no motion block.
+    return { ...sc, durationEst: durationSec, ...(sc.motion ? { motion: { ...sc.motion, durationSec } } : {}) };
+  });
+
+  const { publish: _stale, ...rest } = script;
+  const retimed = {
+    ...rest,
+    scenes: retimedScenes,
+    estimatedTotalDuration: Math.round(retimedScenes.reduce((n, sc) => n + sc.durationEst, 0)),
+    timingSource: 'audio',
+  };
+  return Object.assign(retimed, analyzeScript(retimed, opts));
 }

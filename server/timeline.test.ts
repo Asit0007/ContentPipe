@@ -10,6 +10,8 @@ import {
   extractSpecifics,
   specificKey,
   MIDROLL_MIN_VIDEO_SEC,
+  retimeFromAudio,
+  RetimeError,
 } from './timeline';
 
 const scene = (n: number, o: any = {}) => ({
@@ -296,4 +298,78 @@ test('audit: one wrong figure repeated across many scenes is reported ONCE, with
   assert.equal((u.message.match(/CVE-2099-1234/g) || []).length, 1);
   assert.match(u.message, /"CVE-2099-1234" \(scenes 1, 2, 3, \+27 more\)/);
   assert.equal(u.sceneNumbers.length, 30);
+});
+
+// ------------------------------------------------------------------------------------ shortfall tolerance
+
+test('audit: a 500 s script against the 585 s default target is now an error (the old 0.85 tolerance let it through)', () => {
+  const s = scenes(50); // 500 s = 85.5% of 585: silent at 0.85, an error at 0.92
+  assert.equal(find(auditScript({ scenes: s }, { requestedDurationSec: 585 }), 'duration-shortfall').severity, 'error');
+  // The floor is 0.92 x 585 = 538.2 s, which clears the 480 s mid-roll minimum; the old floor (459 s) did not.
+  const atFloor = scenes(54, (i) => (i === 0 ? { durationEst: 9 } : {})); // 539 s
+  assert.equal(find(auditScript({ scenes: atFloor }, { requestedDurationSec: 585 }), 'duration-shortfall'), undefined);
+  assert.ok(0.92 * 585 > MIDROLL_MIN_VIDEO_SEC);
+});
+
+// ------------------------------------------------------------------------------------------- re-timing
+
+const withIds = (count: number, fn: (i: number) => any = () => ({})) => scenes(count, (i) => ({ id: `s${i + 1}`, ...fn(i) }));
+const timingsOf = (list: any[], sec: (i: number) => number) => list.map((sc, i) => ({ id: sc.id, durationSec: sec(i) }));
+
+test('retime: real audio shorter than the estimates flips a script from mid-roll eligible to ineligible', () => {
+  const s: any = { scenes: withIds(50, () => ({ motion: { durationSec: 10 } })), publish: { titles: ['stale'] } };
+  Object.assign(s, analyzeScript(s, { requestedDurationSec: 585 })); // 500 s on the model's numbers
+  assert.equal(s.midrollMarkers.length, 2);
+  assert.equal(find(s.qualityChecks, 'midroll-ineligible'), undefined);
+
+  const r = retimeFromAudio(s, timingsOf(s.scenes, () => 8.6), { requestedDurationSec: 585 }); // 430 s of real audio
+  assert.equal(r.timingSource, 'audio');
+  assert.equal(r.estimatedTotalDuration, 430);
+  assert.equal(r.timeline[r.timeline.length - 1].endSec, 430);
+  assert.deepEqual(r.midrollMarkers, []);
+  assert.equal(find(r.qualityChecks, 'midroll-ineligible').severity, 'warn');
+  assert.equal(find(r.qualityChecks, 'duration-shortfall').severity, 'error');
+  assert.ok(r.scenes.every((sc: any) => sc.durationEst === 8.6 && sc.motion.durationSec === 8.6));
+});
+
+test('retime: never mutates its input, and drops the publish package whose description embeds old chapter times', () => {
+  const s: any = { scenes: withIds(50), publish: { description: 'Chapters: 0:00 ...' }, viralityScore: 3 };
+  const before = JSON.stringify(s);
+  const r = retimeFromAudio(s, timingsOf(s.scenes, () => 12));
+  assert.equal(JSON.stringify(s), before);
+  assert.equal(r.publish, undefined);
+  assert.equal(r.viralityScore, 3); // unrelated fields survive
+});
+
+test('retime: mid-roll and chapter times land on the real scene boundaries, not the estimated ones', () => {
+  // The first ten scenes really run 20 s instead of the estimated 10 s; the rest are as estimated.
+  const s: any = { scenes: withIds(60) }; // 600 s estimated
+  Object.assign(s, analyzeScript(s));
+  const r = retimeFromAudio(s, timingsOf(s.scenes, (i) => (i < 10 ? 20 : 10)));
+  assert.equal(r.estimatedTotalDuration, 700);
+  for (const m of r.midrollMarkers) {
+    const entry = r.timeline.find((e: any) => e.sceneNumber === m.afterSceneNumber);
+    assert.equal(m.atSec, entry.endSec, 'a mid-roll sits exactly at the end of a scene in the REAL timeline');
+  }
+  assert.notDeepEqual(r.midrollMarkers.map((m: any) => m.atSec), s.midrollMarkers.map((m: any) => m.atSec));
+  assert.ok(r.chapters.every((c: any) => r.timeline.some((e: any) => e.startSec === c.startSec)));
+});
+
+test('retime: refuses timings that do not match the scenes one-to-one, listing every problem', () => {
+  const s: any = { scenes: withIds(3) };
+  const bad = (timings: any[], pattern: RegExp) =>
+    assert.throws(() => retimeFromAudio(s, timings), (e: any) => e instanceof RetimeError && e.problems.some((p: string) => pattern.test(p)));
+  bad([{ id: 's1', durationSec: 5 }, { id: 's2', durationSec: 5 }], /no timing for scene s3/);
+  bad([...timingsOf(s.scenes, () => 5), { id: 'zz', durationSec: 5 }], /unknown scene zz/);
+  bad([...timingsOf(s.scenes, () => 5), { id: 's1', durationSec: 5 }], /duplicate timing for scene s1/);
+  bad(timingsOf(s.scenes, (i) => (i === 1 ? 0 : 5)), /invalid duration/);
+  bad(timingsOf(s.scenes, (i) => (i === 1 ? NaN : 5)), /invalid duration/);
+  assert.throws(() => retimeFromAudio({ scenes: [{ sceneNumber: 1, narration: 'x' }] }, []), (e: any) => e.problems.some((p: string) => /has no id/.test(p)));
+  assert.throws(() => retimeFromAudio({ scenes: [] }, []), RetimeError);
+});
+
+test('buildTimeline: fractional durations do not accumulate float noise into the reported times', () => {
+  const t = buildTimeline(Array.from({ length: 50 }, (_, i) => scene(i + 1, { durationEst: 8.6 })));
+  assert.equal(t[49].endSec, 430);
+  assert.equal(t[3].startSec, 25.8);
 });
