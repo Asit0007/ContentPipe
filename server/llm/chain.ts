@@ -62,8 +62,17 @@ export class InvalidOutputError extends Error {
 const PER_DAY = /per day|daily|tokens per day|\bTPD\b|\bRPD\b|day limit/i;
 const NO_BALANCE = /insufficient[_ ](balance|credits?|funds|quota)|out of credits|no credits|exceeded your current quota|billing|credits? (have been )?(exhausted|used)/i;
 const RETRY_IN = /(?:try again|retry) in ((?:[\d.]+\s*(?:ms|h|m|s)\s*)+)/i;
+/** OpenRouter puts `X-RateLimit-Reset` (epoch ms) in its error body's metadata; a 10-digit value is epoch seconds. */
+const RESET_EPOCH = /ratelimit[-_]reset["']?\s*[:=]\s*["']?(\d{10}|\d{13})\b/i;
+/** "The model `x` does not exist", DeepSeek's "Model Not Exist", Mistral's "invalid_model", OpenAI's "model_not_found". */
+const MODEL_MISSING =
+  /\bmodel\b[^\n]{0,100}?\b(?:not[\s_-]*found|does[\s_-]*not[\s_-]*exist|not[\s_-]*exists?|is[\s_-]*not[\s_-]*(?:available|supported)|decommissioned)\b|\b(?:unknown|invalid|no[\s_-]*such)[\s_-]*model\b|model_not_found/i;
 const MAX_COOLDOWN_SEC = 1800;
 const TRANSIENT_COOLDOWN_SEC = 30;
+/** A 413 depends on the request's size, so a smaller one may fit sooner than a missing model reappears. */
+const TOO_LARGE_COOLDOWN_SEC = 600;
+/** Floor for a daily limit that says nothing about when it resets. */
+const MIN_PER_DAY_WAIT_SEC = 3600;
 
 /** "7m12.5s", "45s", "1h2m", "250ms" -> whole seconds, rounded up. */
 export function parseDurationSec(text: string): number | undefined {
@@ -76,7 +85,30 @@ export function parseDurationSec(text: string): number | undefined {
   return Number.isFinite(sec) && sec > 0 ? Math.ceil(sec) : undefined;
 }
 
-export function classifyProviderError(err: unknown): ClassifiedError {
+function resetEpochSec(body: string, nowMs: number): number | undefined {
+  const m = body.match(RESET_EPOCH);
+  if (!m) return undefined;
+  const resetMs = m[1].length === 13 ? Number(m[1]) : Number(m[1]) * 1000;
+  const sec = Math.ceil((resetMs - nowMs) / 1000);
+  return sec > 0 ? sec : undefined;
+}
+
+function secondsUntilNextUtcMidnight(nowMs: number): number {
+  const d = new Date(nowMs);
+  return Math.ceil((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - nowMs) / 1000);
+}
+
+/**
+ * Why an `other` failure will repeat on the same model, so the chain skips that model for a while
+ * instead of paying for the same refusal on every request.
+ */
+export type RepeatCause = 'model_missing' | 'too_large';
+
+export interface ProviderClassification extends ClassifiedError {
+  cause?: RepeatCause;
+}
+
+export function classifyProviderError(err: unknown, nowMs: number = Date.now()): ProviderClassification {
   if (err instanceof QuotaExhaustedError) return { kind: err.kind, retryAfterSec: err.retryAfterSec };
   if (err instanceof UpstreamUnavailableError) return { kind: 'transient' };
   if (err instanceof InvalidOutputError) return { kind: 'other' };
@@ -85,12 +117,20 @@ export function classifyProviderError(err: unknown): ClassifiedError {
     const { status, body } = err;
     if (status === 402 || ((status === 403 || status === 429) && NO_BALANCE.test(body))) return { kind: 'zero', status };
     if (status === 429) {
-      const retryAfterSec = err.retryAfterSec ?? parseDurationSec(body) ?? 60;
-      if (PER_DAY.test(body) || retryAfterSec > 300) return { kind: 'per_day', retryAfterSec, status };
-      return { kind: 'per_minute', retryAfterSec, status };
+      const hint = err.retryAfterSec ?? parseDurationSec(body) ?? resetEpochSec(body, nowMs);
+      if (PER_DAY.test(body) || (hint ?? 0) > 300) {
+        // A daily cap that doesn't say when it resets used to default to 60 s, so a strict caller
+        // (CyberPipe) re-polled a spent daily quota every minute. Most providers reset at 00:00 UTC.
+        return { kind: 'per_day', retryAfterSec: hint ?? Math.max(MIN_PER_DAY_WAIT_SEC, secondsUntilNextUtcMidnight(nowMs)), status };
+      }
+      return { kind: 'per_minute', retryAfterSec: hint ?? 60, status };
     }
     if (status >= 500 || status === 408) return { kind: 'transient', status };
-    return { kind: 'other', status }; // 400 bad request, 401/403 bad key, 404 unknown model
+    // 401/403 bad key are cooled provider-wide below. A missing model or an oversized request fails
+    // the same way every time, so it names a cause; any other 400 is about this one request.
+    if (status === 404 || ((status === 400 || status === 422) && MODEL_MISSING.test(body))) return { kind: 'other', status, cause: 'model_missing' };
+    if (status === 413) return { kind: 'other', status, cause: 'too_large' };
+    return { kind: 'other', status };
   }
 
   // fetch() itself failed: DNS, connection reset, or our own timeout.
@@ -103,7 +143,13 @@ export function classifyProviderError(err: unknown): ClassifiedError {
 // Cooldowns — a provider known to be out is skipped instead of costing a failed call per request
 // --------------------------------------------------------------------------
 
-const cooldowns = new Map<string, { until: number; c: ClassifiedError }>();
+/**
+ * `until` is when the model is tried again; `retryAt` is when the provider said it would recover.
+ * They differ for a daily cap: the skip is capped at MAX_COOLDOWN_SEC (so a key fixed while the
+ * server runs is picked up), but a request that finds it cooling must still report the real reset,
+ * not the shorter skip. `why` is the original failure, for the error a fully-cooled chain throws.
+ */
+const cooldowns = new Map<string, { until: number; retryAt?: number; c: ProviderClassification; why: string }>();
 
 export function resetLlmCooldowns(): void {
   cooldowns.clear();
@@ -116,20 +162,29 @@ function cooldownKey(providerId: string, model: string, c: ClassifiedError): str
   return isAuthStatus(c.status) || c.kind === 'zero' ? `${providerId}:*` : `${providerId}:${model}`;
 }
 
-function coolDown(providerId: string, model: string, c: ClassifiedError, nowMs: number): void {
+function coolDown(providerId: string, model: string, c: ProviderClassification, nowMs: number, err?: unknown): void {
   let sec: number | undefined;
   if (c.kind === 'zero' || isAuthStatus(c.status)) sec = MAX_COOLDOWN_SEC;
   else if (c.kind === 'per_day' || c.kind === 'per_minute') sec = Math.min(c.retryAfterSec ?? 60, MAX_COOLDOWN_SEC);
   else if (c.kind === 'transient') sec = TRANSIENT_COOLDOWN_SEC;
-  if (sec) cooldowns.set(cooldownKey(providerId, model, c), { until: nowMs + sec * 1000, c });
+  else if (c.cause === 'model_missing') sec = MAX_COOLDOWN_SEC;
+  else if (c.cause === 'too_large') sec = TOO_LARGE_COOLDOWN_SEC;
+  if (!sec) return;
+  cooldowns.set(cooldownKey(providerId, model, c), {
+    until: nowMs + sec * 1000,
+    retryAt: c.retryAfterSec !== undefined ? nowMs + c.retryAfterSec * 1000 : undefined,
+    c,
+    why: String((err as any)?.message ?? c.kind).slice(0, 200),
+  });
 }
 
 /** The remembered failure if this model is still cooling down, else undefined. */
-function activeCooldown(providerId: string, model: string, nowMs: number): ClassifiedError | undefined {
+function activeCooldown(providerId: string, model: string, nowMs: number): (ProviderClassification & { why: string }) | undefined {
   for (const key of [`${providerId}:*`, `${providerId}:${model}`]) {
     const cd = cooldowns.get(key);
     if (cd && cd.until > nowMs) {
-      return { ...cd.c, retryAfterSec: cd.c.kind === 'zero' ? undefined : Math.ceil((cd.until - nowMs) / 1000) };
+      const retryAfterSec = cd.c.kind === 'zero' ? undefined : Math.max(1, Math.ceil(((cd.retryAt ?? cd.until) - nowMs) / 1000));
+      return { ...cd.c, retryAfterSec, why: cd.why };
     }
   }
   return undefined;
@@ -370,7 +425,7 @@ export async function generateJson<T>(
         return await generateGeminiJson<T>(ai, prompt, systemInstruction, geminiModels, responseSchema, opts);
       } catch (err) {
         console.warn('[LLM Chain] gemini tier failed:', (err as any)?.message || err);
-        record(err, classifyProviderError(err));
+        record(err, classifyProviderError(err, now()));
         continue;
       }
     }
@@ -378,14 +433,15 @@ export async function generateJson<T>(
     for (const model of p.models) {
       const cd = activeCooldown(p.spec.id, model, now());
       if (cd) {
-        failures.push(cd);
+        const { why, ...c } = cd;
+        record(new Error(`${p.spec.id}/${model} skipped while cooling down after: ${why}`), c);
         continue;
       }
       try {
         return await jsonFromProvider<T>(p, model, prompt, systemInstruction, responseSchema, opts);
       } catch (err) {
-        const c = classifyProviderError(err);
-        coolDown(p.spec.id, model, c, now());
+        const c = classifyProviderError(err, now());
+        coolDown(p.spec.id, model, c, now(), err);
         record(err, c);
         console.warn(`[LLM Chain] ${p.spec.id}/${model} -> ${c.kind}${c.status ? ` (HTTP ${c.status})` : ''}:`, (err as any)?.message || err);
       }
@@ -435,7 +491,7 @@ export async function generateText(
         lastErr = new InvalidOutputError(`${p.spec.id}/${model} returned empty content`);
       } catch (err) {
         lastErr = err;
-        coolDown(p.spec.id, model, classifyProviderError(err), now());
+        coolDown(p.spec.id, model, classifyProviderError(err, now()), now(), err);
         console.warn(`[LLM Chain] chat ${p.spec.id}/${model} failed:`, (err as any)?.message || err);
       }
     }

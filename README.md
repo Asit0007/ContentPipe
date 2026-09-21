@@ -221,7 +221,8 @@ How it behaves:
 - **Schemas.** Gemini can constrain decoding to a schema; the others only offer `json_object` mode. They get the schema (converted by `server/llm/schema.ts`) in the system prompt, and the answer is checked locally — required keys, types, enums, `minItems`/`maxItems`. A violation gets one repair round with the problems fed back, then the next provider. An answer cut off at the token cap counts as a failure, never a result.
 - **Arrays.** `json_object` mode cannot return a bare array, so a caller that wants one passes `rootArray: true`; the model is asked for `{"items": [...]}` and the chain unwraps it (`/api/ip-names` does this).
 - **Errors keep the strict-mode contract.** Each failure is classified (no balance → never retry; 429 → per-minute or per-day, reading `Retry-After` and bodies like "try again in 7m12s"; 5xx and timeouts → transient; bad key or bad request → real error). If every provider fails, quota dominates and reports the **earliest** retry across all of them, so strict callers still get `429` / `503` / `502` + `Retry-After`.
-- **Cooldowns** are in-process: a provider that answered 401/402/403 is skipped for 30 minutes (restart after fixing a key), a 429 for its `Retry-After` (capped at 30 minutes), a timeout or 5xx for 30 seconds.
+- **Cooldowns** are in-process: a provider that answered 401/402/403 is skipped for 30 minutes (restart after fixing a key); a model id the provider doesn't have (404, or a 400 saying so) for 30 minutes; a model that answered 413 "request too large" for 10 minutes; a 429 for its `Retry-After` (the skip is capped at 30 minutes, but a request that finds it cooling still reports the provider's real reset time); a timeout or 5xx for 30 seconds.
+- **A daily limit that doesn't say when it resets** (OpenRouter's free daily cap, for one) is treated as lasting until the next 00:00 UTC, and at least an hour — not 60 seconds, which had a strict caller re-polling a spent quota every minute. OpenRouter's `X-RateLimit-Reset` is read from the error body when it is there.
 - **Not covered:** TTS, image generation and the NotebookLM service still call Gemini directly; none of these providers offer them.
 - **Privacy.** Every prompt goes to whichever provider answers. DeepSeek's API is hosted in China and Mistral's free tier trains on prompts. That is acceptable here because prompts describe public news stories; it is a different question for private data.
 
@@ -280,7 +281,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 224 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 231 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
@@ -342,7 +343,7 @@ renders/                      Assembled videos and captions (gitignored)
 
 **Everything reads like canned content about an XZ backdoor.** You're getting `generateFallbackGenerators` output. Check `isQuotaFallback` in the response, then check the `[LLM Chain]` line at startup: it must list at least one provider, so a key is set *and* the server was restarted after setting it. Then run `npm run llm:check`.
 
-**A provider is configured but never answers.** Look for `[LLM Chain] <provider>/<model> -> ...` warnings in the server log. `zero` or HTTP 401/402/403 means a bad key or no balance, and that provider is then skipped for 30 minutes — fix it and restart. HTTP 404 or 400 usually means a stale model id: `npm run llm:check` lists the live ones, and `<ID>_MODELS` overrides the default.
+**A provider is configured but never answers.** Look for `[LLM Chain] <provider>/<model> -> ...` warnings in the server log. `zero` or HTTP 401/402/403 means a bad key or no balance, and that provider is then skipped for 30 minutes — fix it and restart. HTTP 404, or a 400 saying the model doesn't exist, means a stale model id: that model is skipped for 30 minutes, `npm run llm:check` lists the live ones, and `<ID>_MODELS` overrides the default. HTTP 413 means the request is too large for that model's limit (Groq's free tier counts the output cap against tokens-per-minute) — lower `<ID>_MAX_TOKENS`.
 
 **A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in three passes](#script-generation-runs-in-three-passes).
 

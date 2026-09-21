@@ -110,6 +110,32 @@ test('parseDurationSec reads the compound durations providers put in 429 bodies'
   assert.equal(parseDurationSec('no hint here'), undefined);
 });
 
+test('a daily cap with no reset time waits for the UTC day to roll over, never 60 s', () => {
+  const at = Date.UTC(2026, 8, 21, 8, 0, 0); // 08:00 UTC -> 16 h to midnight
+  // OpenRouter's free daily cap: no Retry-After, no "try again in" — this used to come back as 60 s.
+  const openRouter = http(429, '{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429}}');
+  assert.deepEqual(classifyProviderError(openRouter, at), { kind: 'per_day', retryAfterSec: 16 * 3600, status: 429 });
+  // Late in the UTC day the floor keeps it from turning into a fast re-poll.
+  const lateAt = Date.UTC(2026, 8, 21, 23, 59, 0);
+  assert.equal(classifyProviderError(http(429, 'daily limit reached'), lateAt).retryAfterSec, 3600);
+  // The reset OpenRouter puts in its error metadata (epoch ms) wins over the guess.
+  const resetMs = at + 5 * 3600 * 1000;
+  const withReset = http(429, `{"error":{"message":"Rate limit exceeded: free-models-per-day","metadata":{"headers":{"X-RateLimit-Reset":"${resetMs}"}}}}`);
+  assert.equal(classifyProviderError(withReset, at).retryAfterSec, 5 * 3600);
+  // An explicit hint is still trusted as given.
+  assert.equal(classifyProviderError(http(429, 'tokens per day (TPD). Please try again in 7m12s'), at).retryAfterSec, 432);
+});
+
+test('a missing model or an oversized request is named, so the chain can stop re-asking', () => {
+  assert.deepEqual(classifyProviderError(http(404, 'not found')), { kind: 'other', status: 404, cause: 'model_missing' });
+  assert.equal(classifyProviderError(http(400, '{"error":{"message":"Model Not Exist","type":"invalid_request_error"}}')).cause, 'model_missing');
+  assert.equal(classifyProviderError(http(400, 'The model `grok-9` does not exist or you do not have access to it.')).cause, 'model_missing');
+  assert.equal(classifyProviderError(http(400, '{"object":"error","message":"Invalid model: foo","type":"invalid_model"}')).cause, 'model_missing');
+  assert.equal(classifyProviderError(http(413, 'Request too large for model on tokens per minute (TPM): Limit 8000, Requested 18000')).cause, 'too_large');
+  // A 400 about this request's content is not a property of the model: no cause, no cooldown.
+  assert.deepEqual(classifyProviderError(http(400, "'messages' must contain the word 'json'")), { kind: 'other', status: 400 });
+});
+
 // ---------- the chain ----------
 
 interface Call { url: string; headers: Record<string, string>; body: any }
@@ -239,6 +265,56 @@ test('with no other provider configured the call is exactly the old Gemini path'
   const boom = (async () => { throw new Error('no network for the chain'); }) as unknown as typeof fetch;
   assert.deepEqual(await run(geminiAi('{"answer":"legacy"}', spy), boom, { GEMINI_API_KEY: 'k' }), { answer: 'legacy' });
   assert.equal(spy.n, 1);
+});
+
+test('a model id that does not exist is skipped on the next request, not paid for again', async () => {
+  const { f, calls } = fakeFetch({ [DS]: [{ status: 404, body: 'model not found' }, { content: '{"answer":"flash"}' }, { content: '{"answer":"flash again"}' }] });
+  assert.deepEqual(await run(noGemini, f), { answer: 'flash' });
+  assert.deepEqual(calls.map((c) => c.body.model), ['deepseek-v4-pro', 'deepseek-flash']);
+  assert.deepEqual(await run(noGemini, f), { answer: 'flash again' });
+  assert.deepEqual(calls.map((c) => c.body.model), ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-flash'], 'the missing model was not asked again');
+});
+
+test('a 413 (request too large for this model) is skipped on the next request too', async () => {
+  const { f, calls } = fakeFetch({ [DS]: [{ status: 413, body: 'Request too large' }, { content: '{"answer":"ok"}' }, { content: '{"answer":"ok"}' }] });
+  await run(noGemini, f);
+  await run(noGemini, f);
+  assert.deepEqual(calls.map((c) => c.body.model), ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-flash']);
+});
+
+test('every provider on a daily cap with no reset time -> a long Retry-After, not a one-minute re-poll', async () => {
+  const daily = { status: 429, body: '{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day"}}' };
+  const { f } = fakeFetch({ [DS]: [daily], [XAI]: [daily], [GROQ]: [daily] });
+  const gemDay = Object.assign(new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"q","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]}]}}'), { status: 429 });
+  const ai = { models: { generateContent: async () => { throw gemDay; } } } as any;
+  const err: any = await run(ai, f).catch((e) => e);
+  assert.ok(err instanceof QuotaExhaustedError, String(err));
+  assert.equal(err.kind, 'per_day');
+  assert.ok(err.retryAfterSec >= 3600, `retryAfterSec was ${err.retryAfterSec}`);
+});
+
+test('a request that finds a daily cap cooling down reports the real reset, not the shorter skip', async () => {
+  const { f, calls } = fakeFetch({ [DS]: [{ status: 429, body: 'daily limit reached', headers: { 'retry-after': '20000' } }] });
+  const e = { DEEPSEEK_API_KEY: 'k' };
+  let t = 1_000_000;
+  const go = () => generateJson<any>(noGemini, 'p', 's', ['gm1'], simple, { fetch: f, env: e, sleep: async () => {}, now: () => t }).catch((x) => x);
+  assert.equal((await go()).retryAfterSec, 20000);
+  const called = calls.length;
+  t += 100_000; // 100 s later: still inside the 30-min skip window
+  const again: any = await go();
+  assert.equal(calls.length, called, 'the cooled model was skipped');
+  assert.ok(again instanceof QuotaExhaustedError);
+  assert.equal(again.retryAfterSec, 19900);
+});
+
+test('when every model is skipped for a non-retryable reason, the error still says what went wrong', async () => {
+  const { f } = fakeFetch({ [DS]: [{ status: 404, body: 'model not found' }] });
+  const e = { DEEPSEEK_API_KEY: 'k' };
+  const go = () => generateJson<any>(noGemini, 'p', 's', ['gm1'], simple, { fetch: f, env: e, sleep: async () => {}, now: () => 1_000_000 }).catch((x) => x);
+  await go();
+  const err: any = await go(); // both models now cooling down
+  assert.ok(!(err instanceof QuotaExhaustedError) && !(err instanceof UpstreamUnavailableError));
+  assert.match(String(err.message), /cooling down after: deepseek HTTP 404: model not found/);
 });
 
 // ---------- chat ----------
