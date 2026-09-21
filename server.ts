@@ -501,6 +501,9 @@ app.post('/api/script', async (req, res) => {
           // No fixed 5-scene assumption here anymore — a chunk failure can
           // leave any scene without one, at any position in a script of any length.
           actPhase: s.actPhase || (idx === 0 ? 'Hook' : idx === script.scenes.length - 1 ? 'Conclusion & CTA' : 'Development'),
+          // Assigned by generateSceneChunks (shared/speakers.ts), never by the model, so it is not in the response
+          // schema. Set explicitly because this map rebuilds each scene from a fixed field list and would drop it.
+          speaker: s.speaker === 'analyst' ? 'analyst' : 'narrator',
           narration: s.narration || '',
           durationEst: dur,
           cinematography: s.cinematography || 'Slow, deliberate camera move on the subject, restrained lighting, shallow depth of field',

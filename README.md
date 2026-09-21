@@ -151,6 +151,12 @@ Array bounds matter too — without `minItems` on `scenes`, the model returns a 
 
 A chunk that fails (quota exhaustion, a weak fallback-tier model going degenerate under load — both observed live) doesn't fail the whole script; whatever scenes already generated are kept and returned. Check `estimatedTotalDuration` against what was actually requested rather than assuming a match.
 
+### Two voices
+
+Each scene carries an optional `speaker`: `narrator` or `analyst`. [ContentRender](../ContentRender) reads a video with two voices — the narrator tells the story, and the analyst is a short first-person reaction between narrator sections. Absent means narrator, so older scripts are unaffected.
+
+Placement is decided **in code, not by the model** (`shared/speakers.ts`): every 6th scene except the last, so the analyst never opens or closes the video and never speaks twice in a row. The narrative pass is told which scene numbers in its chunk are reactions and how to write one; it never returns `speaker`, so the field is deliberately absent from `server/schemas.ts`. An analyst scene keeps the previous scene's `actPhase` (otherwise it would split a chapter), and `qualityChecks` warns when a reaction runs past 30 words. Details, the reasons, and an honest live-test caveat are in `CLAUDE.md` ("Two voices").
+
 ### Checkpointing and resume
 
 `/api/script` writes each finished chunk to `.runs/` (gitignored). A run interrupted by a quota hit or a crash resumes from its last finished chunk when the **same request** is sent again — nothing to configure; a run that was already delivered is never replayed, so "regenerate" starts fresh. Optional body fields: `runId` (explicit key) and `fresh: true`. Every response carries `generation` — requested vs produced scenes and duration, whether it is complete, and what degraded — so a short script is never mistaken for a full one.
@@ -296,8 +302,8 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 231 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
-npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image (~1 min)
+npm test         # 245 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
 npm run dev      # tsx server.ts — Express + Vite middleware
@@ -338,6 +344,7 @@ server/
   notebooklmService.ts        Multi-voice podcast audio
 shared/
   brand.ts                    DEFAULT_CHANNEL_BRAND — imported by both server/ and src/
+  speakers.ts                 narrator / analyst placement (every 6th scene except the last) — imported by both server/ and src/
 src/
   App.tsx                     Stage orchestration
   components/                 One component per pipeline stage
@@ -346,7 +353,8 @@ src/
 exports/                      Generated briefs (gitignored)
 .runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days)
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
-scripts/                      render-fixture.ts (npm run render:fixture), llm-check.ts (npm run llm:check)
+scripts/                      render-fixture.ts (npm run render:fixture), llm-check.ts (npm run llm:check),
+                              tts-bakeoff/ (TTS engine comparison + blind listening set — see its README)
 renders/                      Assembled videos and captions (gitignored)
 ```
 

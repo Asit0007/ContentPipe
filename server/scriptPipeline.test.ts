@@ -43,6 +43,8 @@ type Fault = { kind: 'bible' | 'narr' | 'art'; at?: number; err: () => Error };
  */
 function fakeAi(faults: Fault[] = []) {
   const log: string[] = [];
+  /** The narrative prompt each chunk received, keyed by the scene number it starts at. */
+  const narrPrompts: Record<number, string> = {};
   const ai: any = {
     models: {
       generateContent: async ({ contents }: { model: string; contents: string }) => {
@@ -72,11 +74,14 @@ function fakeAi(faults: Fault[] = []) {
           kind = 'narr';
           const count = Number(prompt.match(/Write EXACTLY (\d+) new scenes/)?.[1]);
           at = Number(prompt.match(/starting at (\d+)/)?.[1]);
+          narrPrompts[at] = prompt;
           body = {
             scenes: Array.from({ length: count }, (_, i) => ({
               sceneNumber: at + i,
               title: `S${at + i}`,
-              actPhase: 'Hook',
+              // Scene 6 is an analyst scene in the longer plans: a model that invents its own label for it
+              // must not split the chapter it interrupts.
+              actPhase: at + i === 6 ? 'Made-up label' : 'Hook',
               narration: 'word '.repeat(30).trim(),
               durationEst: 10,
               visualPrompt: 'vp',
@@ -94,7 +99,7 @@ function fakeAi(faults: Fault[] = []) {
       },
     },
   };
-  return { ai, log };
+  return { ai, log, narrPrompts };
 }
 
 let dir: string;
@@ -108,12 +113,16 @@ after(async () => {
   for (const d of dirs) await fs.rm(d, { recursive: true, force: true });
 });
 
-async function runAll(ai: any, opts: ScriptRunOptions) {
-  const bible = await generateProductionBible(ai, PLAN, RESEARCH, 'Brand', opts);
-  const scenes = await generateSceneChunks(ai, PLAN, RESEARCH, bible, 'Brand', opts);
+async function runAll(ai: any, opts: ScriptRunOptions, plan: typeof PLAN = PLAN) {
+  const bible = await generateProductionBible(ai, plan, RESEARCH, 'Brand', opts);
+  const scenes = await generateSceneChunks(ai, plan, RESEARCH, bible, 'Brand', opts);
   const script: any = { title: 'T', scenes: scenes.map((s, i) => ({ ...s, sceneNumber: i + 1 })), characterBible: bible.characterBible, styleGuide: bible.styleGuide };
   return applyVisualDirection(ai, script, RESEARCH, opts);
 }
+
+// 200s target → 17 scenes → narrative chunks of 3,3,3,3,3,2 (scenes 1-3, 4-6, ... 16-17). The analyst speaks
+// scenes 6 and 12 (shared/speakers.ts); 17 is the last, so the narrator closes.
+const LONG_PLAN = { ...PLAN, targetDurationSec: 200 };
 
 test('sceneTargetFor: 60s → 5 scenes, 540s → 47, clamped to [5, 80]', () => {
   assert.equal(sceneTargetFor(60), 5);
@@ -190,4 +199,62 @@ test('a failed production bible in strict mode with quota → throws; with a bad
   const b = await generateProductionBible(fakeAi([{ kind: 'bible', err: badRequest }]).ai, PLAN, RESEARCH, 'B', { strict: true, degraded });
   assert.deepEqual(b, { characterBible: [], styleGuide: {} });
   assert.match(degraded[0], /Production bible failed/);
+});
+
+test('two voices: the analyst is assigned in code at scenes 6 and 12; the narrator opens and closes', async () => {
+  const { ai } = fakeAi();
+  const script = await runAll(ai, {}, LONG_PLAN);
+  assert.equal(script.scenes.length, 17);
+  assert.ok(script.scenes.every((s: any) => s.speaker === 'narrator' || s.speaker === 'analyst'), 'every scene carries a speaker');
+  assert.deepEqual(script.scenes.filter((s: any) => s.speaker === 'analyst').map((s: any) => s.sceneNumber), [6, 12]);
+  assert.equal(script.scenes[0].speaker, 'narrator');
+  assert.equal(script.scenes[16].speaker, 'narrator');
+});
+
+test('a 60 s short has no analyst scene, and its prompts say every scene is the narrator', async () => {
+  const { ai, narrPrompts } = fakeAi();
+  const script = await runAll(ai, {});
+  assert.ok(script.scenes.every((s: any) => s.speaker === 'narrator'));
+  for (const p of Object.values(narrPrompts)) {
+    assert.match(p, /Every scene in this chunk is the narrator's/);
+    assert.doesNotMatch(p, /is the ANALYST's/);
+  }
+});
+
+test("the prompt names exactly the analyst scenes in its chunk, and explains why they must sound different", async () => {
+  const { ai, narrPrompts } = fakeAi();
+  await runAll(ai, {}, LONG_PLAN);
+  assert.match(narrPrompts[4], /scene #6 is the ANALYST's\. Every other scene is the narrator's/);
+  assert.match(narrPrompts[4], /A different voice reads it/);
+  assert.match(narrPrompts[4], /5 to 9s for an analyst scene/);
+  assert.match(narrPrompts[10], /scene #12 is the ANALYST's/);
+  for (const at of [1, 7, 13, 16]) {
+    assert.match(narrPrompts[at], /Every scene in this chunk is the narrator's/, `chunk at scene ${at}`);
+    assert.doesNotMatch(narrPrompts[at], /analyst scenes follow VOICES|5 to 9s/, `chunk at scene ${at} must not mention analyst length rules`);
+  }
+});
+
+test('later chunks are shown who spoke the scenes before them', async () => {
+  const { ai, narrPrompts } = fakeAi();
+  await runAll(ai, {}, LONG_PLAN);
+  assert.match(narrPrompts[7], /#6 \[ANALYST\] "S6"/);
+  assert.match(narrPrompts[7], /#5 \[NARRATOR\] "S5"/);
+});
+
+test('an analyst scene keeps the actPhase of the scene it interrupts, so it cannot split a chapter', async () => {
+  const { ai } = fakeAi();
+  const script = await runAll(ai, {}, LONG_PLAN);
+  assert.equal(script.scenes[5].actPhase, 'Hook', "the model's own label ('Made-up label') is replaced by scene 5's");
+  assert.equal(script.scenes[4].actPhase, 'Hook');
+});
+
+test('a run resumed from the journal assigns the same speakers as the original', async () => {
+  const first = await RunJournal.open('two-voice', 'h', { dir });
+  const original = await runAll(fakeAi().ai, { journal: first }, LONG_PLAN);
+
+  const second = await RunJournal.open('two-voice', 'h', { dir });
+  const { ai, log } = fakeAi();
+  const replayed = await runAll(ai, { journal: second }, LONG_PLAN);
+  assert.ok(!log.some((l) => l.startsWith('narr')), 'every narrative chunk came from the journal');
+  assert.deepEqual(replayed.scenes.map((s: any) => s.speaker), original.scenes.map((s: any) => s.speaker));
 });

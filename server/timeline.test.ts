@@ -373,3 +373,17 @@ test('buildTimeline: fractional durations do not accumulate float noise into the
   assert.equal(t[49].endSec, 430);
   assert.equal(t[3].startSec, 25.8);
 });
+
+test('audit: an analyst scene that reads like narration is flagged; short reactions and narrator scenes of any length are not', () => {
+  const c = auditScript({
+    scenes: [
+      scene(1, { narration: 'w '.repeat(28).trim() }),
+      scene(2, { speaker: 'analyst', narration: 'w '.repeat(45).trim(), durationEst: 15 }),
+      scene(3, { speaker: 'analyst', narration: 'w '.repeat(20).trim(), durationEst: 7 }),
+      scene(4, { speaker: 'narrator', narration: 'w '.repeat(28).trim() }),
+    ],
+  });
+  assert.deepEqual(find(c, 'analyst-scene-too-long').sceneNumbers, [2]);
+  assert.equal(find(c, 'analyst-scene-too-long').severity, 'warn');
+  assert.equal(find(auditScript({ scenes: scenes(4) }), 'analyst-scene-too-long'), undefined, 'a script with no speakers (older scripts) is unaffected');
+});

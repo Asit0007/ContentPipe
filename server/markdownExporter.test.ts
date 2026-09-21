@@ -139,3 +139,10 @@ test('sources that are all dated and complete get no warnings about dates or tru
   assert.doesNotMatch(md, /read only in part/);
   assert.doesNotMatch(md, /state no publication date/);
 });
+
+test('the Voice row names the analyst, the narrator, and shows a dash for a script from before speakers existed', () => {
+  const md = render(longScript({ scenes: [scene(1, { speaker: 'narrator' }), scene(2, { speaker: 'analyst' }), scene(3)] }));
+  assert.match(md, /\| Voice \| Narrator \|/);
+  assert.match(md, /\| Voice \| Analyst \(second voice\) \|/);
+  assert.match(md, /\| Voice \| — \|/);
+});

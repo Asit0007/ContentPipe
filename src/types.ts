@@ -1,3 +1,5 @@
+import type { Speaker } from '../shared/speakers';
+
 export type AspectRatio = '16:9' | '9:16' | '1:1';
 export type ImageResolution = '1K' | '2K' | '4K';
 export type ImageProviderId = 'gemini' | 'pollinations' | 'placeholder';
@@ -224,6 +226,12 @@ export interface VideoScriptScene {
   sceneNumber: number;
   title: string;
   actPhase?: string;
+  /**
+   * Who reads this scene aloud in a two-voice render (ContentRender): the narrator tells the story, the analyst
+   * reacts between narrator sections. Assigned by shared/speakers.ts, never requested from the model, so it is
+   * deliberately absent from server/schemas.ts. Absent on older scripts: treat as 'narrator'.
+   */
+  speaker?: Speaker;
   narration: string;
   durationEst: number;
   /** Flat prompt, kept for the image endpoint and existing UI. */

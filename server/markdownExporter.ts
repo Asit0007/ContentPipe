@@ -373,6 +373,7 @@ export function renderScriptMarkdown(payload: {
     const head: string[][] = [
       ['Act phase', sc.actPhase || '—'],
       ['Duration', sc.durationEst ? `${sc.durationEst}s` : '—'],
+      ['Voice', sc.speaker === 'analyst' ? 'Analyst (second voice)' : sc.speaker === 'narrator' ? 'Narrator' : '—'],
       ['Visual type', sc.visualType || '—'],
       ['On-screen text', sc.onScreenText || '—'],
       ['Sound', sc.soundEffect || '—'],

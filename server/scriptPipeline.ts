@@ -5,6 +5,7 @@ import { buildScriptScenesSchema, buildVisualDirectionSchema, productionBibleSch
 import { isRetryableError } from './quota';
 import type { RunJournal } from './runJournal';
 import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
+import { analystSceneNumbers, speakerFor } from '../shared/speakers';
 
 // The scriptwriting pass (generateSceneChunk) and the art-direction pass
 // (generateVisualDirectionChunk) generate scenes in batches instead of the
@@ -321,7 +322,8 @@ async function generateSceneChunk(
   sceneCount: number,
   sceneNumberOffset: number,
   priorScenesContext: string,
-  isLastChunk: boolean
+  isLastChunk: boolean,
+  totalScenes: number
 ): Promise<any[]> {
   const isDocumentaryTone = videoPlan?.tone === 'Deep Dive Documentary';
   const persona = isDocumentaryTone
@@ -333,6 +335,16 @@ async function generateSceneChunk(
   const systemInstruction = isDocumentaryTone
     ? 'You write precise, authoritative cybersecurity investigative narration with cinematic visual cues. Output valid JSON strictly grounded in the topic. No hype, no fearmongering, no clickbait.'
     : 'You write the sharpest, most viral infotainment scripts on the internet with cinematic visual cues and brilliant narration. Output valid JSON strictly grounded in the topic.';
+
+  // Which scenes of THIS chunk the second voice reads is decided in code (shared/speakers.ts), not by the
+  // model: it sees only 3 scenes at a time and cannot judge how often the analyst has spoken.
+  const analystScenes = analystSceneNumbers(sceneNumberOffset + 1, sceneCount, totalScenes);
+  const plural = analystScenes.length > 1;
+  const voices = analystScenes.length
+    ? `VOICES: two voices read this video aloud — the NARRATOR, who tells the story, and the ANALYST, a second voice who briefly reacts between narrator sections.
+In this chunk, scene${plural ? 's' : ''} ${analystScenes.map((n) => `#${n}`).join(', ')} ${plural ? 'are' : 'is'} the ANALYST's. Every other scene is the narrator's.
+An ANALYST scene is a reaction, not more narration: one or two short sentences (12-25 words), in the first person, from a practitioner who has just listened to the narrator. It says what the previous scene means in practice — what a defender should check or change, or the question a careful engineer would now ask — in plain, specific terms rather than alarm. A different voice reads it, so it must sound like a person answering the previous scene, not continuing it. It adds no new facts and no claim bigger than the evidence: any figure, name, date, id or scope it mentions must already be in the scene before it or in the dossier, and it is never a quotation. Use the narration style described below, and give it the same "actPhase" as the scene before it.`
+    : `VOICES: two voices read this video aloud — the NARRATOR, who tells the story, and occasionally an ANALYST who reacts between narrator sections. Every scene in this chunk is the narrator's.`;
 
   const prompt = `${persona}
 Brand Identity / Show Name: "${channelBrandName || DEFAULT_CHANNEL_BRAND}"
@@ -354,6 +366,8 @@ FACTUAL DISCIPLINE: every figure, date, CVE id, version number and quoted commen
 
 The production bible and style guide are already fixed (given above). Write to them.
 
+${voices}
+
 ${priorScenesContext}
 
 This is one chunk of a longer script. Write EXACTLY ${sceneCount} new scenes continuing directly on — do not repeat, re-hook, or re-introduce the topic if this isn't the opening chunk. ${
@@ -372,8 +386,8 @@ For EACH scene, you MUST craft:
       ? 'Use plain labels from this set — "Hook", "Context", "Technical Breakdown", "Impact", "The Fix", "Conclusion" — and reuse the same label for every scene in a phase: they become the video\'s chapter titles and decide where the mid-roll ads can sit.'
       : '(e.g. "Hook", "Technical Breakdown", "Community Reaction", "The Fix", "Conclusion & CTA")'
   }
-4. "narration": Spoken-word voiceover script. ${narrationStyle} (approx 22-38 words per scene).
-5. "durationEst": Realistic speaking duration in seconds (8 to 15s).
+4. "narration": Spoken-word voiceover script. ${narrationStyle} (approx 22-38 words per scene${analystScenes.length ? '; analyst scenes follow VOICES above' : ''}).
+5. "durationEst": Realistic speaking duration in seconds (8 to 15s${analystScenes.length ? '; 5 to 9s for an analyst scene' : ''}).
 6. "cinematography": Precise visual director cues (camera framing e.g., 'Slow dynamic push-in on macro CRT monitor with anamorphic lens flare and volumetric neon haze').
 7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt — it must equal the concatenation of visual.scene + visual.styleAnchor below.
 8. "visualType": ${
@@ -454,7 +468,7 @@ export async function generateSceneChunks(
         : 'SCENES ALREADY WRITTEN (the most recent ones — continue directly on from here, do not repeat or re-hook):\n' +
           allScenes
             .slice(-3)
-            .map((s: any) => `  #${s.sceneNumber} "${s.title}": ${s.narration}`)
+            .map((s: any) => `  #${s.sceneNumber} [${String(s.speaker || 'narrator').toUpperCase()}] "${s.title}": ${s.narration}`)
             .join('\n');
 
     try {
@@ -471,12 +485,17 @@ export async function generateSceneChunks(
           thisChunkCount,
           allScenes.length,
           priorScenesContext,
-          chunkIndex === numChunks - 1
+          chunkIndex === numChunks - 1,
+          totalScenesTarget
         );
         await opts.journal?.setNarrativeChunk(chunkIndex, chunkScenes);
       }
       for (const s of chunkScenes) {
-        allScenes.push({ ...s, sceneNumber: allScenes.length + 1 });
+        const sceneNumber = allScenes.length + 1;
+        const speaker = speakerFor(sceneNumber, totalScenesTarget);
+        // A reaction belongs to the phase it interrupts: its own actPhase label would split that chapter in two.
+        const actPhase = speaker === 'analyst' ? allScenes[allScenes.length - 1]?.actPhase ?? s.actPhase : s.actPhase;
+        allScenes.push({ ...s, sceneNumber, speaker, actPhase });
       }
     } catch (err: any) {
       if (opts.strict && isRetryableError(err)) throw err;

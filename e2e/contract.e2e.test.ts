@@ -301,3 +301,18 @@ test('STRICT image: Pollinations up → a real, labelled image; strict does not 
   assert.equal(r.body.isPlaceholder, false);
   assert.match(r.body.imageUrl, /^data:image\/png;base64,/);
 });
+
+test('TWO VOICES: /api/script keeps the pipeline-assigned speaker on every scene (server.ts rebuilds scenes from a fixed field list)', async () => {
+  await stopApp();
+  reset();
+  await startApp();
+  // 200 s → 17 scenes: the analyst speaks scenes 6 and 12 (shared/speakers.ts); the narrator opens and closes.
+  const r = await post('/api/script', { ...SCRIPT_REQ, videoPlan: { ...SCRIPT_REQ.videoPlan, targetDurationSec: 200 } }, true);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.scenes.length, 17);
+  assert.ok(r.body.scenes.every((s: any) => s.speaker === 'narrator' || s.speaker === 'analyst'), 'every scene carries a speaker in the HTTP response');
+  assert.deepEqual(r.body.scenes.filter((s: any) => s.speaker === 'analyst').map((s: any) => s.sceneNumber), [6, 12]);
+  assert.equal(r.body.scenes[0].speaker, 'narrator');
+  assert.equal(r.body.scenes[16].speaker, 'narrator');
+  assert.equal((r.body.qualityChecks || []).find((c: any) => c.id === 'analyst-scene-too-long'), undefined);
+});

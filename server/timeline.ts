@@ -65,6 +65,8 @@ const MAX_CHAPTERS = 12;
 const MAX_UNCHANGED_RUN_SEC = 30;
 const MIN_SCENE_WPM = 110;
 const MAX_SCENE_WPM = 190;
+/** An analyst scene is a short reaction (the prompt asks for 12-25 words, so 30 leaves slack); a longer one is narration read in the wrong voice. Live check 2026-09-21: real reactions ran 27-33 words. */
+const MAX_ANALYST_WORDS = 30;
 const MIN_EVIDENCE_SCENE_SHARE = 0.4;
 // 0.85 of the old 540 s default target is 459 s — under MIDROLL_MIN_VIDEO_SEC, so a script the audit
 // passed as "within tolerance" could still be too short for mid-roll ads. 0.92 of the 585 s default is 538 s.
@@ -395,6 +397,13 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
   });
   if (tooFast.length) checks.push({ id: 'narration-overruns-scene', severity: 'warn', message: `Narration exceeds ${MAX_SCENE_WPM} wpm for its scene duration; the read will overrun the cut.`, sceneNumbers: tooFast });
   if (tooSlow.length) checks.push({ id: 'narration-underfills-scene', severity: 'info', message: `Narration is under ${MIN_SCENE_WPM} wpm for its scene duration; expect dead air.`, sceneNumbers: tooSlow });
+
+  // Two-voice scripts: the analyst's scenes are short reactions. (Specifics the analyst invents are already
+  // caught by the dossier check below, which covers every scene's narration whoever speaks it.)
+  const longReactions = scenes.flatMap((s, i) => (s.speaker === 'analyst' && wordsOf(s) > MAX_ANALYST_WORDS ? [sn(i)] : []));
+  if (longReactions.length) {
+    checks.push({ id: 'analyst-scene-too-long', severity: 'warn', message: `Analyst scenes are meant to be short reactions (${MAX_ANALYST_WORDS} words at most); these read like narration in the second voice.`, sceneNumbers: longReactions });
+  }
 
   // Evidence mix: the spec bans a slideshow of AI stills.
   if (longForm) {
