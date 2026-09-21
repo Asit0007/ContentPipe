@@ -33,8 +33,10 @@ Where things live (`server.ts` is routes and wiring only — the logic moved out
 
 | File | Owns |
 |---|---|
-| `server/gemini.ts` | client, `TEXT_MODELS` chain, `generateGeminiJson` (quota-aware: cooldowns, one bounded retry pass) |
-| `server/quota.ts` | classifies Gemini errors; typed `QuotaExhaustedError` / `UpstreamUnavailableError` |
+| `server/llm/chain.ts` | the provider chain — `generateJson` / `generateText`, per-provider error classification, cooldowns, the JSON repair round. **Call this, not `generateGeminiJson`, for text.** See "LLM provider chain" below |
+| `server/llm/providers.ts`, `server/llm/schema.ts` | provider registry + env resolution; Gemini schema → JSON Schema and the local validator |
+| `server/gemini.ts` | Gemini client, `TEXT_MODELS` chain, `generateGeminiJson` (quota-aware: cooldowns, one bounded retry pass) — now the chain's last tier |
+| `server/quota.ts` | classifies Gemini errors; typed `QuotaExhaustedError` / `UpstreamUnavailableError`; `summarizeQuotaFailures` reduces failures across providers |
 | `server/strict.ts` | the strict-mode contract (`X-ContentPipe-Strict`) and `orFallback` |
 | `server/scriptPipeline.ts` | the three script passes, chunk sizes, `buildGenerationSummary` |
 | `server/runJournal.ts` | on-disk checkpoints in `.runs/` |
@@ -147,6 +149,19 @@ Source ids: `S#` is a source's position in the **fetched** list (`sourceId()` in
 
 ---
 
+## LLM provider chain (`server/llm/`)
+
+Text generation is no longer Gemini-only. `generateJson` / `generateText` (`server/llm/chain.ts`) walk `LLM_PROVIDER_ORDER` — default **DeepSeek → Grok (xAI) → Groq → Cerebras → OpenRouter (free) → Mistral → Gemini** — and return the first usable answer. A provider with no API key is skipped; with none configured the chain is Gemini alone, byte-for-byte the old behaviour. Registry, default model ids and token caps: `server/llm/providers.ts`. Adding a provider is one entry there (anything OpenAI-compatible); `<ID>_BASE_URL` redirects one (proxy, self-hosted, test stub).
+
+- **Cost:** DeepSeek and Grok are pay-per-token; Groq / Cerebras / OpenRouter `:free` / Mistral have free tiers. Mistral's free tier trains on prompts, so it sits behind the ones that don't.
+- **Not covered:** TTS and images stay on Gemini / Pollinations (`/api/tts`, `/api/generate-image`) — none of the chat providers do either. `notebooklmService.ts` still calls Gemini directly.
+- **Gemini's schema-constrained decoding does not exist elsewhere.** The other providers get `response_format: json_object` plus the schema (converted by `server/llm/schema.ts`) written into the system prompt, and the answer is validated locally — required keys, types, enums, `minItems`/`maxItems`. A violation gets ONE repair round (the rejection is fed back), then the next provider. `finish_reason: length` counts as a failure, never a result. The three small-schema passes in `/api/script` stay as they are: they exist for Gemini's schema limits, but small schemas also make the validator's job and the repair round cheap.
+- **Errors keep the strict contract.** Each provider's failure is classified (`classifyProviderError`: 402 / "insufficient balance" → `zero`, 429 + `Retry-After` or "try again in 7m12s" → per-minute / per-day, 5xx + timeouts → transient, 401/400 → `other`) and the chain reduces them exactly like a Gemini chain: quota dominates and reports the **earliest** retry across providers, so one provider recovering in 20 s beats Gemini's daily reset. Strict callers therefore still see 429 / 503 / 502 + `Retry-After`.
+- **Cooldowns are in-process.** A provider that answered 402/401/403 is skipped for 30 min (restart the server after fixing a key); a 429 for its `Retry-After` (capped at 30 min); a timeout/5xx for 30 s.
+- **Tests and e2e pin the chain to Gemini** (`LLM_PROVIDER_ORDER=gemini` in `npm test` and in the e2e spawn env) so a real key in `.env` or the shell can never make a "no network" suite spend money.
+- **Model ids drift and the defaults are best guesses** — `npm run llm:check` lists each provider's live `/models`, flags any configured id that isn't there, and makes one tiny JSON call per provider. Run it after adding a key and before trusting the chain.
+- **Privacy:** every prompt now goes to whichever provider answers. DeepSeek's API is hosted in China. Fine for public-news scripts; `JobPipe` has its own Gemini client (`src/jobpipe/llm.py`) and is not on this chain — résumé data is a separate privacy decision.
+
 ## Failure contract for API clients (strict mode)
 
 Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/tts` and `/api/generate-image`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:
@@ -241,7 +256,10 @@ Documentary tone (`Deep Dive Documentary`) now actually changes the output: no `
 npm run lint       # tsc --noEmit — the baseline is zero errors (tests are type-checked too)
 npm test           # unit tests (server/*.test.ts, node:test via tsx) — fast, no network, no quota
 npm run test:e2e   # the real server against a stub Gemini (and stub Pollinations): 429/503/kill -9/resume/409/SSRF, strict TTS + image (~1 min)
+npm run llm:check  # LIVE: every configured provider's key, model ids and one tiny JSON call (spends a fraction of a cent)
 ```
+
+`npm test` and the e2e spawn env both set `LLM_PROVIDER_ORDER=gemini`, so a real provider key in `.env` or the shell can never be reached by a "no network" suite. Keep that when adding a test runner. To exercise the chain end to end without spending anything, point one provider at a local stub with `<ID>_BASE_URL` (e.g. `DEEPSEEK_API_KEY=x DEEPSEEK_BASE_URL=http://127.0.0.1:4599`) — it speaks plain OpenAI `/chat/completions`.
 
 The SDK honours `GOOGLE_GEMINI_BASE_URL`, which is how `test:e2e` (and any ad-hoc check) exercises quota paths without spending quota: run the server with it pointed at a stub. Unit tests build fakes from **real captured bodies** in `server/__fixtures__/`; add a fixture when a new failure shape shows up live.
 

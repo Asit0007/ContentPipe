@@ -2,7 +2,7 @@
 
 Turns a news story and its source links into a production-ready video brief: researched dossier, narrative plan, scene-by-scene script, layered image prompts, motion direction and source citations — exported as Markdown.
 
-Built on the Gemini API. Node + Express serving a Vite/React front end from one process.
+Text generation runs through a **multi-provider LLM chain** — DeepSeek first, then Grok, the free-tier providers, and Gemini last (see [Model configuration](#model-configuration)). Narration audio uses Gemini TTS and scene images use Gemini → Pollinations. Node + Express serving a Vite/React front end from one process.
 
 ---
 
@@ -10,9 +10,12 @@ Built on the Gemini API. Node + Express serving a Vite/React front end from one 
 
 ```bash
 npm install
-cp .env.example .env      # then add your GEMINI_API_KEY
+cp .env.example .env      # then add at least one provider key (DEEPSEEK_API_KEY, GEMINI_API_KEY, ...)
+npm run llm:check         # verifies each key and model id against the live APIs
 npm run dev               # http://localhost:3000
 ```
+
+The startup log prints the chain it resolved, e.g. `[LLM Chain] deepseek(deepseek-v4-pro,deepseek-flash) -> gemini(...)`. A provider with no key is skipped; with none set the chain is Gemini alone.
 
 Port 3000 in use? `PORT=3100 npm run dev`.
 
@@ -22,13 +25,20 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GEMINI_API_KEY` | **Yes** | Every AI call. Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
+| `GEMINI_API_KEY` | **Yes, for TTS**; for text only if no other provider key is set | Narration audio and the last text tier. Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
+| `DEEPSEEK_API_KEY` | No | Default first provider. Pay-per-token. |
+| `XAI_API_KEY` | No | Grok (xAI), pay-per-token. `GROK_API_KEY` is accepted too. Not the same company as Groq. |
+| `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY` | No | Free tiers, rate-limited. OpenRouter uses its `:free` models. |
+| `MISTRAL_API_KEY` | No | Free "Experiment" tier, which requires opting into training on your prompts. |
+| `LLM_PROVIDER_ORDER` | No | Comma-separated. Default `deepseek,xai,groq,cerebras,openrouter,mistral,gemini`. |
+| `<ID>_MODELS`, `<ID>_MAX_TOKENS`, `<ID>_BASE_URL` | No | Per-provider overrides, `<ID>` = `DEEPSEEK`, `XAI`, `GROQ`, `CEREBRAS`, `OPENROUTER`, `MISTRAL`. Model ids drift — see `npm run llm:check`. |
+| `LLM_TIMEOUT_MS` | No | Per-request ceiling for the non-Gemini providers. Defaults to 120000. |
 | `NOTEBOOKLM_API_KEY` | No | Falls back to `GEMINI_API_KEY`. |
 | `APP_URL` | No | Self-referential links. |
 | `PORT` | No | Defaults to 3000. |
 | `CONTENTPIPE_RENDERS_DIR` | No | Where `server/assemble.ts` writes MP4s and captions. Defaults to `./renders` (gitignored). |
 | `POLLINATIONS_BASE_URL` | No | Overrides the image fallback host. Exists so the end-to-end test can stand in for Pollinations instead of reaching the network. |
-| `HOST` | No | Interface to bind. Defaults to `127.0.0.1` (this machine only) — the endpoints are unauthenticated and spend your Gemini quota. `HOST=0.0.0.0` to expose it, only behind something that authenticates callers. |
+| `HOST` | No | Interface to bind. Defaults to `127.0.0.1` (this machine only) — the endpoints are unauthenticated and spend your provider quota and money. `HOST=0.0.0.0` to expose it, only behind something that authenticates callers. |
 | `VITE_FIREBASE_*` | Only for Google Docs export | Client-side Firebase Auth config. See [Google Workspace export](#google-workspace-export-optional). |
 
 `.env` is gitignored. `.env.example` holds placeholders only — never commit real values.
@@ -190,7 +200,34 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 
 ## Model configuration
 
-All text generation uses the `TEXT_MODELS` chain in `server/gemini.ts`, tried best-first:
+### The provider chain
+
+`generateJson` / `generateText` (`server/llm/chain.ts`) try the configured providers in order and return the first usable answer. Registry, default model ids and token caps live in `server/llm/providers.ts`; adding another OpenAI-compatible provider is one entry there.
+
+| Order | Provider | Cost | Default models |
+|---|---|---|---|
+| 1 | DeepSeek | pay-per-token | `deepseek-v4-pro`, `deepseek-flash` |
+| 2 | Grok (xAI) | pay-per-token | `grok-4.6`, `grok-4.3` |
+| 3 | Groq | free tier | `openai/gpt-oss-120b`, `llama-3.3-70b-versatile` |
+| 4 | Cerebras | free tier | `gpt-oss-120b`, `llama-3.3-70b` |
+| 5 | OpenRouter | free `:free` models | `openai/gpt-oss-120b:free`, `meta-llama/llama-3.3-70b-instruct:free` |
+| 6 | Mistral | free tier, trains on prompts | `mistral-large-latest`, `mistral-small-latest` |
+| 7 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
+
+**Those model ids are best guesses from documentation, not live calls.** Run `npm run llm:check`: it lists each provider's real `/models`, flags any configured id that isn't there, and makes one tiny JSON request per provider so a bad key, an empty balance or a rejected parameter shows up before a real run. Override with `<ID>_MODELS`.
+
+How it behaves:
+
+- **Schemas.** Gemini can constrain decoding to a schema; the others only offer `json_object` mode. They get the schema (converted by `server/llm/schema.ts`) in the system prompt, and the answer is checked locally — required keys, types, enums, `minItems`/`maxItems`. A violation gets one repair round with the problems fed back, then the next provider. An answer cut off at the token cap counts as a failure, never a result.
+- **Arrays.** `json_object` mode cannot return a bare array, so a caller that wants one passes `rootArray: true`; the model is asked for `{"items": [...]}` and the chain unwraps it (`/api/ip-names` does this).
+- **Errors keep the strict-mode contract.** Each failure is classified (no balance → never retry; 429 → per-minute or per-day, reading `Retry-After` and bodies like "try again in 7m12s"; 5xx and timeouts → transient; bad key or bad request → real error). If every provider fails, quota dominates and reports the **earliest** retry across all of them, so strict callers still get `429` / `503` / `502` + `Retry-After`.
+- **Cooldowns** are in-process: a provider that answered 401/402/403 is skipped for 30 minutes (restart after fixing a key), a 429 for its `Retry-After` (capped at 30 minutes), a timeout or 5xx for 30 seconds.
+- **Not covered:** TTS, image generation and the NotebookLM service still call Gemini directly; none of these providers offer them.
+- **Privacy.** Every prompt goes to whichever provider answers. DeepSeek's API is hosted in China and Mistral's free tier trains on prompts. That is acceptable here because prompts describe public news stories; it is a different question for private data.
+
+### The Gemini tier
+
+The Gemini tier uses the `TEXT_MODELS` chain in `server/gemini.ts`, tried best-first:
 
 ```ts
 const TEXT_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
@@ -211,7 +248,9 @@ Note that ListModels is not proof of access — `gemini-2.5-flash` appears in th
 
 ---
 
-## Known free-tier limits
+## Known Gemini free-tier limits
+
+These are Gemini's limits specifically. The other providers' free tiers have their own rate limits, which change — check each provider's dashboard rather than trusting a number written here.
 
 | Capability | Free tier | Notes |
 |---|---|---|
@@ -241,9 +280,10 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 200 unit tests — no network, no quota
+npm test         # 224 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
+npm run llm:check # live check of every configured provider: key, model ids, one JSON call
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
 npm start        # node dist/server.cjs
@@ -257,8 +297,11 @@ npm run lint     # tsc --noEmit
 ```
 server.ts                     Express app: routes and wiring only
 server/
-  gemini.ts                   client, TEXT_MODELS chain, quota-aware generateGeminiJson
-  quota.ts                    classifies Gemini errors (per-minute / per-day / limit: 0 / overload)
+  llm/chain.ts                the provider chain: generateJson / generateText, error classification, cooldowns
+  llm/providers.ts            provider registry, default model ids, env resolution
+  llm/schema.ts               Gemini schema -> JSON Schema, and the local validator
+  gemini.ts                   Gemini client, TEXT_MODELS chain, quota-aware generateGeminiJson (the chain's last tier)
+  quota.ts                    classifies Gemini errors (per-minute / per-day / limit: 0 / overload) and reduces failures across providers
   strict.ts                   strict-mode status mapping (X-ContentPipe-Strict)
   assemble.ts                 scene stills + narration -> MP4 via local ffmpeg; refuses placeholders and fallback audio
   captions.ts                 verbatim English SRT, timed across each scene's real speech window
@@ -271,7 +314,7 @@ server/
   publishPackage.ts           titles / thumbnails / description / tags + linters
   netGuard.ts                 SSRF guard for fetched URLs
   hnThread.ts                 Hacker News discussion as a retrievable source (Algolia API)
-  schemas.ts                  Gemini responseSchema definitions
+  schemas.ts                  response schemas (Gemini format; converted to JSON Schema for the other providers)
   sourceFetcher.ts            URL fetching, HTML-to-text extraction, and the (hn-api) -> direct -> jina -> wayback rescue ladder
   imageProviders.ts           Scene image chain: Gemini -> Pollinations -> SVG placeholder
   markdownExporter.ts         Brief rendering + file writing
@@ -287,7 +330,7 @@ src/
 exports/                      Generated briefs (gitignored)
 .runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days)
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
-scripts/                      render-fixture.ts (npm run render:fixture)
+scripts/                      render-fixture.ts (npm run render:fixture), llm-check.ts (npm run llm:check)
 renders/                      Assembled videos and captions (gitignored)
 ```
 
@@ -297,7 +340,11 @@ renders/                      Assembled videos and captions (gitignored)
 
 ## Troubleshooting
 
-**Everything reads like canned content about an XZ backdoor.** You're getting `generateFallbackGenerators` output. Check `isQuotaFallback` in the response, then check that `GEMINI_API_KEY` is set *and* the server was restarted after setting it.
+**Everything reads like canned content about an XZ backdoor.** You're getting `generateFallbackGenerators` output. Check `isQuotaFallback` in the response, then check the `[LLM Chain]` line at startup: it must list at least one provider, so a key is set *and* the server was restarted after setting it. Then run `npm run llm:check`.
+
+**A provider is configured but never answers.** Look for `[LLM Chain] <provider>/<model> -> ...` warnings in the server log. `zero` or HTTP 401/402/403 means a bad key or no balance, and that provider is then skipped for 30 minutes — fix it and restart. HTTP 404 or 400 usually means a stale model id: `npm run llm:check` lists the live ones, and `<ID>_MODELS` overrides the default.
+
+**A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in three passes](#script-generation-runs-in-three-passes).
 
 **`EADDRINUSE: 0.0.0.0:3000`.** Something else owns the port — Grafana is a common culprit. Use `PORT=3100 npm run dev`.
 
