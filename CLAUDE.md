@@ -10,13 +10,15 @@ Read `README.md` first for setup and the pipeline overview. This file covers wha
 
 A news story plus its source links go in; a production-ready video brief comes out — researched dossier, narrative plan, scene-by-scene script with layered image prompts, motion direction and citations, exported as Markdown to `exports/`.
 
-The owner's stated goal: *feed in a news item and a link to its sources, have the app research it, and produce scripts for the images (character, background, scene) and for animating those images into video.* The animation output is **prompts and direction, not rendered video** — that was a deliberate decision, not an unfinished feature. Do not build video rendering unless asked.
+The owner's stated goal: *feed in a news item and a link to its sources, have the app research it, and produce scripts for the images (character, background, scene) and for animating those images into video.* For a long time the output stopped at **prompts and direction, not rendered video**, by decision. On 2026-09-21 the owner asked for rendering: `server/assemble.ts` now turns scene stills + narration into an MP4 (Ken Burns-style zoom, sidecar captions). **Image-to-video animation is still prompts only** (`motion`, `motionPrompt`) — don't build that, or an endpoint/CyberPipe stage around the assembler, unless asked.
+
+The automated caller is **CyberPipe** (`../CyberPipe`, its own repo): a Python job orchestrator that calls `/api/research`, `/api/plan`, `/api/script` in strict mode and adds durable jobs, scheduled retries and a Telegram approval. It reimplements none of the generation, and this repo has no notion of jobs — keep it that way; see the table in `README.md` ("Who calls it").
 
 ---
 
 ## Architecture
 
-Single Express app (`server.ts`) that also serves the Vite/React front end in middleware mode. One process, one port. No routing library, no database — state lives in the browser and in `exports/`.
+Single Express app (`server.ts`) that also serves the Vite/React front end in middleware mode. One process, one port. No routing library, no database — state lives in the browser, `exports/` (briefs), `.runs/` (script checkpoints and source archives) and `renders/` (MP4s + captions), all gitignored.
 
 ```
 /api/research  → fetches source URLs, extracts text, builds a cited dossier
@@ -180,7 +182,7 @@ Strict mode rethrows *retryable* failures instead of absorbing them into a short
 
 ## Run journal (`.runs/`, gitignored)
 
-A 9-minute script is ~25 sequential Gemini calls against ~20 requests/day per model, so restarting from zero after a quota hit at call 22 never converges. Each finished chunk is written to `.runs/<key>.json` (atomic temp+rename). **A run resumes iff its journal exists, its input hash matches, and it has not been delivered.** The key is `runId` from the body if given, else a hash of plan + research + brand — so an interrupted strict run resumes on the identical re-POST with no client cooperation, while "regenerate" after a delivered script starts fresh. A run that finished while its client was gone is served from the journal without regenerating. `fresh: true` discards. One in-flight run per key (409). Journals older than 7 days are pruned at startup. `CONTENTPIPE_RUNS_DIR` relocates it (the e2e test uses this).
+A 9-minute script is ~25 sequential LLM calls; on Gemini alone that is against ~20 requests/day per model, so restarting from zero after a quota hit at call 22 never converges (the provider chain eases this once keys exist; the journal still matters). Each finished chunk is written to `.runs/<key>.json` (atomic temp+rename). **A run resumes iff its journal exists, its input hash matches, and it has not been delivered.** The key is `runId` from the body if given, else a hash of plan + research + brand — so an interrupted strict run resumes on the identical re-POST with no client cooperation, while "regenerate" after a delivered script starts fresh. A run that finished while its client was gone is served from the journal without regenerating. `fresh: true` discards. One in-flight run per key (409). Journals older than 7 days are pruned at startup. `CONTENTPIPE_RUNS_DIR` relocates it (the e2e test uses this).
 
 ## What the retrieval layer promises about its own sources
 
@@ -293,8 +295,8 @@ print('anchors identical:', len({(x.get('visual') or {}).get('styleAnchor') for 
 
 ## Security
 
-The server binds **`127.0.0.1` by default** (`HOST` env to change it): the endpoints are unauthenticated and spend the Gemini quota, and `/api/research` fetches arbitrary URLs. Set `HOST=0.0.0.0` only behind something that authenticates callers (Cloud Run / AI Studio). Source fetches pass the SSRF guard on every hop (see the rescue ladder above); `runId` becomes a filename, so it is validated against `^[A-Za-z0-9_-]{1,64}$`.
+The server binds **`127.0.0.1` by default** (`HOST` env to change it): the endpoints are unauthenticated and spend provider quota and money, and `/api/research` fetches arbitrary URLs. Set `HOST=0.0.0.0` only behind something that authenticates callers (Cloud Run / AI Studio). Source fetches pass the SSRF guard on every hop (see the rescue ladder above); `runId` becomes a filename, so it is validated against `^[A-Za-z0-9_-]{1,64}$`.
 
-`.env`, `exports/`, `.runs/` and `firebase-applet-config.json` are gitignored. The repo is **public** — nothing with a real credential in it may be committed.
+`.env`, `exports/`, `.runs/`, `renders/` and `firebase-applet-config.json` are gitignored. The repo is **public** — nothing with a real credential in it may be committed.
 
 Firebase web config values are public by design (they ship in the browser bundle) but are kept out of the repo anyway; they load from `VITE_FIREBASE_*`. A Firebase API key was committed once and force-pushed out of history — treat that key as burned, and remember GitHub still serves orphaned commits by SHA after a force-push, so rotation matters more than history rewriting.

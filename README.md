@@ -69,7 +69,22 @@ Telegram / news input
   /api/export/markdown ── writes the brief to exports/
 
   /api/publish-package ─ titles, thumbnails, description, tags (on demand, after the script)
+
+  /api/tts, /api/generate-image ── narration audio and scene stills, per scene
+  server/assemble.ts ──────────── stills + narration -> MP4 + .en.srt (a module, not an endpoint yet)
 ```
+
+### Who calls it
+
+Two callers, same endpoints. **The browser UI** walks the stages interactively and always gets something back (canned fallbacks when a provider is out). **[CyberPipe](https://github.com/Asit0007/CyberPipe)**, a separate Python repo, is the automated caller: it turns a story into a durable job, runs research → plan → script against this server with `X-ContentPipe-Strict: 1`, schedules retries from `Retry-After`, and holds the script for a Telegram approve/regenerate. CyberPipe generates nothing itself; this repo does all the generation, and knows nothing about jobs, schedules or Telegram.
+
+| | ContentPipe (this repo) | CyberPipe |
+|---|---|---|
+| Role | the engine: research, plan, script, audit, media, assembly | the orchestrator: jobs, retries, crash recovery, human approval |
+| Stack | Node/TypeScript, Express + React UI | Python stdlib + `requests`, SQLite (WAL) |
+| Runs as | one HTTP server on `localhost:3000` | two long-running processes (scheduler, Telegram poller) under launchd |
+| State | `.runs/` chunk journals, `exports/`, `renders/` | `pipeline.db`: job status, stage outputs, notifications |
+| Retries | seconds, inside one request (provider chain, cooldowns, one bounded wait) | minutes to days, across requests (`Retry-After`, backoff, 7-day cap) |
 
 ### Research is real, within limits
 
@@ -160,7 +175,7 @@ npm run render:fixture -- --720        # faster; --vertical for 9:16
 ```
 
 - **It refuses rather than degrades.** `/api/tts` and `/api/generate-image` fall back to a synthesized tone and an SVG placeholder so the UI never dead-ends; a render would publish those as if they were real. Every scene is validated before any encoding and *all* problems are reported: placeholder images, non-image bodies labelled `image/png`, the quota-fallback tone, audio under 0.5 s, unsupported WAVs, mixed sample rates, partial captions.
-- **Audio is joined once, sample-accurately,** and muxed with a single AAC encode (loudness-normalised to -14 LUFS) against stream-copied video. Encoding AAC per scene and concatenating drifts by an encoder delay at every join. On the 56.5 s fixture, audio and video are both exactly 56.500 s, and each scene's silence starts within ~2 ms of the timeline's prediction. 1080p with a slow push-in/pull-out encodes at about 0.3× the video's length.
+- **Audio is joined once, sample-accurately,** and muxed with a single AAC encode (loudness-normalised to -14 LUFS) against stream-copied video. Encoding AAC per scene and concatenating drifts by an encoder delay at every join. On the 56.5 s fixture, audio and video are both exactly 56.500 s, and each scene's silence starts within ~2 ms of the timeline's prediction. 1080p with a slow push-in/pull-out encodes at about 0.3× the video's length on an idle machine (0.66× measured while other test suites were running).
 - **The result's `scenes[]` is the real timeline** (`startSec`, `audioSec`, `durationSec`) — feed it to `retimeFromAudio`.
 - **Captions are a sidecar SRT** (`server/captions.ts`). Pass each scene's spoken text as `captionText` and the render writes `<name>.en.srt` beside the MP4: the narration verbatim (never a dropped or reordered word — tested), at most two lines of 42 characters, spread across each scene's real speech window. Scene starts are exact; inside a scene the timing is an estimate with no forced alignment (measured against macOS `say`: median 0.29 s, worst 0.76 s, always early). Upload it to YouTube as an English caption track.
 - **Not built:** burned-in captions and on-screen text (this Homebrew ffmpeg has no `drawtext`/`subtitles` filter; `brew install ffmpeg-full` is keg-only and would add them), and the stage that generates and checkpoints per-scene TTS and images. One `/api/tts` call per scene is about 51 calls for a 585 s script and the free-tier TTS request quota has not been measured.
