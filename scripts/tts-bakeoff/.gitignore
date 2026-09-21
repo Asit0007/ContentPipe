@@ -1,0 +1,19 @@
+.venv-*/
+out/
+models/
+*.wav
+*.mp3
+ref/
+
+# blind listening set + its key, and hand-made clips
+blind/
+blind-key.json
+extra/
+*.m4a
+*.flac
+*.ogg
+
+# logs (they contain absolute home paths), bytecode, and the passage marked not for publication
+*.log
+__pycache__/
+passage.json
