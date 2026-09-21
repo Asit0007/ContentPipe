@@ -5,7 +5,9 @@ import {
   classifyGeminiError,
   summarizeQuotaFailures,
   secondsUntilNextPacificMidnight,
+  reduceModelErrors,
   QuotaExhaustedError,
+  UpstreamUnavailableError,
 } from './quota';
 
 // Real body captured live 2026-09-19 (gemini-3.1-flash-image, free tier).
@@ -111,4 +113,28 @@ test('summarizeQuotaFailures: per_day + zero → per_day; all zero → zero with
   assert.deepEqual({ k: day.kind, r: day.retryAfterSec }, { k: 'per_day', r: 40000 });
   const zero = summarizeQuotaFailures([{ kind: 'zero' }, { kind: 'zero' }]);
   assert.deepEqual({ k: zero.kind, r: zero.retryAfterSec }, { k: 'zero', r: undefined });
+});
+
+test('reduceModelErrors: a daily quota on one model is not masked by another model\'s 404', () => {
+  const perDay = apiError(429, REAL_PERDAY);
+  const notFound = apiError(404, { error: { code: 404, status: 'NOT_FOUND', message: 'models/gemini-3.1-flash-tts-preview is not found' } });
+  const r = reduceModelErrors([perDay, notFound], 'no audio') as QuotaExhaustedError;
+  assert.ok(r instanceof QuotaExhaustedError);
+  assert.equal(r.kind, 'per_day');
+});
+
+test('reduceModelErrors: overload is retryable, capped at 30s; a shared non-retryable error surfaces as itself', () => {
+  const overload = apiError(503, { error: { code: 503, status: 'UNAVAILABLE', message: 'high demand' } });
+  const r = reduceModelErrors([overload, overload], 'no audio') as UpstreamUnavailableError;
+  assert.ok(r instanceof UpstreamUnavailableError);
+  assert.equal(r.retryAfterSec, 30);
+
+  const badKey = apiError(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'API key not valid' } });
+  assert.equal(reduceModelErrors([badKey, badKey], 'no audio'), badKey);
+});
+
+test('reduceModelErrors: no errors at all (a 200 with no audio in it) is a plain non-retryable failure', () => {
+  const r = reduceModelErrors([], 'TTS returned no audio') as Error;
+  assert.equal(r.message, 'TTS returned no audio');
+  assert.equal(classifyGeminiError(r).kind, 'other');
 });

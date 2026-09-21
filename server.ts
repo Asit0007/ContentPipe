@@ -22,6 +22,7 @@ import {
   buildGenerationSummary,
 } from './server/scriptPipeline';
 import { isStrict, sendStrictFailure, orFallback } from './server/strict';
+import { reduceModelErrors, UpstreamUnavailableError } from './server/quota';
 import { analyzeScript } from './server/timeline';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
@@ -576,6 +577,7 @@ app.post('/api/publish-package', async (req, res) => {
 
 // 4. Text-To-Speech (TTS): Uses 'gemini-3.1-flash-tts-preview' with a 2.5 TTS fallback
 app.post('/api/tts', async (req, res) => {
+  const strict = isStrict(req);
   const { text, voice = 'Puck' } = req.body;
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'text is required for TTS' });
@@ -587,6 +589,7 @@ app.post('/api/tts', async (req, res) => {
   try {
     const ai = getAIClient();
     let base64Audio: string | null = null;
+    const modelErrors: unknown[] = [];
 
     const ttsModels = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'];
     for (const model of ttsModels) {
@@ -609,12 +612,13 @@ app.post('/api/tts', async (req, res) => {
           break;
         }
       } catch (ttsErr: any) {
+        modelErrors.push(ttsErr);
         console.warn(`[TTS Agent] Model ${model} notice:`, ttsErr?.message || ttsErr);
       }
     }
 
     if (!base64Audio) {
-      throw new Error('No audio returned by models');
+      throw reduceModelErrors(modelErrors, 'No audio returned by models');
     }
 
     res.json({
@@ -623,6 +627,9 @@ app.post('/api/tts', async (req, res) => {
       sampleRate: 24000,
     });
   } catch (error: any) {
+    // The fallback is a synthesized tone. A render would publish it as narration, so an
+    // automated caller gets a status code instead (429/503 retry later, 502 will not recover).
+    if (strict) return sendStrictFailure(res, error);
     console.log('[TTS Agent] Audio synthesis active via browser/synth generator.');
     const fallbackBase64 = generateFallbackTTSAudio(text, selectedVoice);
     res.json({
@@ -637,6 +644,7 @@ app.post('/api/tts', async (req, res) => {
 // 5. Scene image generation: Gemini -> Pollinations (free, no key) -> SVG placeholder.
 // See server/imageProviders.ts for why: Gemini image models have zero free-tier quota.
 app.post('/api/generate-image', async (req, res) => {
+  const strict = isStrict(req);
   const { prompt, aspectRatio = '16:9', imageSize = '1K' } = req.body;
   if (!prompt) {
     return res.status(400).json({ error: 'prompt is required' });
@@ -650,8 +658,14 @@ app.post('/api/generate-image', async (req, res) => {
   try {
     const ai = getAIClient();
     const result = await generateSceneImage(ai, { prompt, aspectRatio: targetAspectRatio, imageSize: targetSize });
+    // Pollinations is a real provider and comes back labelled; the SVG placeholder is not artwork.
+    if (strict && result.isPlaceholder) {
+      const why = result.attempts.map((a) => `${a.provider}: ${a.error}`).join('; ');
+      return sendStrictFailure(res, new UpstreamUnavailableError(30, `No image provider returned an image (${why})`));
+    }
     res.json({ ...result, imageSize: targetSize, aspectRatio: targetAspectRatio });
   } catch (error: any) {
+    if (strict) return sendStrictFailure(res, error);
     console.log('[Image Agent] Exception handled, returning placeholder artwork.');
     const fallbackUrl = generateFallbackImage(prompt, targetAspectRatio);
     res.json({

@@ -21,14 +21,26 @@ const APP_PORT = 3192;
 const APP = `http://127.0.0.1:${APP_PORT}`;
 // The stub's per-day 429 is the body captured live from Gemini (limit: 20 on gemini-3.7-flash).
 const PERDAY = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemini-429-perday.json'), 'utf8'));
+// Captured live: the free tier has no quota at all for image models (limit: 0).
+const LIMIT0 = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemini-429-limit0.json'), 'utf8'));
 
-const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [] as string[] };
+const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [] as string[], tts: 'ok' as 'ok' | 'perday', pollinations: 'fail' as 'fail' | 'ok' };
 let stubServer: http.Server;
 let stubPort = 0;
 let app: ChildProcess | null = null;
 let runsDir = '';
 
-function stubAnswer(prompt: string): { status: number; body: any } {
+function stubAnswer(prompt: string, url = ''): { status: number; body: any } {
+  if (prompt.startsWith('Speak in a punchy')) {
+    stub.log.push('tts-call');
+    if (stub.tts === 'perday') return { status: 429, body: PERDAY };
+    const pcm = Buffer.alloc(24000 * 2); // one second of silence, raw 16-bit mono like the real endpoint
+    return { status: 200, body: { candidates: [{ content: { role: 'model', parts: [{ inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: pcm.toString('base64') } }] }, finishReason: 'STOP' }], usageMetadata: {} } };
+  }
+  if (/image/.test(url)) {
+    stub.log.push('gemini-image-call');
+    return { status: 429, body: LIMIT0 };
+  }
   if (stub.overloaded) {
     stub.log.push('overloaded-call');
     return { status: 503, body: { error: { code: 503, status: 'UNAVAILABLE', message: 'This model is currently experiencing high demand.' } } };
@@ -75,7 +87,16 @@ before(async () => {
       const body = JSON.parse(raw || '{}');
       const prompt = (body.contents || []).flatMap((c: any) => (c.parts || []).map((p: any) => p.text || '')).join('');
       if (stub.delayMs) await new Promise((r) => setTimeout(r, stub.delayMs));
-      const { status, body: out } = stubAnswer(prompt);
+      if (req.url?.startsWith('/prompt/')) {
+        // Stands in for Pollinations (POLLINATIONS_BASE_URL): a PNG when up, an error page when down.
+        stub.log.push('pollinations-call');
+        if (stub.pollinations === 'ok') {
+          const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(2048)]);
+          return void res.writeHead(200, { 'Content-Type': 'image/png' }).end(png);
+        }
+        return void res.writeHead(500, { 'Content-Type': 'text/plain' }).end('down');
+      }
+      const { status, body: out } = stubAnswer(prompt, req.url);
       res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(out));
     });
   });
@@ -93,7 +114,7 @@ async function startApp() {
     cwd: REPO,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
+    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
   });
   for (let i = 0; i < 120; i++) {
     try {
@@ -122,7 +143,7 @@ const SCRIPT_REQ = {
   researchData: { topicTitle: 'T', summary: 's', retrievedSources: [] },
   channelBrandName: 'Blast Radius',
 };
-const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [] }, over);
+const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [], tts: 'ok', pollinations: 'fail' }, over);
 
 /** Independent of server/quota.ts: seconds until the next 00:00 in America/Los_Angeles. */
 function secondsToNextPacificMidnight(): number {
@@ -224,4 +245,59 @@ test('SSRF: internal URLs are refused and never fetched; a bad runId is rejected
   assert.ok(r.body.retrievedSources.every((s: any) => /^Blocked:/.test(s.error)), JSON.stringify(r.body.retrievedSources));
   const bad = await post('/api/script', { ...SCRIPT_REQ, runId: '../../etc/passwd' }, false);
   assert.equal(bad.status, 400);
+});
+
+test('STRICT TTS: a spent daily quota answers 429 + Retry-After, never the synthesized tone; the UI path still gets the tone, flagged', async () => {
+  await stopApp();
+  reset({ tts: 'perday' });
+  await startApp();
+  const strict = await post('/api/tts', { text: 'hello there' }, true);
+  assert.equal(strict.status, 429);
+  assert.equal(strict.body.kind, 'per_day');
+  assert.equal(strict.body.retryable, true);
+  assert.ok(Number(strict.headers.get('retry-after')) > 0);
+  assert.equal(strict.body.audioBase64, undefined);
+  const ui = await post('/api/tts', { text: 'hello there' }, false);
+  assert.equal(ui.status, 200);
+  assert.equal(ui.body.isQuotaFallback, true);
+  assert.ok(ui.body.audioBase64.length > 0);
+});
+
+test('STRICT TTS: healthy TTS returns real audio for both callers, unflagged', async () => {
+  await stopApp();
+  reset();
+  await startApp();
+  for (const strict of [true, false]) {
+    const r = await post('/api/tts', { text: 'hello there' }, strict);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.isQuotaFallback, undefined);
+    assert.equal(Buffer.from(r.body.audioBase64, 'base64').length, 48000);
+    assert.equal(r.body.sampleRate, 24000);
+  }
+});
+
+test('STRICT image: no Gemini image quota and Pollinations down → 503 + Retry-After, not a placeholder; the UI path still gets the placeholder', async () => {
+  await stopApp();
+  reset({ pollinations: 'fail' });
+  await startApp();
+  const strict = await post('/api/generate-image', { prompt: 'a server room' }, true);
+  assert.equal(strict.status, 503);
+  assert.equal(strict.headers.get('retry-after'), '30');
+  assert.equal(strict.body.kind, 'upstream_unavailable');
+  assert.match(strict.body.error, /gemini: .*pollinations: /s);
+  assert.equal(strict.body.imageUrl, undefined);
+  const ui = await post('/api/generate-image', { prompt: 'a server room' }, false);
+  assert.equal(ui.status, 200);
+  assert.equal(ui.body.isPlaceholder, true);
+});
+
+test('STRICT image: Pollinations up → a real, labelled image; strict does not reject the fallback provider', async () => {
+  await stopApp();
+  reset({ pollinations: 'ok' });
+  await startApp();
+  const r = await post('/api/generate-image', { prompt: 'a server room' }, true);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.provider, 'pollinations');
+  assert.equal(r.body.isPlaceholder, false);
+  assert.match(r.body.imageUrl, /^data:image\/png;base64,/);
 });

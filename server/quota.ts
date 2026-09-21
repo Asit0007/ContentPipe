@@ -180,6 +180,23 @@ export function summarizeQuotaFailures(failures: ClassifiedError[]): QuotaExhaus
   );
 }
 
+/**
+ * The error to hand a strict caller after every model in a media chain (TTS, image) has failed.
+ * Mirrors what generateGeminiJson concludes for text: quota failures dominate and say when to
+ * retry; overload is retryable; anything shared that waiting cannot fix (bad key, rejected
+ * request) surfaces as itself, but one model's 404 never masks another model's quota error.
+ */
+export function reduceModelErrors(errors: unknown[], emptyMessage: string): unknown {
+  const classified = errors.map((e) => ({ e, c: classifyGeminiError(e) }));
+  const retryable = classified.filter((x) => x.c.kind !== 'other').map((x) => x.c);
+  if (retryable.length === 0) {
+    return classified.find((x) => x.c.kind === 'other')?.e ?? new Error(emptyMessage);
+  }
+  if (retryable.every((f) => isQuotaKind(f.kind))) return summarizeQuotaFailures(retryable);
+  const perMinute = retryable.filter((f) => f.kind === 'per_minute').map((f) => f.retryAfterSec ?? DEFAULT_PER_MINUTE_RETRY_SEC);
+  return new UpstreamUnavailableError(Math.min(30, ...perMinute), 'Every model was overloaded or rate-limited; retry shortly.');
+}
+
 const PT_FORMAT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Los_Angeles',
   hourCycle: 'h23',

@@ -29,6 +29,8 @@ export interface ImageResult {
 }
 
 const GEMINI_IMAGE_MODELS = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'];
+// Overridable so the end-to-end test can stand in for the service instead of reaching the network.
+const POLLINATIONS_BASE_URL = process.env.POLLINATIONS_BASE_URL || 'https://image.pollinations.ai';
 const POLLINATIONS_TIMEOUT_MS = 25000;
 const POLLINATIONS_MAX_PROMPT_CHARS = 1500; // layered visualPrompts can overflow URL path limits
 
@@ -91,7 +93,7 @@ async function tryGemini(
 async function tryPollinations(prompt: string, aspectRatio: string): Promise<ProviderResult> {
   const { width, height } = dimensionsFor(aspectRatio);
   const truncated = prompt.slice(0, POLLINATIONS_MAX_PROMPT_CHARS);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(truncated)}?width=${width}&height=${height}&nologo=true`;
+  const url = `${POLLINATIONS_BASE_URL}/prompt/${encodeURIComponent(truncated)}?width=${width}&height=${height}&nologo=true`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), POLLINATIONS_TIMEOUT_MS);
