@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { Send, ArrowRight, MessageSquare, Flame, CheckCircle2, Sparkles, RefreshCw, Layers, Radio, PenTool, Link2, FileText, Trash2 } from 'lucide-react';
+import { Send, ArrowRight, MessageSquare, Flame, CheckCircle2, Sparkles, RefreshCw, Layers, Radio, PenTool, Link2, FileText, Trash2, Compass } from 'lucide-react';
 import { TelegramMessage } from '../types';
 import { SAMPLE_TELEGRAM_MESSAGES } from '../data/sampleMessages';
+import { DEFAULT_TOPIC_DOMAIN } from '../../shared/topicProfile';
 
 interface TelegramIngestionProps {
   currentMessage: TelegramMessage;
   onUpdateMessage: (msg: TelegramMessage) => void;
   onStartResearch: (msg: TelegramMessage) => void;
   isLoading: boolean;
+  topicDomain: string;
+  onTopicDomainChange: (value: string) => void;
 }
 
 export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
@@ -15,6 +18,8 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
   onUpdateMessage,
   onStartResearch,
   isLoading,
+  topicDomain,
+  onTopicDomainChange,
 }) => {
   const [inputMode, setInputMode] = useState<'custom' | 'telegram' | 'presets'>('custom');
   const [customText, setCustomText] = useState(currentMessage.text);
@@ -200,6 +205,21 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
                 onChange={(e) => setSourceUrlsText(e.target.value)}
                 placeholder={'https://example.com/advisory\nhttps://news.ycombinator.com/item?id=39865810'}
                 className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800 p-3 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 resize-y font-mono"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="topic-domain-input" className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Compass className="h-3.5 w-3.5 text-orange-400" />
+                <span>Topic domain <span className="normal-case font-normal text-zinc-500">(optional — what beat is this for?)</span></span>
+              </label>
+              <input
+                type="text"
+                id="topic-domain-input"
+                value={topicDomain}
+                onChange={(e) => onTopicDomainChange(e.target.value)}
+                placeholder={`Leave blank for the ${DEFAULT_TOPIC_DOMAIN} default — or describe another beat: personal finance, true crime, space science…`}
+                className="w-full rounded-xl bg-zinc-950/90 border border-zinc-800 p-3 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
               />
             </div>
 

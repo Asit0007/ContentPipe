@@ -4,6 +4,7 @@ import { generateJson } from './llm/chain';
 import { publishPackageSchema } from './schemas';
 import { orFallback } from './strict';
 import { analyzeScript, dossierSpecifics, extractSpecifics, isSupportedSpecific, formatTimestamp, SEVERITY_RATING_RE, type Chapter } from './timeline';
+import { resolveTopicProfile } from '../shared/topicProfile';
 
 /**
  * Publish package (spec Prompt 6): titles, thumbnail concepts, description, tags.
@@ -173,10 +174,12 @@ export interface PublishInput {
   research?: any;
   plan?: any;
   channelBrandName?: string;
+  topicDomain?: string;
 }
 
 function buildPrompt(input: PublishInput, feedback?: string): string {
   const { script, research, plan } = input;
+  const profile = resolveTopicProfile(input.topicDomain);
   const facts = {
     topicTitle: research?.topicTitle,
     summary: research?.summary,
@@ -188,7 +191,7 @@ function buildPrompt(input: PublishInput, feedback?: string): string {
   const beats = (script.scenes || []).slice(0, 60).map((s: any) => `${s.sceneNumber}. [${s.actPhase || ''}] ${s.title}${s.onScreenText ? ` — on-screen: ${s.onScreenText}` : ''}`);
   const style = script.styleGuide ? `Visual style to inherit: ${script.styleGuide.artDirection || ''} Palette: ${script.styleGuide.colorPalette || ''}` : '';
 
-  return `You are a YouTube title and thumbnail strategist for an authoritative, investigative cybersecurity documentary channel${input.channelBrandName ? ` ("${input.channelBrandName}")` : ''}. Tone: measured and precise — no fearmongering, no clickbait. Optimise click-through honestly: never promise something the video does not deliver.
+  return `You are a YouTube title and thumbnail strategist for ${profile.publishPersona}${input.channelBrandName ? ` ("${input.channelBrandName}")` : ''}. Tone: measured and precise — no fearmongering, no clickbait. Optimise click-through honestly: never promise something the video does not deliver.
 
 <facts>
 ${JSON.stringify(facts, null, 2)}
@@ -205,12 +208,12 @@ ${style}
 
 FACT DISCIPLINE: every figure, date, version and entity name in any title, thumbnail text or description copy must appear in <facts>. If a detail is not there, leave it out.
 
-AUDIENCE: curious viewers who are not technical. A CVE id or a CVSS score means nothing to them, so titles, thumbnail text and description copy leave both out and convey the stakes instead: what happened, who was exposed, what an attacker could do. Tags may include the CVE id, because some people search for it.
+${profile.publishAudienceNote}
 
 Produce:
 1. "titles": exactly 5, one per structure, each at most 70 characters (45-60 ideal), keyword first, no ALL-CAPS words except acronyms and proper nouns, no emoji, no exclamation marks, no brackets, no "You won't believe" / "SHOCKING" / "GONE WRONG".
    Structures: "how_entity_verb_object" = "How [Entity] [Verb] [Object] — [Consequence]"; "truth_about" = "The [Adjective] Truth About [Topic]"; "inside_event" = "Inside [Entity]'s [Event]: [Technical Detail]"; "why_concept_is_stakes" = "Why [Technical Concept] Is [Stakes]"; "number_things_got_wrong" = "[Number] [Things] [Entity] Got Wrong About [Topic]" (only if the number is in <facts>; otherwise still use this structure without a specific number). For each: "angle" (one sentence on the CTR angle) and "bestThumbnail" (A, B or C).
-2. "thumbnails": exactly 3 concepts. A = Technical (the attack chain or architecture), B = Consequence (what broke, who was affected), C = Curiosity gap (an unresolved tension or counter-intuitive fact). For each: "variant", "concept" (2-3 word name), "imagePrompt" (ready to paste into an image model; include the visual style above; a single subject; dark background with a rim light), "textOverlay" (2-4 words, all caps, readable at 320x180), "layout" (subject on one third, text on the opposite third), "rationale" (one sentence). Never use red arrows, shocked faces, skulls, hoodies, Matrix code rain, generic "HACKED" text, padlock clichés, or cluttered collages.
+2. "thumbnails": exactly 3 concepts. ${profile.thumbnailTechnicalHint}, B = Consequence (what broke, who was affected), C = Curiosity gap (an unresolved tension or counter-intuitive fact). For each: "variant", "concept" (2-3 word name), "imagePrompt" (ready to paste into an image model; include the visual style above; a single subject; dark background with a rim light), "textOverlay" (2-4 words, all caps, readable at 320x180), "layout" (subject on one third, text on the opposite third), "rationale" (one sentence). Never use red arrows, shocked faces, skulls, hoodies, Matrix code rain, generic "HACKED" text, padlock clichés, or cluttered collages.
 3. "descriptionHook": the opening of the description — 3-4 sentences, about 60-90 words. The first two lines appear in search results, so they must state the concrete claim; no hype.
 4. "learnBullets": 4-5 bullets, each a full sentence of about 12-20 words, on what the viewer will understand by the end.
 5. "tags": 15-25 (broad, specific to this story, long-tail how-to-prevent phrases).
@@ -296,16 +299,17 @@ function recommend(titles: TitleCandidate[]): TitleCandidate | undefined {
 export async function buildPublishPackage(ai: GoogleGenAI, input: PublishInput, opts: { strict?: boolean } = {}): Promise<PublishPackage> {
   const det = deterministicParts(input);
   const generatedAt = new Date().toISOString();
+  const profile = resolveTopicProfile(input.topicDomain);
 
   const generated = await orFallback<any | null>(
     !!opts.strict,
     async () => {
-      let raw: any = await generateJson(ai, buildPrompt(input), 'You write precise, honest YouTube packaging for a cybersecurity documentary channel. Output strictly valid JSON matching the schema.', TEXT_MODELS, publishPackageSchema);
+      let raw: any = await generateJson(ai, buildPrompt(input), profile.publishSystemInstruction, TEXT_MODELS, publishPackageSchema);
       let linted = lintAll(raw, input);
       if (linted.titles.filter((t) => t.passesLint).length < MIN_PASSING_TITLES) {
         // One retry, telling the model exactly which rules it broke.
         try {
-          const retry: any = await generateJson(ai, buildPrompt(input, feedbackFor(linted.titles, linted.thumbnails)), 'You write precise, honest YouTube packaging for a cybersecurity documentary channel. Output strictly valid JSON matching the schema.', TEXT_MODELS, publishPackageSchema);
+          const retry: any = await generateJson(ai, buildPrompt(input, feedbackFor(linted.titles, linted.thumbnails)), profile.publishSystemInstruction, TEXT_MODELS, publishPackageSchema);
           const relinted = lintAll(retry, input);
           if (relinted.titles.filter((t) => t.passesLint).length >= linted.titles.filter((t) => t.passesLint).length) {
             raw = retry;

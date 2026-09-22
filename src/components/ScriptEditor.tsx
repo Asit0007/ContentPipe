@@ -41,6 +41,7 @@ interface ScriptEditorProps {
   plan?: VideoPlan | null;
   research?: ResearchData | null;
   channelBrandName?: string;
+  topicDomain?: string;
 }
 
 export const ScriptEditor: React.FC<ScriptEditorProps> = ({
@@ -52,6 +53,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   plan,
   research,
   channelBrandName,
+  topicDomain,
 }) => {
   const [viewMode, setViewMode] = useState<'director' | 'document' | 'teleprompter'>('director');
   const [selectedVoice, setSelectedVoice] = useState<VoiceName>('Puck');
@@ -345,6 +347,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
         research={research}
         plan={plan}
         channelBrandName={channelBrandName}
+        topicDomain={topicDomain}
         onUpdateScript={onUpdateScript}
       />
 

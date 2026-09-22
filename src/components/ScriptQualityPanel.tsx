@@ -7,6 +7,7 @@ interface ScriptQualityPanelProps {
   research?: ResearchData | null;
   plan?: VideoPlan | null;
   channelBrandName?: string;
+  topicDomain?: string;
   onUpdateScript: (script: VideoScript) => void;
 }
 
@@ -21,7 +22,7 @@ const SEVERITY_STYLE: Record<string, string> = {
  * shortfall banners, the deterministic audit, mid-roll placement, and the publish package.
  * Nothing here is model opinion — the audit is computed server-side from the scenes.
  */
-export const ScriptQualityPanel: React.FC<ScriptQualityPanelProps> = ({ videoScript, research, plan, channelBrandName, onUpdateScript }) => {
+export const ScriptQualityPanel: React.FC<ScriptQualityPanelProps> = ({ videoScript, research, plan, channelBrandName, topicDomain, onUpdateScript }) => {
   const [isBuilding, setIsBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -44,7 +45,7 @@ export const ScriptQualityPanel: React.FC<ScriptQualityPanelProps> = ({ videoScr
       const response = await fetch('/api/publish-package', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ script: slim, research, plan, channelBrandName }),
+        body: JSON.stringify({ script: slim, research, plan, channelBrandName, topicDomain }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Publish package failed');

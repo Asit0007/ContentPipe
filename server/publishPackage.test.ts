@@ -198,6 +198,15 @@ test('happy path: linted titles, the LINTER recommends, description carries real
   assert.equal(pkg.deterministicOnly, undefined);
 });
 
+// shared/topicProfile.ts: a custom topicDomain must not leak the default "cybersecurity documentary
+// channel" persona into the packaging prompt.
+test('a custom topicDomain replaces the cybersecurity persona in the publish-package prompt', async () => {
+  const { ai, prompts } = fakeAi(() => rawResponse());
+  await buildPublishPackage(ai, { script: script(), research: RESEARCH, channelBrandName: 'Blast Radius', topicDomain: 'true crime' });
+  assert.match(prompts[0], /true crime/);
+  assert.doesNotMatch(prompts[0], /cybersecurity documentary channel/i);
+});
+
 test('lint failure triggers exactly ONE retry carrying the specific violations; the better attempt wins', async () => {
   const bad = goodTitles.map((t) => ({ ...t, title: `${t.title} and a very long tail that pushes it well past seventy characters` }));
   const { ai, prompts } = fakeAi((n) => (n === 1 ? rawResponse(bad) : rawResponse()));

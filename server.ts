@@ -33,6 +33,8 @@ import { measureCoverage } from './server/researchCoverage';
 import { generateSceneImage } from './server/imageProviders';
 import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import { DEFAULT_CHANNEL_BRAND } from './shared/brand';
+import { isDocumentaryTone } from './shared/tone';
+import { resolveTopicProfile, type TopicProfile } from './shared/topicProfile';
 import {
   generateNotebookLMAudioService,
   getCachedNotebookLMAudio,
@@ -54,8 +56,9 @@ app.get('/api/health', (req, res) => {
 
 // 1. Research Agent: Takes input message, extracts topic, and conducts deep technical research
 app.post('/api/research', async (req, res) => {
-  const { messageText, channelName, sourceUrls, targetDurationSec } = req.body;
+  const { messageText, channelName, sourceUrls, targetDurationSec, topicDomain } = req.body;
   const strict = isStrict(req);
+  const profile = resolveTopicProfile(topicDomain);
   // Optional, and deliberately not defaulted: how much research a dossier needs depends entirely on
   // the length of the script it has to carry, and guessing a length would either ask a 60-second
   // short for nine minutes of depth or let a nine-minute documentary settle for four facts.
@@ -106,7 +109,7 @@ app.post('/api/research', async (req, res) => {
 
   try {
     const ai = getAIClient();
-    const prompt = `You are an elite investigative technology and security journalist preparing a research dossier.
+    const prompt = `${profile.researchPersona}
 
 ${sourceContext || 'NOTE: No source documents could be retrieved. Work only from the input text below and do NOT fabricate specific figures, dates, CVE numbers, quotes, people or sources.'}
 
@@ -119,8 +122,8 @@ ${messageText}
 
 CRITICAL INSTRUCTIONS:
 0. SOURCE DISCIPLINE: Every specific figure, date, CVE id, version number, company name and direct quote must come from the PRIMARY SOURCE DOCUMENTS above. Populate "factCitations" mapping each entry of "keyFacts" to the source ids (S1, S2, …) that support it — every key fact gets an entry, because a fact nobody can trace is a fact the video cannot defend. If the sources do not cover a detail, omit it rather than inventing it. If no sources were retrieved, keep claims general and leave factCitations empty.
-1. Ground your entire research directly in the exact topic, technologies, vulnerabilities, tools, or events described in the Input Content above (e.g. if it is about JFrog Artifactory auth bypass or token minting, research and explain THAT exact story in detail; do NOT substitute generic frontend or framework topics).
-2. Synthesize the key facts, technical context, how the vulnerability or technology works under the hood, and angles suitable for short/long video content. Be precise and measured: state what is known, and mark what is not.
+${profile.researchGroundingInstruction}
+${profile.researchExplainClause}
 3. COMMUNITY REACTION comes ONLY from a source document whose retrieval note says it was read via the Hacker News API. If there is none, set "hnCommunitySentiment" to {"consensus": "No Hacker News discussion was retrieved for this story.", "contrarianView": "No Hacker News discussion was retrieved for this story.", "topHnComments": []}. Never write a comment, handle or reaction that is not printed in a retrieved document — inventing a commenter is fabrication. When such a document exists, each "topHnComments" entry uses an author handle exactly as printed and a "comment" copied verbatim (shortening with … is fine); leave out any point/karma figure, the API does not provide one; "consensus" and "contrarianView" must be supportable from the comments actually shown there.
 4. DEPTH, AND WHAT TO DO WHEN THERE ISN'T ANY. ${
       researchForSec
@@ -173,7 +176,7 @@ Return strictly a valid JSON object matching this schema:
 }
 (The server fills "groundingSources" from the documents actually retrieved; always return it as [].)`;
 
-    const systemInstruction = "You are an elite investigative technology and security journalist. Output strictly valid JSON matching the schema without markdown fences. Focus strictly on the user's specific topic. Never invent quotes, people, handles, figures or sources.";
+    const systemInstruction = profile.researchSystemInstruction;
 
     const parsedData: any = await orFallback(
       strict,
@@ -220,7 +223,7 @@ Return strictly a valid JSON object matching this schema:
 
 // 2. Planning Agent: Takes research and produces a high-retention infotainment video plan
 app.post('/api/plan', async (req, res) => {
-  const { researchData, targetFormat, targetTone, targetDurationSec } = req.body;
+  const { researchData, targetFormat, targetTone, targetDurationSec, topicDomain } = req.body;
   const strict = isStrict(req);
   if (!researchData) {
     return res.status(400).json({ error: 'researchData is required' });
@@ -236,10 +239,9 @@ app.post('/api/plan', async (req, res) => {
     // infotainment beats ("The Community Reaction", "giant red terminal alert") whatever the tone
     // says — the inline example wins over instructions (see CLAUDE.md). The tone can arrive as
     // the enum value or as a longer descriptive string, so match on the word.
-    const isDocumentary = /documentary/i.test(String(targetTone || ''));
-    const personaLine = isDocumentary
-      ? 'You are a documentary director for an authoritative, investigative cybersecurity channel: measured, precise, architecturally detailed — no fearmongering, no clickbait, no hype.'
-      : 'You are a viral YouTube / TikTok video creative director specializing in high-tech and security infotainment.';
+    const isDocumentary = isDocumentaryTone(targetTone);
+    const profile = resolveTopicProfile(topicDomain);
+    const personaLine = isDocumentary ? profile.planPersonaDocumentary : profile.planPersonaInfotainment;
     const placementHint =
       isDocumentary && duration >= 480
         ? `Long-form monetisation: plan so the problem is fully set up by about 2:30 and the technical fix is held back until about 6:00, so the two manual mid-roll ads fall on natural boundaries. Give the acts plain names (Hook, Context, Technical Breakdown, Impact, The Fix, Conclusion).\n\n`
@@ -350,7 +352,122 @@ app.post('/api/plan', async (req, res) => {
   ],
   "callToAction": "Drop a comment: How is your team handling this?"
 }`;
-    const planExample = isDocumentary ? documentaryExample : infotainmentExample;
+    // Same JSON shape as documentaryExample/infotainmentExample above (per CLAUDE.md, the inline
+    // example wins over instructions, so a cyber-flavored example would bias every topic toward
+    // cyber content regardless of what was asked for) — only the illustrative content is generic.
+    const genericDocumentaryExample = `{
+  "title": "${researchData.topicTitle || 'Accurate, specific video title'}",
+  "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
+  "targetDurationSec": ${duration},
+  "tone": "Deep Dive Documentary",
+  "hookStrategy": "One specific, verifiable fact from this story that reframes it, stated in the first 15 seconds — no logo intro, no title card",
+  "coreConflict": "The central question this story forces: what happened, and why did it stay hidden or go unnoticed?",
+  "pacingStyle": "Measured documentary pacing: a distinct visual change (a document, a data graph, a real photo or a clean diagram) at least every 20-30 seconds",
+  "targetAudience": "Curious, general-audience viewers who want ${profile.domainLabel} explained with real depth and no oversimplification",
+  "narrativeBeats": [
+    {
+      "act": "Act 1: Cold Open",
+      "purpose": "State the most consequential verified fact and what it put at risk",
+      "durationSec": 8,
+      "visualTone": "Slow push-in on a source document or defining image",
+      "keyTakeaway": "Why this matters to the viewer"
+    },
+    {
+      "act": "Act 2: Context",
+      "purpose": "Set up the people, the system and the trust or assumption that was relied on",
+      "durationSec": 12,
+      "visualTone": "Clean diagram, one element highlighted at a time",
+      "keyTakeaway": "The viewer understands what was supposed to hold"
+    },
+    {
+      "act": "Act 3: The Breakdown",
+      "purpose": "Explain exactly how it happened, step by step, with one analogy for the hardest part",
+      "durationSec": 18,
+      "visualTone": "Documents, data and an annotated sequence diagram",
+      "keyTakeaway": "The viewer could explain the mechanism to a friend"
+    },
+    {
+      "act": "Act 4: Impact",
+      "purpose": "Who and what was affected, using only figures found in the sources",
+      "durationSec": 12,
+      "visualTone": "Data graph or timeline built from sourced numbers",
+      "keyTakeaway": "The real scale, without exaggeration"
+    },
+    {
+      "act": "Act 5: The Resolution",
+      "purpose": "What happened next or what people should take from this, then one calm closing line",
+      "durationSec": 10,
+      "visualTone": "A clean closing image, then a quiet hold",
+      "keyTakeaway": "A concrete takeaway the viewer keeps"
+    }
+  ],
+  "viralRetentionHooks": [
+    "Open loop: pose the central question in the cold open and answer it only in the reveal",
+    "A visual pattern interrupt every 20-30 seconds",
+    "Hold the key resolution until after the second mid-roll point"
+  ],
+  "callToAction": "One calm closing line that points to the sources in the description"
+}`;
+    const genericInfotainmentExample = `{
+  "title": "${researchData.topicTitle || 'High-CTR Video Title'}",
+  "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
+  "targetDurationSec": ${duration},
+  "tone": "${targetTone || 'Witty & Sarcastic'}",
+  "hookStrategy": "Specific visual + verbal 3-second hook pattern to stop scrolling on this exact story",
+  "coreConflict": "The central drama or dilemma at the heart of this story",
+  "pacingStyle": "Fast-cut with on-screen text callouts, quick zooms, and dramatic pauses",
+  "targetAudience": "Fans of fast-paced ${profile.domainLabel} content who want it explained in an entertaining, shareable way",
+  "narrativeBeats": [
+    {
+      "act": "Act 1: The Inciting Incident",
+      "purpose": "Hook the viewer with a shocking stat or absurd event from this story",
+      "durationSec": 8,
+      "visualTone": "Rapid glitch transition, giant bold on-screen alert",
+      "keyTakeaway": "Immediate curiosity gap"
+    },
+    {
+      "act": "Act 2: The Breakdown",
+      "purpose": "Explain how the situation, mechanism or decision actually works using an intuitive analogy",
+      "durationSec": 15,
+      "visualTone": "Sleek animated diagram or a highlighted document",
+      "keyTakeaway": "Viewer feels smart"
+    },
+    {
+      "act": "Act 3: The Reaction",
+      "purpose": "Highlight the public reaction, funny debates, or expert commentary",
+      "durationSec": 15,
+      "visualTone": "Retro forum thread or comment section floating in frame",
+      "keyTakeaway": "Relatable, shareable humor"
+    },
+    {
+      "act": "Act 4: The Twist / Revelation",
+      "purpose": "Reveal the real consequence, scale, or how it was caught / discovered",
+      "durationSec": 12,
+      "visualTone": "Dramatic zoom on the single defining fact or document",
+      "keyTakeaway": "Mind blown moment"
+    },
+    {
+      "act": "Act 5: Conclusion & CTA",
+      "purpose": "Final verdict, practical takeaway, and call to subscribe/comment debate",
+      "durationSec": 10,
+      "visualTone": "Channel signature card",
+      "keyTakeaway": "High comment conversion"
+    }
+  ],
+  "viralRetentionHooks": [
+    "Pattern interrupt at second 7 with audio beat drop",
+    "On-screen visual easter egg at second 25",
+    "Open loop question before the reveal"
+  ],
+  "callToAction": "Drop a comment: What would you have done?"
+}`;
+    const planExample = profile.isDefault
+      ? isDocumentary
+        ? documentaryExample
+        : infotainmentExample
+      : isDocumentary
+      ? genericDocumentaryExample
+      : genericInfotainmentExample;
 
     const prompt = `${personaLine}
 Convert this exact research into a comprehensive video production plan.
@@ -364,7 +481,7 @@ Target Duration: ${duration} seconds
 
 CRITICAL MANDATE:
 The entire video plan MUST be strictly focused on the topic in the Research Data: "${researchData.topicTitle || 'the provided story'}".
-Do NOT invent an unrelated topic (e.g. do NOT talk about virtual DOM or Rust if the story is about JFrog Artifactory or a security vulnerability).
+${profile.planTopicDriftClause}
 
 ${placementHint}Create a structured video plan with narrative acts, retention hooks, and visual direction.
 The narrativeBeats' durationSec values MUST sum to approximately ${duration} seconds. For anything past ~90 seconds, add MORE acts rather than inflating a handful of them to unrealistic individual lengths — e.g. a ${duration}s plan should have roughly ${Math.max(5, Math.round(duration / 45))} acts, each covering a distinct beat of the story, not 5 acts stretched thin.
@@ -373,9 +490,7 @@ ${planExample}
 
 REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum to 60s. Your actual narrativeBeats array must sum to ~${duration}s, which for anything past 90s means writing MORE act objects in the same shape (roughly ${Math.max(5, Math.round(duration / 45))} for this ${duration}s plan), not stretching 5 acts thin.`;
 
-    const systemInstruction = isDocumentary
-      ? 'You are an award-winning documentary director for an investigative cybersecurity channel. Output strictly valid JSON strictly tailored to the topic in the research. No hype, no fearmongering, no clickbait.'
-      : 'You are an award-winning tech infotainment director. Output strictly valid JSON strictly tailored to the topic in the research.';
+    const systemInstruction = isDocumentary ? profile.planSystemInstructionDocumentary : profile.planSystemInstructionInfotainment;
 
     const plan: any = await orFallback(
       strict,
@@ -403,7 +518,7 @@ REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum
 // quota/overload failure answers 429/503 instead of returning a truncated or canned
 // script, and the next identical request resumes from the last finished chunk.
 app.post('/api/script', async (req, res) => {
-  const { videoPlan, researchData, channelBrandName, runId: requestedRunId, fresh } = req.body;
+  const { videoPlan, researchData, channelBrandName, topicDomain, runId: requestedRunId, fresh } = req.body;
   if (!videoPlan) {
     return res.status(400).json({ error: 'videoPlan is required' });
   }
@@ -411,10 +526,12 @@ app.post('/api/script', async (req, res) => {
     return res.status(400).json({ error: 'runId must match /^[A-Za-z0-9_-]{1,64}$/' });
   }
   const strict = isStrict(req);
-  const inputHash = hashRunInput({ videoPlan, researchData, channelBrandName });
+  // topicDomain is part of the hash: resuming a journal built under a different topic domain's
+  // prompts would silently splice mismatched profiles into one script.
+  const inputHash = hashRunInput({ videoPlan, researchData, channelBrandName, topicDomain });
   const runKey: string = requestedRunId || inputHash;
   const requestedDurationSec = Number(videoPlan.targetDurationSec) || 60;
-  const isDocumentary = videoPlan.tone === 'Deep Dive Documentary';
+  const isDocumentary = isDocumentaryTone(videoPlan.tone);
 
   // Express keeps generating after a client times out; a re-POST must not race the
   // original run and spend the quota twice.
@@ -442,7 +559,7 @@ app.post('/api/script', async (req, res) => {
     if (journal.resumed) console.log(`[Script Agent] resuming run ${runKey}:`, JSON.stringify(journal.progress()));
 
     const ai = getAIClient();
-    const opts = { strict, journal, degraded };
+    const opts = { strict, journal, degraded, topicDomain };
     const productionBible = await generateProductionBible(ai, videoPlan, researchData, channelBrandName, opts);
 
     let scenes: any[] = [];
@@ -564,14 +681,14 @@ app.post('/api/script', async (req, res) => {
 // The model writes creative copy only; chapters, mid-rolls, sources, linting and the
 // recommendation are deterministic — see server/publishPackage.ts.
 app.post('/api/publish-package', async (req, res) => {
-  const { script, research, plan, channelBrandName } = req.body;
+  const { script, research, plan, channelBrandName, topicDomain } = req.body;
   if (!script || !Array.isArray(script.scenes) || script.scenes.length === 0) {
     return res.status(400).json({ error: 'script with a non-empty scenes array is required' });
   }
   const strict = isStrict(req);
   try {
     const ai = getAIClient();
-    res.json(await buildPublishPackage(ai, { script, research, plan, channelBrandName }, { strict }));
+    res.json(await buildPublishPackage(ai, { script, research, plan, channelBrandName, topicDomain }, { strict }));
   } catch (error: any) {
     if (strict) return sendStrictFailure(res, error);
     console.error('[Publish Package] failed:', error);
@@ -726,33 +843,44 @@ app.get('/api/export/list', async (_req, res) => {
 
 // 6. Gemini Multi-Turn Chatbot with Role Selection & Model Selection
 app.post('/api/chat', async (req, res) => {
-  const { message, history = [], rolePreset = 'ip_strategist', customModel } = req.body;
+  const { message, history = [], rolePreset = 'ip_strategist', customModel, topicDomain } = req.body;
   if (!message) {
     return res.status(400).json({ error: 'message is required' });
   }
 
   try {
     const ai = getAIClient();
+    const profile = resolveTopicProfile(topicDomain);
 
     let preferredModel = 'gemini-3.7-flash';
     let systemInstruction = '';
 
     if (rolePreset === 'ip_strategist') {
       preferredModel = customModel || 'gemini-3.7-flash';
-      systemInstruction = `You are the Lead IP Brand Strategist & Showrunner for technical and cybersecurity video channels.
+      systemInstruction = profile.isDefault
+        ? `You are the Lead IP Brand Strategist & Showrunner for technical and cybersecurity video channels.
 Your mission is to help the creator brainstorm memorable IP names, media brand identities, show formats, catchy handles, merch lore, signature catchphrases, and visual aesthetics (e.g., high-contrast terminal minimalism, restrained broadcast-news typography, incident-report severity colour).
+Give structured, punchy, actionable advice with ready-to-use names, taglines, and show concepts.
+Never propose a name, handle, colour or mascot that borrows another publication's identity (its name, its signature colour, or its comment-thread furniture); the channel has to stand on its own.`
+        : `You are the Lead IP Brand Strategist & Showrunner for video channels covering ${profile.domainLabel}.
+Your mission is to help the creator brainstorm memorable IP names, media brand identities, show formats, catchy handles, merch lore, signature catchphrases, and visual aesthetics fitting this subject.
 Give structured, punchy, actionable advice with ready-to-use names, taglines, and show concepts.
 Never propose a name, handle, colour or mascot that borrows another publication's identity (its name, its signature colour, or its comment-thread furniture); the channel has to stand on its own.`;
     } else if (rolePreset === 'script_doctor') {
       preferredModel = customModel || 'gemini-3.7-flash';
-      systemInstruction = `You are a world-class Infotainment Script Doctor and Viral Video Retention Editor.
-You help refine voiceover scripts, inject developer humor, punch up hooks, sharpen technical explanations, and optimize scene pacing for maximum viewer retention on YouTube, Shorts, and TikTok.`;
+      systemInstruction = profile.isDefault
+        ? `You are a world-class Infotainment Script Doctor and Viral Video Retention Editor.
+You help refine voiceover scripts, inject developer humor, punch up hooks, sharpen technical explanations, and optimize scene pacing for maximum viewer retention on YouTube, Shorts, and TikTok.`
+        : `You are a world-class Infotainment Script Doctor and Viral Video Retention Editor for ${profile.domainLabel} content.
+You help refine voiceover scripts, inject sharp humor, punch up hooks, sharpen explanations, and optimize scene pacing for maximum viewer retention on YouTube, Shorts, and TikTok.`;
     } else if (rolePreset === 'fast_brainstorm') {
       preferredModel = customModel || 'gemini-3.1-flash-lite';
       systemInstruction = `You are a lightning-fast idea sparker. Deliver punchy bullet-point ideas, rapid-fire title variants, hook alternatives, and thumbnail concepts in seconds.`;
     } else {
       preferredModel = customModel || 'gemini-3.7-flash';
-      systemInstruction = 'You are an expert AI assistant for tech infotainment creators.';
+      systemInstruction = profile.isDefault
+        ? 'You are an expert AI assistant for tech infotainment creators.'
+        : `You are an expert AI assistant for ${profile.domainLabel} infotainment creators.`;
     }
 
     const contents: any[] = [];
@@ -810,15 +938,20 @@ You help refine voiceover scripts, inject developer humor, punch up hooks, sharp
 
 // 7. IP Brand Identity & Naming Generator
 app.post('/api/ip-names', async (req, res) => {
-  const { topicContext, customVibe } = req.body;
+  const { topicContext, customVibe, topicDomain } = req.body;
   try {
     const ai = getAIClient();
-    const prompt = `Generate 5 distinctive, high-value Media IP brand identities for a channel that turns breaches, vulnerabilities, outages and infrastructure stories into researched short-form and long-form video.
+    const profile = resolveTopicProfile(topicDomain);
+    const prompt = `Generate 5 distinctive, high-value Media IP brand identities for a channel that turns ${
+      profile.isDefault ? 'breaches, vulnerabilities, outages and infrastructure stories' : `stories about ${profile.domainLabel}`
+    } into researched short-form and long-form video.
 
-Context / Preferred Vibe: ${customVibe || 'Operator\'s chair: dry, precise, no fearmongering, no hype'}.
-Sample Topic being covered: ${topicContext || 'supply-chain compromises, cloud misconfigurations, post-incident reviews, and what each one changes for defenders'}.
+Context / Preferred Vibe: ${customVibe || (profile.isDefault ? "Operator's chair: dry, precise, no fearmongering, no hype" : 'Curious and precise, no fearmongering, no hype')}.
+Sample Topic being covered: ${
+      topicContext || (profile.isDefault ? 'supply-chain compromises, cloud misconfigurations, post-incident reviews, and what each one changes for defenders' : `notable stories in ${profile.domainLabel}`)
+    }.
 
-Rules: the name must not borrow another publication's identity — not its name, not its signature colour, not its comment-thread furniture. No "hacker in a hoodie" imagery.
+Rules: the name must not borrow another publication's identity — not its name, not its signature colour, not its comment-thread furniture.${profile.isDefault ? ' No "hacker in a hoodie" imagery.' : ''}
 
 Return strictly a JSON array of 5 IP brand identity objects, shaped like this (invent your own; do not return this example):
 [
@@ -835,7 +968,9 @@ Return strictly a JSON array of 5 IP brand identity objects, shaped like this (i
   }
 ]`;
 
-    const systemInstruction = 'You are the ultimate creative branding director for top tech media IPs. Output valid JSON array only.';
+    const systemInstruction = profile.isDefault
+      ? 'You are the ultimate creative branding director for top tech media IPs. Output valid JSON array only.'
+      : `You are the ultimate creative branding director for top media IPs covering ${profile.domainLabel}. Output valid JSON array only.`;
 
     let ipList: any = null;
     try {
@@ -861,17 +996,18 @@ Return strictly a JSON array of 5 IP brand identity objects, shaped like this (i
 
 // 8. NotebookLM Deep Dive 2-Host Podcast Dialogue Generator
 app.post('/api/notebooklm-dialogue', async (req, res) => {
-  const { researchData, topicText = '' } = req.body;
+  const { researchData, topicText = '', topicDomain } = req.body;
 
   try {
     const ai = getAIClient();
+    const profile = resolveTopicProfile(topicDomain);
     const topic = researchData?.topicTitle || topicText || 'the submitted story';
     const summary = researchData?.summary || '';
     const sentiment = JSON.stringify(researchData?.hnCommunitySentiment || {});
     const keyFacts = JSON.stringify(researchData?.keyFacts || []);
 
     const prompt = `You are the lead showrunner for a NotebookLM-style "Deep Dive" two-host audio podcast.
-Generate an engaging, natural, 2-host conversational discussion breaking down this tech topic:
+Generate an engaging, natural, 2-host conversational discussion breaking down this ${profile.isDefault ? 'tech' : profile.domainLabel} topic:
 TOPIC: ${topic}
 SUMMARY: ${summary}
 COMMUNITY SENTIMENT: ${sentiment}
@@ -884,7 +1020,7 @@ Requirements:
 - Structure as a 6 to 8 turn lively conversation between Host 1 and Host 2.
 - The tone should feel like two smart colleagues casually discussing an exciting technical discovery over coffee.
 - Include natural interjections ("Wait, really?", "Hold on a second", "Exactly", "Here's the catch").
-- Highlight the core engineering problem, the surprising benchmark or exploit, and the community reaction.
+- Highlight the ${profile.isDefault ? 'core engineering problem, the surprising benchmark or exploit,' : 'core mechanism or turning point in this story,'} and the community reaction.
 - Conclude with a clear, memorable takeaway.
 
 Output STRICTLY valid JSON adhering to this schema:

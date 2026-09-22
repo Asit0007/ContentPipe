@@ -308,3 +308,21 @@ test('a run resumed from the journal assigns the same speakers as the original',
   assert.ok(!log.some((l) => l.startsWith('narr')), 'every narrative chunk came from the journal');
   assert.deepEqual(replayed.scenes.map((s: any) => s.speaker), original.scenes.map((s: any) => s.speaker));
 });
+
+// shared/topicProfile.ts: a custom topicDomain must reach the prompt and replace the cybersecurity
+// persona; omitting it must reproduce the historical wording exactly (the byte-identical-default guarantee).
+test('a custom topicDomain replaces the cybersecurity persona in the narrative prompt', async () => {
+  const journal = await RunJournal.open('topic-custom', 'h', { dir });
+  const { ai, narrPrompts } = fakeAi();
+  await runAll(ai, { journal, degraded: [], topicDomain: 'personal finance and markets' });
+  const prompt = narrPrompts[1];
+  assert.match(prompt, /personal finance and markets/);
+  assert.doesNotMatch(prompt, /CVE|CVSS|hooded hacker|cybersecurity/i);
+});
+
+test('omitting topicDomain reproduces the historical cybersecurity persona exactly', async () => {
+  const journal = await RunJournal.open('topic-default', 'h', { dir });
+  const { ai, narrPrompts } = fakeAi();
+  await runAll(ai, { journal, degraded: [] });
+  assert.match(narrPrompts[1], /cybersecurity journalism/);
+});

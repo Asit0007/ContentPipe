@@ -6,6 +6,8 @@ import { isRetryableError } from './quota';
 import type { RunJournal } from './runJournal';
 import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
 import { analystSceneNumbers, speakerFor } from '../shared/speakers';
+import { isDocumentaryTone } from '../shared/tone';
+import { resolveTopicProfile } from '../shared/topicProfile';
 
 // The scriptwriting pass (generateSceneChunk) and the art-direction pass
 // (generateVisualDirectionChunk) generate scenes in batches instead of the
@@ -58,6 +60,8 @@ export interface ScriptRunOptions {
   strict?: boolean;
   journal?: RunJournal;
   degraded?: string[];
+  /** Free-text topic domain (shared/topicProfile.ts). Omitted or the default reproduces the historical cybersecurity prompts exactly. */
+  topicDomain?: string;
 }
 
 /** Mirrors ScriptGeneration in src/types.ts — change both together. */
@@ -112,8 +116,9 @@ export async function generateProductionBible(
     console.log('[Production Bible] resumed from journal');
     return cached;
   }
-  const isDocumentary = videoPlan?.tone === 'Deep Dive Documentary';
-  const prompt = `You are the production designer for ${isDocumentary ? 'an investigative cybersecurity documentary' : 'a short infotainment video'}.
+  const isDocumentary = isDocumentaryTone(videoPlan?.tone);
+  const profile = resolveTopicProfile(opts.topicDomain);
+  const prompt = `You are the production designer for ${isDocumentary ? profile.bibleShowDocumentary : profile.bibleShowInfotainment}.
 Show: "${channelBrandName || DEFAULT_CHANNEL_BRAND}"
 Story: "${videoPlan?.title || researchData?.topicTitle || 'the story'}"
 Tone: ${videoPlan?.tone || 'Witty Tech & Sarcastic'}
@@ -122,7 +127,7 @@ Core conflict: ${videoPlan?.coreConflict || ''}
 
 Define the production's visual foundation.
 
-A. "characterBible": 1 to 3 recurring characters who carry this story (e.g. the Narrator-Analyst, the Attacker, the On-Call Engineer). For EACH:
+A. "characterBible": 1 to 3 recurring characters who carry this story ${profile.bibleCharacterExampleNote}. For EACH:
    - "id": short slug, e.g. "analyst"
    - "name", "role": who they are and their narrative function
    - "appearance": IMMUTABLE physical description — apparent age, build, hair, facial structure, skin tone, distinguishing features. Be specific and unambiguous; vagueness is exactly what makes a character morph between shots.
@@ -131,13 +136,7 @@ A. "characterBible": 1 to 3 recurring characters who carry this story (e.g. the 
    - "expressionRange": their emotional register
    - "promptAnchor": ONE dense clause restating appearance + wardrobe + palette, written to be pasted verbatim into any image prompt featuring them. This exact string is the consistency mechanism — it will be reused unchanged in every scene.
 
-B. "styleGuide": "artDirection", "colorPalette", "lighting", "lensAndFilm", "negativePrompt".${
-    isDocumentary
-      ? `
-
-Documentary visual discipline: favour restrained, evidence-led imagery — real interfaces, terminals, architecture diagrams, source documents. The "negativePrompt" must always exclude: hooded hackers, green Matrix-style code rain, skulls, generic padlock icons, cartoon villains, stock-photo "hacker in a basement" scenes.`
-      : ''
-  }`;
+B. "styleGuide": "artDirection", "colorPalette", "lighting", "lensAndFilm", "negativePrompt".${isDocumentary ? profile.bibleDocumentaryVisualDiscipline : ''}`;
 
   try {
     const bible: any = await generateJson(
@@ -339,18 +338,14 @@ async function generateSceneChunk(
   sceneNumberOffset: number,
   priorScenesContext: string,
   isLastChunk: boolean,
-  totalScenes: number
+  totalScenes: number,
+  topicDomain?: string
 ): Promise<any[]> {
-  const isDocumentaryTone = videoPlan?.tone === 'Deep Dive Documentary';
-  const persona = isDocumentaryTone
-    ? `You are an investigative documentary scriptwriter and creative director working in the style of authoritative long-form cybersecurity journalism (Bloomberg cyber docs, Darknet Diaries' narrative pacing, a Netflix true-crime breakdown) — not an infotainment creator.`
-    : `You are an elite, award-winning infotainment video scriptwriter & creative director for top-tier YouTube Shorts, TikTok, and video essays (in the style of Veritasium, Fireship, and ColdFusion).`;
-  const narrationStyle = isDocumentaryTone
-    ? `Must sound authoritative, investigative, and slightly urgent — precise, measured, architecturally detailed. No fearmongering, no clickbait, no "your team is panicking" hype. Let the facts carry the weight.`
-    : `Must sound natural, electrifying, conversational, witty, and incisive. Use rhetorical questions, crisp pacing, contrast, and clever technical humor directly about this story.`;
-  const systemInstruction = isDocumentaryTone
-    ? 'You write precise, authoritative cybersecurity investigative narration with cinematic visual cues. Output valid JSON strictly grounded in the topic. No hype, no fearmongering, no clickbait.'
-    : 'You write the sharpest, most viral infotainment scripts on the internet with cinematic visual cues and brilliant narration. Output valid JSON strictly grounded in the topic.';
+  const isDocTone = isDocumentaryTone(videoPlan?.tone);
+  const profile = resolveTopicProfile(topicDomain);
+  const persona = isDocTone ? profile.writerPersonaDocumentary : profile.writerPersonaInfotainment;
+  const narrationStyle = isDocTone ? profile.writerNarrationStyleDocumentary : profile.writerNarrationStyleInfotainment;
+  const systemInstruction = isDocTone ? profile.writerSystemInstructionDocumentary : profile.writerSystemInstructionInfotainment;
 
   // Which scenes of THIS chunk the second voice reads is decided in code (shared/speakers.ts), not by the
   // model: it sees only 3 scenes at a time and cannot judge how often the analyst has spoken.
@@ -380,7 +375,7 @@ Do NOT output generic text about unrelated topics.
 
 FACTUAL DISCIPLINE: every figure, date, version number and quoted comment in the narration must trace to the research dossier. The dossier lists what was actually retrieved under "retrievedSources" and per-fact attribution under "factCitations". Do not introduce specifics the dossier does not contain.
 
-SHOW THE DAMAGE, DON'T RATE IT: the viewer is curious but not technical, and a CVE id or a CVSS score means nothing to them. Keep CVE ids, CVSS scores and severity ratings (a score out of 10, "critical severity") out of the narration, onScreenText and infographic. Let the viewer feel how serious it was through what happened and what could have happened: what an attacker could do with it, who and how many were exposed, how long it went unnoticed, how close it came, and what it cost to clean up — told only from what the dossier supports.
+${profile.disclosureDiscipline}
 
 The production bible and style guide are already fixed (given above). Write to them.
 
@@ -390,7 +385,7 @@ ${priorScenesContext}
 
 This is one chunk of a longer script. Write EXACTLY ${sceneCount} new scenes continuing directly on — do not repeat, re-hook, or re-introduce the topic if this isn't the opening chunk. ${
     isLastChunk
-      ? isDocumentaryTone
+      ? isDocTone
         ? 'This IS the final chunk of the script — the last scene must land the conclusion and the remediation takeaway, then close with one calm line. No "like / subscribe / comment" calls to action.'
         : 'This IS the final chunk of the script — the last scene must land the conclusion, remediation takeaway, and call to action.'
       : 'This is NOT the final chunk — do not wrap up or deliver a call to action yet.'
@@ -400,27 +395,21 @@ For EACH scene, you MUST craft:
 1. "sceneNumber": integer index, starting at ${sceneNumberOffset + 1}
 2. "title": Punchy scene title
 3. "actPhase": a short label for this beat's narrative function. ${
-    isDocumentaryTone
-      ? 'Use plain labels from this set — "Hook", "Context", "Technical Breakdown", "Impact", "The Fix", "Conclusion" — and reuse the same label for every scene in a phase: they become the video\'s chapter titles and decide where the mid-roll ads can sit.'
-      : '(e.g. "Hook", "Technical Breakdown", "Community Reaction", "The Fix", "Conclusion & CTA")'
+    isDocTone ? profile.actPhaseLabelsDocumentary : profile.actPhaseLabelsInfotainmentHint
   }
 4. "narration": Spoken-word voiceover script. ${narrationStyle} (approx 22-38 words per scene${analystScenes.length ? '; analyst scenes follow VOICES above' : ''}).
 5. "durationEst": Realistic speaking duration in seconds (8 to 15s${analystScenes.length ? '; 5 to 9s for an analyst scene' : ''}).
 6. "cinematography": Precise visual director cues (camera framing e.g., 'Slow dynamic push-in on macro CRT monitor with anamorphic lens flare and volumetric neon haze').
 7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt, used only if art direction fails for this scene — once art direction succeeds it is overwritten with the concatenation of visual.character + visual.background + visual.scene + visual.styleAnchor below, so write this as your own best single-string guess at that same thing.
-8. "visualType": ${
-    isDocumentaryTone
-      ? 'One of "headline", "terminal", "diagram", "character". Use "terminal", "diagram" or "headline" (real interfaces, architecture, source captures) for at least half the scenes and "character" sparingly; never use "meme" or "cyberpunk".'
-      : 'One of "headline", "terminal", "meme", "cyberpunk", "diagram", "character"'
-  }
+8. "visualType": ${isDocTone ? profile.visualTypeGuidanceDocumentary : profile.visualTypeGuidanceInfotainment}
 9. "onScreenText": 3 to 5 high-impact kinetic typography words for the viewer's eye.
 10. "soundEffect": Specific audio/SFX cue (e.g. "[SFX: Deep sub-bass riser + rapid keyboard clatter]").
 11. "retentionNote": Psychological reason why this beat prevents viewer dropoff.
-12. "infographic": A structured high-tech infographic object showing how the attack worked or what it reached — architecture steps, an impact scorecard (what an attacker could do, who was exposed, for how long), terminal commands, or benchmark metrics:
+12. "infographic": A structured infographic object ${profile.infographicPurposeClause}:
     {
       "type": "architecture" | "threat_scorecard" | "terminal_payload" | "benchmark_chart" | "sentiment_gauge",
       "title": "Clear uppercase headline for the diagram or scorecard",
-      "badge": "Short badge tag naming the consequence (e.g. NO LOGIN NEEDED or EXPLOIT CHAIN)",
+      "badge": "Short badge tag naming the consequence (e.g. ${profile.infographicBadgeExample})",
       "badgeColor": "#f97316" or "#ef4444" or "#22c55e",
       "summary": "1 sentence plain-language summary of this visual infographic",
       "steps": [{"label": "Step 1", "detail": "...", "status": "active" | "vulnerable" | "secure"}],
@@ -504,7 +493,8 @@ export async function generateSceneChunks(
           allScenes.length,
           priorScenesContext,
           chunkIndex === numChunks - 1,
-          totalScenesTarget
+          totalScenesTarget,
+          opts.topicDomain
         );
         await opts.journal?.setNarrativeChunk(chunkIndex, chunkScenes);
       }

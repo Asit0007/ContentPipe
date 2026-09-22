@@ -138,6 +138,15 @@ It is deliberately **not** the name of this tool and not the name of any source 
 
 Pass `channelBrandName` on `/api/script` to override it per request.
 
+### Topic domain: beyond cybersecurity
+
+Every prompt in this repo used to hardcode a single topic: an "elite investigative technology and security journalist," CVE/CVSS-aware audience framing, hacker-cliché visual bans. `shared/topicProfile.ts` pulls that out into a `topicDomain` request field, optional on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/ip-names`, `/api/chat` and `/api/notebooklm-dialogue`.
+
+- **Omit it (or send `"hacking and cybersecurity news"`) and nothing changes** — every prompt, persona and inline example reproduces the historical cybersecurity wording byte-for-byte. `server/topicProfile.test.ts` pins this: it's the guarantee that Blast Radius and CyberPipe's existing calls are unaffected.
+- **Send anything else** (`"personal finance and markets"`, `"true crime"`, `"space science"`, …) and every persona, audience description, and topic-drift guard is templated on it instead — real scriptwriting craft (curiosity-gap hooks, audience-calibrated jargon translation, grounded-specifics discipline, non-cliché visuals), not a find-and-replace of the word "cybersecurity." The two large inline JSON examples in `/api/plan` get a parallel generic pair (`genericDocumentaryExample`/`genericInfotainmentExample` in `server.ts`) rather than being templated in place — per the inline-example lesson above, a cyber-flavored example biases the model toward cyber content regardless of instructions, so a genuinely different example is safer than trying to generalize the cyber one live.
+- **Cybersecurity-specific quality rules stay cybersecurity-specific on purpose.** `server/timeline.ts`'s CVE/CVSS "don't rate it, show it" audit and the `terminal`/`diagram`/`headline` evidence-mix check are untouched — they're harmless no-ops outside a tech/security story, and generalizing them further is a separate, unscoped effort.
+- **Not covered:** `server/fallbackGenerators.ts` (the canned-content path used only when every LLM provider is down) is still cybersecurity-flavored regardless of `topicDomain` — a non-default topic under total provider outage gets the cyber fallback, flagged `isQuotaFallback` as always.
+
 ### Script generation runs in three passes
 
 Not one call, deliberately.
@@ -201,6 +210,7 @@ npm run render:fixture -- --720        # faster; --vertical for 9:16
 | `/api/plan` | `targetDurationSec` | The real target length. Drives scene count and mid-roll placement. |
 | `/api/script` | `channelBrandName` | Overrides `DEFAULT_CHANNEL_BRAND` for this script. |
 | `/api/script` | `runId`, `fresh` | Explicit checkpoint key; `fresh: true` discards any resume. |
+| `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package` | `topicDomain` | Optional free text (see "Topic domain" above). Omit for the cybersecurity default. Included in `/api/script`'s resume hash, so resuming with a different `topicDomain` starts a fresh run instead of splicing mismatched prompts into one journal. |
 
 ### For automated callers: strict mode
 

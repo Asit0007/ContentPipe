@@ -8,6 +8,8 @@ interface PlanStageProps {
   onProceedToScript: () => void;
   onUpdatePlan: (updated: VideoPlan) => void;
   onRegeneratePlan: () => void;
+  topicDomain: string;
+  onTopicDomainChange: (value: string) => void;
 }
 
 export const PlanStage: React.FC<PlanStageProps> = ({
@@ -16,6 +18,8 @@ export const PlanStage: React.FC<PlanStageProps> = ({
   onProceedToScript,
   onUpdatePlan,
   onRegeneratePlan,
+  topicDomain,
+  onTopicDomainChange,
 }) => {
   const [format, setFormat] = useState<'9:16' | '16:9'>(videoPlan?.format || '9:16');
   const [tone, setTone] = useState<VideoPlan['tone']>(videoPlan?.tone || 'Witty Tech & Sarcastic');
@@ -163,7 +167,20 @@ export const PlanStage: React.FC<PlanStageProps> = ({
                 ))}
               </select>
             </div>
-            <p className="mt-1 text-[10px] text-zinc-500">Changing duration, format or tone? Regenerate the blueprint to apply it.</p>
+            <p className="mt-1 text-[10px] text-zinc-500">Changing duration, format, tone or topic domain? Regenerate the blueprint to apply it.</p>
+          </div>
+
+          {/* Topic Domain */}
+          <div>
+            <span className="text-xs font-semibold text-zinc-400 block mb-2">Topic Domain</span>
+            <input
+              type="text"
+              id="plan-topic-domain-input"
+              value={topicDomain}
+              onChange={(e) => onTopicDomainChange(e.target.value)}
+              placeholder="Leave blank for the cybersecurity default"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-medium text-zinc-200 placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-orange-500"
+            />
           </div>
         </div>
       </div>

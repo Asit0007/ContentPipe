@@ -21,6 +21,8 @@ export default function App() {
   const [videoScript, setVideoScript] = useState<VideoScript | null>(null);
   // No preset brand: an unchosen IP falls back to DEFAULT_CHANNEL_BRAND everywhere it is read.
   const [activeIp, setActiveIp] = useState<IPBranding | null>(null);
+  // Empty means the server's default (Blast Radius / hacking & cybersecurity news) — see shared/topicProfile.ts.
+  const [topicDomain, setTopicDomain] = useState('');
 
   const [isIpModalOpen, setIsIpModalOpen] = useState(false);
   const [isGlobalGoogleExportOpen, setIsGlobalGoogleExportOpen] = useState(false);
@@ -42,6 +44,7 @@ export default function App() {
           messageText: msg.text,
           channelName: msg.channelName,
           ...(msg.sourceUrls?.length ? { sourceUrls: msg.sourceUrls } : {}),
+          ...(topicDomain.trim() ? { topicDomain: topicDomain.trim() } : {}),
         }),
       });
       const data = await response.json();
@@ -83,6 +86,7 @@ export default function App() {
             selectedAngle: selectedAngleTitle,
           },
           ...settings,
+          ...(topicDomain.trim() ? { topicDomain: topicDomain.trim() } : {}),
         }),
       });
       const data = await response.json();
@@ -111,6 +115,7 @@ export default function App() {
           videoPlan,
           researchData,
           channelBrandName: activeIp?.name || DEFAULT_CHANNEL_BRAND,
+          ...(topicDomain.trim() ? { topicDomain: topicDomain.trim() } : {}),
         }),
       });
       const data = await response.json();
@@ -163,6 +168,8 @@ export default function App() {
             onUpdateMessage={(msg) => setCurrentMessage(msg)}
             onStartResearch={(msg) => handleStartResearch(msg)}
             isLoading={isResearchLoading}
+            topicDomain={topicDomain}
+            onTopicDomainChange={setTopicDomain}
           />
         )}
 
@@ -182,6 +189,8 @@ export default function App() {
             onProceedToScript={handleProceedToScript}
             onUpdatePlan={(updated) => setVideoPlan(updated)}
             onRegeneratePlan={() => handleProceedToPlan()}
+            topicDomain={topicDomain}
+            onTopicDomainChange={setTopicDomain}
           />
         )}
 
@@ -195,6 +204,7 @@ export default function App() {
             plan={videoPlan}
             research={researchData}
             channelBrandName={activeIp?.name}
+            topicDomain={topicDomain}
           />
         )}
 
