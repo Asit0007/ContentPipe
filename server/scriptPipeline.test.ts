@@ -248,6 +248,56 @@ test('an analyst scene keeps the actPhase of the scene it interrupts, so it cann
   assert.equal(script.scenes[4].actPhase, 'Hook');
 });
 
+test('visualPrompt is built from character + background + scene + styleAnchor, not just scene + styleAnchor', async () => {
+  const script: any = { scenes: [{ sceneNumber: 1, visualPrompt: 'fallback' }] };
+  const ai: any = {
+    models: {
+      generateContent: async () => ({
+        text: JSON.stringify({
+          scenes: [
+            {
+              sceneNumber: 1,
+              visual: { character: 'A hooded figure, ANCHOR', background: 'a dim server room', scene: 'the figure types at a terminal', styleAnchor: 'noir, high contrast', negative: 'no cartoons' },
+              motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+              citations: [],
+            },
+          ],
+        }),
+        candidates: [{ finishReason: 'STOP' }],
+        usageMetadata: {},
+      }),
+    },
+  };
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.equal(result.scenes[0].visualPrompt, 'A hooded figure, ANCHOR a dim server room the figure types at a terminal noir, high contrast');
+  assert.doesNotMatch(result.scenes[0].visualPrompt, /no cartoons/, 'the negative prompt must not leak into the positive visualPrompt');
+});
+
+test('an empty-cast scene\'s "No characters in frame." sentinel is filtered out of visualPrompt', async () => {
+  const script: any = { scenes: [{ sceneNumber: 1, visualPrompt: 'fallback' }] };
+  const ai: any = {
+    models: {
+      generateContent: async () => ({
+        text: JSON.stringify({
+          scenes: [
+            {
+              sceneNumber: 1,
+              visual: { character: 'No characters in frame.', background: 'an empty data center at night', scene: 'rows of blinking server racks', styleAnchor: 'noir, high contrast', negative: 'no people' },
+              motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+              citations: [],
+            },
+          ],
+        }),
+        candidates: [{ finishReason: 'STOP' }],
+        usageMetadata: {},
+      }),
+    },
+  };
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.equal(result.scenes[0].visualPrompt, 'an empty data center at night rows of blinking server racks noir, high contrast');
+  assert.doesNotMatch(result.scenes[0].visualPrompt, /No characters in frame/);
+});
+
 test('a run resumed from the journal assigns the same speakers as the original', async () => {
   const first = await RunJournal.open('two-voice', 'h', { dir });
   const original = await runAll(fakeAi().ai, { journal: first }, LONG_PLAN);

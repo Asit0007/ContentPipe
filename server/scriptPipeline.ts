@@ -28,6 +28,11 @@ import { analystSceneNumbers, speakerFor } from '../shared/speakers';
 // at count 5 in production use.
 const NARRATIVE_SCENES_PER_CHUNK = 3;
 const VISUAL_DIRECTION_SCENES_PER_CHUNK = 6;
+// What the art-direction prompt tells the model to write into visual.character when no one
+// is in frame — filtered back out when building the flat visualPrompt (see applyVisualDirection),
+// so an empty-cast scene's fallback image prompt doesn't literally ask for the words "No characters
+// in frame." to appear in the picture.
+const NO_CHARACTERS_SENTINEL = 'No characters in frame.';
 // Midpoint of the 8-15s narration guidance given to generateSceneChunk,
 // used to translate a target duration into a target scene count.
 const AVG_SCENE_DURATION_SEC = 11.5;
@@ -208,7 +213,7 @@ ${JSON.stringify(
 For EVERY scene above return an object with:
 - "sceneNumber": matching integer
 - "visual":
-  - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "No characters in frame."
+  - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "${NO_CHARACTERS_SENTINEL}"
   - "background": ONLY the environment — location, architecture, depth, atmosphere, time of day. Mention no people.
   - "scene": the composed shot — how character and background combine, staging, focal point, foreground/midground/background layering, composition rule.
   - "styleAnchor": the style guide restated compactly. This string MUST be byte-identical across every scene.
@@ -292,8 +297,19 @@ export async function applyVisualDirection(ai: GoogleGenAI, script: any, researc
       ...(visual ? { visual } : {}),
       ...(d.motion ? { motion: d.motion } : {}),
       ...(Array.isArray(d.citations) ? { citations: d.citations } : {}),
-      // Keep the flat prompt consistent with the layered one.
-      visualPrompt: visual ? [visual.scene, visual.styleAnchor].filter(Boolean).join(' ') : s.visualPrompt,
+      // Keep the flat prompt consistent with the layered one: subject, then setting, then
+      // composition, then style — the same information the structured `visual` object carries,
+      // just concatenated. Previously this dropped `character` and `background` entirely, which
+      // is where a character's verbatim promptAnchor and the location description live — any
+      // consumer reading only `visualPrompt` (CLAUDE.md calls it "the always-present fallback")
+      // got none of the consistency the production bible and styleAnchor enforcement exist for.
+      // `negative` stays out on purpose: it belongs in an image API's separate negative-prompt
+      // field, not concatenated into the positive prompt.
+      visualPrompt: visual
+        ? [visual.character, visual.background, visual.scene, visual.styleAnchor]
+            .filter((part) => part && part !== NO_CHARACTERS_SENTINEL)
+            .join(' ')
+        : s.visualPrompt,
     };
   });
   const covered = script.scenes.filter((s: any) => s.visual).length;
@@ -389,7 +405,7 @@ For EACH scene, you MUST craft:
 4. "narration": Spoken-word voiceover script. ${narrationStyle} (approx 22-38 words per scene${analystScenes.length ? '; analyst scenes follow VOICES above' : ''}).
 5. "durationEst": Realistic speaking duration in seconds (8 to 15s${analystScenes.length ? '; 5 to 9s for an analyst scene' : ''}).
 6. "cinematography": Precise visual director cues (camera framing e.g., 'Slow dynamic push-in on macro CRT monitor with anamorphic lens flare and volumetric neon haze').
-7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt — it must equal the concatenation of visual.scene + visual.styleAnchor below.
+7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt, used only if art direction fails for this scene — once art direction succeeds it is overwritten with the concatenation of visual.character + visual.background + visual.scene + visual.styleAnchor below, so write this as your own best single-string guess at that same thing.
 8. "visualType": ${
     isDocumentaryTone
       ? 'One of "headline", "terminal", "diagram", "character". Use "terminal", "diagram" or "headline" (real interfaces, architecture, source captures) for at least half the scenes and "character" sparingly; never use "meme" or "cyberpunk".'

@@ -205,6 +205,10 @@ The browser UI always gets *something* — on quota exhaustion the endpoints fal
 
 The mechanism is `promptAnchor`: one dense clause per character, generated once in pass 1, then pasted **verbatim** into every scene's `visual.character`. Rewording it between scenes is what makes a character's face drift across generated images. Same idea for `styleAnchor`, which the server forces to be byte-identical across all scenes.
 
+**Fixed 2026-09-22: the flat `visualPrompt` fallback used to drop `character` and `background` entirely**, building itself from just `scene + styleAnchor`. Since `visualPrompt` is the field every non-layered consumer reads, that silently discarded the verbatim `promptAnchor` — a character could be locked in the bible and still visually drift in anything using the flat prompt. It now concatenates `character + background + scene + styleAnchor` (`negative` stays out on purpose — that belongs in an image API's separate negative-prompt field). See `applyVisualDirection` in `server/scriptPipeline.ts`.
+
+**Not yet closed**, from the same review: (1) `promptAnchor` reuse is prompt-requested ("copied word for word") but never code-verified the way `styleAnchor` is; (2) a background/location that recurs in a later, different art-direction chunk has no consistency mechanism at all — each chunk is generated blind to every other chunk's exact wording; (3) shot type, camera move and transitions have no whole-script rhythm awareness, only a loose per-chunk guideline for documentary tone. See CLAUDE.md.
+
 ---
 
 ## Exports
@@ -302,7 +306,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 245 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 247 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
