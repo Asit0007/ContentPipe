@@ -4,6 +4,11 @@ Turns a news story and its source links into a production-ready video brief: res
 
 Text generation runs through a **multi-provider LLM chain** — DeepSeek first, then Grok, the free-tier providers, and Gemini last (see [Model configuration](#model-configuration)). Narration audio uses Gemini TTS and scene images use Gemini → Pollinations. Node + Express serving a Vite/React front end from one process.
 
+> Related, outside this repo: a separate set of Claude Skills for openly-AI influencer characters
+> reuses this repo's consistency lessons: a verbatim character anchor that is checked rather than just
+> requested, a style anchor held identical, canonical recurring locations, and a figures-must-be-sourced
+> audit. Different content, same rules; nothing from them is used here.
+
 ---
 
 ## Quick start
