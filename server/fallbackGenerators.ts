@@ -362,11 +362,10 @@ export function generateFallbackScript(videoPlan: any, researchData: any, channe
           infographic: {
             type: 'threat_scorecard',
             title: 'JFROG ARTIFACTORY ZERO-LOGIN VULNERABILITY',
-            badge: 'CVSS 9.8 CRITICAL',
+            badge: 'NO LOGIN NEEDED',
             badgeColor: '#ef4444',
             summary: 'Unauthenticated Remote Token Generation Flaw in Default Setup',
             metrics: [
-              { label: 'CVSS Severity', value: '9.8 / 10', subtext: 'Critical', color: '#ef4444' },
               { label: 'Auth Required', value: 'None (0-Click)', subtext: 'Unauthenticated', color: '#f97316' },
               { label: 'Impact Scope', value: 'Admin God-Mode', subtext: 'Token Forgery', color: '#dc2626' },
               { label: 'Wild Exploits', value: 'Active', subtext: 'Weaponized', color: '#ef4444' }
@@ -775,7 +774,7 @@ export function generateFallbackImage(prompt: string, aspectRatio: string = '16:
       <circle cx="-218" cy="-123" r="5" fill="#eab308" />
       <circle cx="-201" cy="-123" r="5" fill="#22c55e" />
       <text x="-170" y="-119" fill="#fb923c" font-family="monospace" font-size="11" font-weight="bold">exploit_terminal://poc.sh</text>
-      <text x="210" y="-119" fill="#71717a" font-family="monospace" font-size="10" text-anchor="end">BASH • CVSS 9.8</text>
+      <text x="210" y="-119" fill="#71717a" font-family="monospace" font-size="10" text-anchor="end">BASH</text>
 
       <text x="-235" y="-80" fill="#a1a1aa" font-family="monospace" font-size="12"># 1. Forge signed token without credentials</text>
       <text x="-235" y="-55" fill="#38bdf8" font-family="monospace" font-size="12">curl -X POST "https://artifactory.internal/api/token" \\</text>
@@ -793,8 +792,8 @@ export function generateFallbackImage(prompt: string, aspectRatio: string = '16:
     <g transform="translate(${width * 0.5}, ${height * (is916 ? 0.46 : 0.44)})">
       <rect x="-240" y="-130" width="480" height="260" rx="18" fill="#140707" stroke="#ef4444" stroke-width="2.5" />
       <rect x="-215" y="-105" width="130" height="80" rx="12" fill="#2d0f0f" stroke="#dc2626" stroke-width="1.5" />
-      <text x="-150" y="-75" fill="#fca5a5" font-family="sans-serif" font-size="10" font-weight="bold" text-anchor="middle">CVSS SCORE</text>
-      <text x="-150" y="-40" fill="#ef4444" font-family="sans-serif" font-size="28" font-weight="extrabold" text-anchor="middle">9.8</text>
+      <text x="-150" y="-75" fill="#fca5a5" font-family="sans-serif" font-size="10" font-weight="bold" text-anchor="middle">LOGIN NEEDED</text>
+      <text x="-150" y="-40" fill="#ef4444" font-family="sans-serif" font-size="28" font-weight="extrabold" text-anchor="middle">NONE</text>
 
       <g transform="translate(-60, -95)">
         <text x="0" y="0" fill="#ffffff" font-family="sans-serif" font-size="15" font-weight="bold">CRITICAL AUTH BYPASS</text>

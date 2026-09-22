@@ -378,7 +378,9 @@ CRITICAL REQUIREMENT:
 The script narration, cinematography, visual prompts, and onScreenText for EVERY SINGLE SCENE must be 100% focused on this specific topic: "${videoPlan.title || researchData?.topicTitle || 'the story'}".
 Do NOT output generic text about unrelated topics.
 
-FACTUAL DISCIPLINE: every figure, date, CVE id, version number and quoted comment in the narration must trace to the research dossier. The dossier lists what was actually retrieved under "retrievedSources" and per-fact attribution under "factCitations". Do not introduce specifics the dossier does not contain.
+FACTUAL DISCIPLINE: every figure, date, version number and quoted comment in the narration must trace to the research dossier. The dossier lists what was actually retrieved under "retrievedSources" and per-fact attribution under "factCitations". Do not introduce specifics the dossier does not contain.
+
+SHOW THE DAMAGE, DON'T RATE IT: the viewer is curious but not technical, and a CVE id or a CVSS score means nothing to them. Keep CVE ids, CVSS scores and severity ratings (a score out of 10, "critical severity") out of the narration, onScreenText and infographic. Let the viewer feel how serious it was through what happened and what could have happened: what an attacker could do with it, who and how many were exposed, how long it went unnoticed, how close it came, and what it cost to clean up — told only from what the dossier supports.
 
 The production bible and style guide are already fixed (given above). Write to them.
 
@@ -414,15 +416,15 @@ For EACH scene, you MUST craft:
 9. "onScreenText": 3 to 5 high-impact kinetic typography words for the viewer's eye.
 10. "soundEffect": Specific audio/SFX cue (e.g. "[SFX: Deep sub-bass riser + rapid keyboard clatter]").
 11. "retentionNote": Psychological reason why this beat prevents viewer dropoff.
-12. "infographic": A structured high-tech infographic object detailing technical facts, architecture steps, CVSS scorecards, terminal commands, or benchmark metrics:
+12. "infographic": A structured high-tech infographic object showing how the attack worked or what it reached — architecture steps, an impact scorecard (what an attacker could do, who was exposed, for how long), terminal commands, or benchmark metrics:
     {
       "type": "architecture" | "threat_scorecard" | "terminal_payload" | "benchmark_chart" | "sentiment_gauge",
       "title": "Clear uppercase headline for the diagram or scorecard",
-      "badge": "Short badge tag (e.g. CVSS 9.8 or EXPLOIT CHAIN)",
+      "badge": "Short badge tag naming the consequence (e.g. NO LOGIN NEEDED or EXPLOIT CHAIN)",
       "badgeColor": "#f97316" or "#ef4444" or "#22c55e",
-      "summary": "1 sentence technical summary of this visual infographic",
+      "summary": "1 sentence plain-language summary of this visual infographic",
       "steps": [{"label": "Step 1", "detail": "...", "status": "active" | "vulnerable" | "secure"}],
-      "metrics": [{"label": "Metric", "value": "9.8", "subtext": "Critical", "color": "#ef4444"}]
+      "metrics": [{"label": "What it measures", "value": "a figure or fact from the dossier", "subtext": "what that meant for the people affected", "color": "#ef4444"}]
     }
 
 Return strictly a JSON object: { "scenes": [ ...exactly ${sceneCount} scene objects as described above... ] }`;

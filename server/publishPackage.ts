@@ -3,7 +3,7 @@ import { TEXT_MODELS } from './gemini';
 import { generateJson } from './llm/chain';
 import { publishPackageSchema } from './schemas';
 import { orFallback } from './strict';
-import { analyzeScript, dossierSpecifics, extractSpecifics, isSupportedSpecific, formatTimestamp, type Chapter } from './timeline';
+import { analyzeScript, dossierSpecifics, extractSpecifics, isSupportedSpecific, formatTimestamp, SEVERITY_RATING_RE, type Chapter } from './timeline';
 
 /**
  * Publish package (spec Prompt 6): titles, thumbnail concepts, description, tags.
@@ -31,7 +31,7 @@ const BANNED_TITLE_PHRASES = [
   "you won't believe", 'you wont believe', 'shocking', 'gone wrong', 'insane', 'you need to see', 'must watch', 'this changes everything',
   'hackers hate', 'destroyed', 'will blow your mind',
 ];
-/** Uppercase runs up to this long read as acronyms (CVE, DNS, SSH, XZ, NGINX); longer ones read as shouting. */
+/** Uppercase runs up to this long read as acronyms (DNS, SSH, XZ, NGINX); longer ones read as shouting. */
 const MAX_ACRONYM_LETTERS = 5;
 const TITLE_STOPWORDS = new Set(['the', 'and', 'for', 'with', 'into', 'from', 'that', 'this', 'how', 'why', 'inside', 'about', 'what']);
 
@@ -54,8 +54,9 @@ export function lintTitle(title: string, opts: { topicTitle?: string; research?:
   const shouting = (t.match(/[A-Za-z][A-Za-z0-9]*/g) || []).filter((w) => /[A-Z]{2}/.test(w) && w === w.toUpperCase() && /[A-Z]/.test(w) && w.replace(/[^A-Z]/g, '').length > MAX_ACRONYM_LETTERS);
   if (shouting.length) add('all-caps-word', 'warn', `All-caps word(s) ${shouting.map((w) => `"${w}"`).join(', ')}; fine only if it is a proper noun or acronym.`);
 
-  const stray = (t.match(/\[[^\]]*\]/g) || []).filter((b) => !/^\[CVE-\d{4}-\d{4,7}\]$/.test(b));
-  if (stray.length) add('brackets', 'warn', `Brackets are reserved for [CVE-XXXX-XXXX]; found ${stray.join(' ')}.`);
+  const brackets = t.match(/\[[^\]]*\]/g) || [];
+  if (brackets.length) add('brackets', 'warn', `Titles carry no brackets; found ${brackets.join(' ')}.`);
+  if (SEVERITY_RATING_RE.test(t)) add('severity-rating', 'error', 'Names a CVE id or CVSS score, which means nothing to a non-technical viewer; lead with what happened instead (tags may carry the id).');
 
   // Numbers, ids and versions in a title are claims: they must come from the dossier.
   if (opts.research && Object.keys(opts.research).length) {
@@ -86,6 +87,7 @@ export function lintThumbnail(t: { textOverlay: string; imagePrompt: string }): 
   if (words.length < 2 || words.length > 4) issues.push({ rule: 'overlay-word-count', severity: 'warn', message: `Overlay has ${words.length} word(s); the brief wants 2-4.` });
   if (overlay.length > MAX_OVERLAY_CHARS) issues.push({ rule: 'overlay-too-long', severity: 'warn', message: `${overlay.length} characters will not read at 320x180 (max ~${MAX_OVERLAY_CHARS}).` });
   if (/\bhacked\b/i.test(overlay)) issues.push({ rule: 'generic-hacked-text', severity: 'error', message: 'Generic "HACKED" overlay text is on the brief\'s avoid list.' });
+  if (SEVERITY_RATING_RE.test(overlay)) issues.push({ rule: 'severity-rating', severity: 'error', message: 'Overlay names a CVE id or CVSS score; show the consequence instead.' });
 
   const prompt = String(t.imagePrompt || '');
   const lower = prompt.toLowerCase();
@@ -201,10 +203,12 @@ ${beats.join('\n')}
 ${style}
 </video>
 
-FACT DISCIPLINE: every figure, date, CVE id, version and entity name in any title, thumbnail text or description copy must appear in <facts>. If a detail is not there, leave it out.
+FACT DISCIPLINE: every figure, date, version and entity name in any title, thumbnail text or description copy must appear in <facts>. If a detail is not there, leave it out.
+
+AUDIENCE: curious viewers who are not technical. A CVE id or a CVSS score means nothing to them, so titles, thumbnail text and description copy leave both out and convey the stakes instead: what happened, who was exposed, what an attacker could do. Tags may include the CVE id, because some people search for it.
 
 Produce:
-1. "titles": exactly 5, one per structure, each at most 70 characters (45-60 ideal), keyword first, no ALL-CAPS words except acronyms and proper nouns, no emoji, no exclamation marks, no "You won't believe" / "SHOCKING" / "GONE WRONG"; brackets only as [CVE-XXXX-XXXX].
+1. "titles": exactly 5, one per structure, each at most 70 characters (45-60 ideal), keyword first, no ALL-CAPS words except acronyms and proper nouns, no emoji, no exclamation marks, no brackets, no "You won't believe" / "SHOCKING" / "GONE WRONG".
    Structures: "how_entity_verb_object" = "How [Entity] [Verb] [Object] — [Consequence]"; "truth_about" = "The [Adjective] Truth About [Topic]"; "inside_event" = "Inside [Entity]'s [Event]: [Technical Detail]"; "why_concept_is_stakes" = "Why [Technical Concept] Is [Stakes]"; "number_things_got_wrong" = "[Number] [Things] [Entity] Got Wrong About [Topic]" (only if the number is in <facts>; otherwise still use this structure without a specific number). For each: "angle" (one sentence on the CTR angle) and "bestThumbnail" (A, B or C).
 2. "thumbnails": exactly 3 concepts. A = Technical (the attack chain or architecture), B = Consequence (what broke, who was affected), C = Curiosity gap (an unresolved tension or counter-intuitive fact). For each: "variant", "concept" (2-3 word name), "imagePrompt" (ready to paste into an image model; include the visual style above; a single subject; dark background with a rim light), "textOverlay" (2-4 words, all caps, readable at 320x180), "layout" (subject on one third, text on the opposite third), "rationale" (one sentence). Never use red arrows, shocked faces, skulls, hoodies, Matrix code rain, generic "HACKED" text, padlock clichés, or cluttered collages.
 3. "descriptionHook": the opening of the description — 3-4 sentences, about 60-90 words. The first two lines appear in search results, so they must state the concrete claim; no hype.

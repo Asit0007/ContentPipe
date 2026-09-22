@@ -23,7 +23,7 @@ const errorsOf = <T extends { severity: string }>(issues: T[]) => issues.filter(
 // ------------------------------------------------------------------------------------------ title lint
 
 test('a clean, front-loaded, in-band title has no errors or warnings', () => {
-  const t = 'xz Backdoor: How CVE-2024-3094 Reached the SSH Trust Chain';
+  const t = 'xz Backdoor: How One Account Nearly Reached SSH Servers';
   assert.ok(t.length >= 45 && t.length <= 60, String(t.length));
   assert.deepEqual(lintTitle(t, { research: RESEARCH }).filter((i) => i.severity !== 'info'), []);
 });
@@ -47,15 +47,25 @@ test('ALL-CAPS: acronyms up to 5 letters pass; longer shouting words are flagged
   assert.ok(rules(lintTitle('Inside the CATASTROPHIC xz Breach and Its Fallout')).includes('all-caps-word'));
 });
 
-test('brackets are reserved for [CVE-XXXX-XXXX]', () => {
-  assert.ok(!rules(lintTitle('[CVE-2024-3094] The xz Backdoor, Explained Step by Step')).includes('brackets'));
+test('titles carry no brackets', () => {
   assert.ok(rules(lintTitle('The xz Backdoor [EXPLAINED] Step by Step in Detail')).includes('brackets'));
+  assert.ok(!rules(lintTitle('The xz Backdoor, Explained Step by Step in Detail')).includes('brackets'));
+});
+
+test('a CVE id or CVSS score in a title is an ERROR even when the dossier has it: the audience is not technical', () => {
+  for (const t of [
+    'CVE-2024-3094: What the xz Backdoor Actually Did',
+    '[CVE-2024-3094] The xz Backdoor, Explained Step by Step',
+    'The xz Backdoor Scored a Perfect 10 on CVSS',
+    'Why Two CVEs in xz Nearly Reached Every SSH Server',
+  ]) assert.ok(rules(errorsOf(lintTitle(t, { research: RESEARCH }))).includes('severity-rating'), t);
+  assert.ok(!rules(lintTitle('How Cvent-Style Phishing Hit the xz Maintainers Hard')).includes('severity-rating'));
 });
 
 test('figures in a title must come from the dossier — an invented number is an ERROR', () => {
   const bad = lintTitle('5 Million Servers at Risk From the xz Backdoor', { research: RESEARCH });
   assert.ok(rules(errorsOf(bad)).includes('unsupported-specific'));
-  const ok = lintTitle('CVE-2024-3094: What the xz Backdoor Actually Did', { research: RESEARCH });
+  const ok = lintTitle('What the xz Backdoor in 5.6.1 Actually Did to SSH', { research: RESEARCH });
   assert.ok(!rules(ok).includes('unsupported-specific'));
 });
 
@@ -80,6 +90,8 @@ test('thumbnail overlay: 2-4 words, readable length, no generic HACKED', () => {
   assert.ok(rules(lintThumbnail({ textOverlay: 'HACKED', imagePrompt: 'x' })).includes('generic-hacked-text'));
   const long = lintThumbnail({ textOverlay: 'THE ENTIRE INTERNET IS ON FIRE', imagePrompt: 'x' });
   assert.ok(rules(long).includes('overlay-word-count') && rules(long).includes('overlay-too-long'));
+  assert.ok(rules(errorsOf(lintThumbnail({ textOverlay: 'CVSS 9.8', imagePrompt: 'x' }))).includes('severity-rating'));
+  assert.ok(rules(errorsOf(lintThumbnail({ textOverlay: 'CVE-2024-3094', imagePrompt: 'x' }))).includes('severity-rating'));
 });
 
 test('thumbnail prompt: banned motifs are flagged, but naming them in a NEGATIVE clause is fine', () => {
@@ -132,7 +144,7 @@ const perDay = () =>
   Object.assign(new Error(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'quota, limit: 20', details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] }] } })), { status: 429 });
 
 const goodTitles = [
-  { title: 'xz Backdoor: How CVE-2024-3094 Reached the SSH Trust Chain', structure: 'how_entity_verb_object', angle: 'a', bestThumbnail: 'A' },
+  { title: 'xz Backdoor: How One Account Nearly Reached SSH Servers', structure: 'how_entity_verb_object', angle: 'a', bestThumbnail: 'A' },
   { title: 'The Quiet Truth About the xz Backdoor and Open-Source Trust', structure: 'truth_about', angle: 'b', bestThumbnail: 'B' },
   { title: 'Inside the xz Backdoor: The ifunc Hook That Hid in Plain Sight', structure: 'inside_event', angle: 'c', bestThumbnail: 'C' },
   { title: 'Why the xz Backdoor Is a Warning About Maintainer Burnout', structure: 'why_concept_is_stakes', angle: 'd', bestThumbnail: 'B' },

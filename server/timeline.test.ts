@@ -387,3 +387,19 @@ test('audit: an analyst scene that reads like narration is flagged; short reacti
   assert.equal(find(c, 'analyst-scene-too-long').severity, 'warn');
   assert.equal(find(auditScript({ scenes: scenes(4) }), 'analyst-scene-too-long'), undefined, 'a script with no speakers (older scripts) is unaffected');
 });
+
+test('audit: a CVE id or CVSS score spoken or shown is flagged — the audience is not technical; plain narration is not', () => {
+  const c = auditScript({
+    scenes: [
+      scene(1, { narration: 'It was tracked as CVE-2024-3094 and nobody outside the project noticed.' }),
+      scene(2, { narration: 'Anyone on the internet could log in as the administrator, no password needed.' }),
+      scene(3, { onScreenText: 'CVSS 10.0' }),
+      scene(4, { infographic: { type: 'threat_scorecard', title: 'WHO WAS EXPOSED', badge: 'NO LOGIN NEEDED', metrics: [{ label: 'Known CVEs', value: '2' }] } }),
+      scene(5, { narration: 'The advisory went out on a Friday — the cvent of the season, some joked.' }),
+    ],
+  });
+  const flagged = find(c, 'severity-rating-shown');
+  assert.deepEqual(flagged.sceneNumbers, [1, 3, 4]);
+  assert.equal(flagged.severity, 'warn');
+  assert.equal(find(auditScript({ scenes: scenes(4) }), 'severity-rating-shown'), undefined);
+});

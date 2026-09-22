@@ -330,6 +330,13 @@ export function onScreenTexts(scene: any): string[] {
 
 // ---- audit ---------------------------------------------------------------------------------------------------
 
+/**
+ * A severity rating put in front of the viewer: the word CVE, a CVE id, or CVSS. The audience is curious but not
+ * technical, so a video shows how bad a flaw was (what it let an attacker do, who it reached) instead of rating it.
+ * The research dossier still records CVE ids — they are facts, and tags may carry them for search.
+ */
+export const SEVERITY_RATING_RE = new RegExp(String.raw`\bCVE(?:s\b|[-${DASHES}]\d{4}[-${DASHES}]\d{4,7}(?!\d)|\b)|\bCVSS\b`, 'i');
+
 export function auditScript(script: any, opts: { requestedDurationSec?: number; research?: any } = {}): QualityCheck[] {
   const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
   const checks: QualityCheck[] = [];
@@ -403,6 +410,12 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
   const longReactions = scenes.flatMap((s, i) => (s.speaker === 'analyst' && wordsOf(s) > MAX_ANALYST_WORDS ? [sn(i)] : []));
   if (longReactions.length) {
     checks.push({ id: 'analyst-scene-too-long', severity: 'warn', message: `Analyst scenes are meant to be short reactions (${MAX_ANALYST_WORDS} words at most); these read like narration in the second voice.`, sceneNumbers: longReactions });
+  }
+
+  // The prompt keeps CVE ids and CVSS scores out of the video; this catches a model that ignores it.
+  const rated = scenes.flatMap((s, i) => ([String(s.narration || ''), ...onScreenTexts(s)].some((t) => SEVERITY_RATING_RE.test(t)) ? [sn(i)] : []));
+  if (rated.length) {
+    checks.push({ id: 'severity-rating-shown', severity: 'warn', message: 'A CVE id or CVSS score is spoken or shown. The audience is not technical: show what the flaw let an attacker do and who it reached instead of rating it.', sceneNumbers: rated });
   }
 
   // Evidence mix: the spec bans a slideshow of AI stills.
