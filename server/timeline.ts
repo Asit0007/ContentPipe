@@ -68,6 +68,9 @@ const MAX_SCENE_WPM = 190;
 /** An analyst scene is a short reaction (the prompt asks for 12-25 words, so 30 leaves slack); a longer one is narration read in the wrong voice. Live check 2026-09-21: real reactions ran 27-33 words. */
 const MAX_ANALYST_WORDS = 30;
 const MIN_EVIDENCE_SCENE_SHARE = 0.4;
+/** One environment behind more than this share of the scenes (and at least MIN_SCENES_IN_ONE_PLACE of them) is a slideshow of one picture. */
+const MAX_PLACE_SHARE = 0.4;
+const MIN_SCENES_IN_ONE_PLACE = 4;
 // 0.85 of the old 540 s default target is 459 s — under MIDROLL_MIN_VIDEO_SEC, so a script the audit
 // passed as "within tolerance" could still be too short for mid-roll ads. 0.92 of the 585 s default is 538 s.
 const DURATION_SHORTFALL_ERROR_RATIO = 0.92;
@@ -441,6 +444,24 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
   const labelled = scenes.flatMap((s, i) => ([String(s.narration || ''), ...onScreenTexts(s)].some((t) => SEVERITY_LABEL_RE.test(t)) ? [sn(i)] : []));
   if (labelled.length) {
     checks.push({ id: 'severity-label-shown', severity: 'warn', message: 'A severity label ("critical risk", "high severity", a score out of 10) is spoken or shown. Rating a flaw means little to a non-technical viewer: show what it let an attacker do and who it reached instead.', sceneNumbers: labelled });
+  }
+
+  // One environment behind most of the video is the same picture again and again. The art pass asks for a new place
+  // per beat; this catches one that ignored it (a live run put one "split-screen terminal | void" behind 7 of 10
+  // scenes). A scene's place is its locationId, or its background text when an older script has no id.
+  const placeScenes = new Map<string, number[]>();
+  scenes.forEach((s, i) => {
+    const place = String(s.locationId || s.visual?.background || '').trim().toLowerCase();
+    if (place) placeScenes.set(place, [...(placeScenes.get(place) || []), sn(i)]);
+  });
+  const [crowdedPlace, crowdedScenes] = [...placeScenes.entries()].sort((a, b) => b[1].length - a[1].length)[0] ?? [];
+  if (crowdedScenes && crowdedScenes.length >= MIN_SCENES_IN_ONE_PLACE && crowdedScenes.length / scenes.length > MAX_PLACE_SHARE) {
+    checks.push({
+      id: 'background-monotony',
+      severity: 'warn',
+      message: `One environment ("${String(crowdedPlace).slice(0, 60)}") fills ${crowdedScenes.length} of ${scenes.length} scenes, so the video shows the same picture over and over. Give new beats new places.`,
+      sceneNumbers: crowdedScenes,
+    });
   }
 
   // Evidence mix: the spec bans a slideshow of AI stills.

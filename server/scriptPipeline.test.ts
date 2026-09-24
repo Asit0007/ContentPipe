@@ -522,6 +522,45 @@ test('priorVisualContext is empty for the opening chunk and carries the tally, l
   assert.match(artPrompts[7], /"server-room": a server room/);
 });
 
+// Live run: 7 of 10 scenes were set in one "split-screen terminal | void" canvas. The prompt never said a diagram is not a
+// place, never limited reuse, and later chunks were not told how often a place had been used.
+const monotonyPerScene = (usedIn: number[]) => (n: number) => ({
+  sceneNumber: n,
+  visual: { character: 'No characters in frame.', background: usedIn.includes(n) ? 'a digital void' : `bg-${n}`, scene: `scene ${n}`, styleAnchor: 'STYLE', negative: 'n' },
+  motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+  citations: [],
+  charactersInFrame: [],
+  locationId: usedIn.includes(n) ? 'digital-void' : `loc-${n}`,
+});
+
+test('the art prompt keeps composition out of "background", says a diagram is not a place, and limits how often one place recurs', async () => {
+  const { ai, artPrompts } = fakeArtAi(monotonyPerScene([]));
+  await applyVisualDirection(ai, scriptWithScenes(6), RESEARCH, {});
+  const p = artPrompts[1];
+  assert.match(p, /no composition, panel split, overlay or on-screen text \(those belong in "scene"\)/);
+  assert.match(p, /A diagram, timeline or data graph is not a place, so set it in one/);
+  assert.match(p, /never a generic void/);
+  assert.match(p, /one place for at most 2 scenes in a row, and for no more than about a quarter of all the scenes/);
+});
+
+test('a later chunk is shown how often each place has been used, and which ones are spent', async () => {
+  const script = scriptWithScenes(12); // 2 art chunks: 1-6, 7-12
+  const { ai, artPrompts } = fakeArtAi(monotonyPerScene([1, 2, 3, 4]));
+  await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.doesNotMatch(artPrompts[1], /used in \d+ scene/, 'the opening chunk has no history to show');
+  assert.match(artPrompts[7], /"digital-void": a digital void \(used in 4 scenes so far: #1, #2, #3, #4\)/);
+  assert.match(artPrompts[7], /"loc-5": bg-5 \(used in 1 scene so far: #5\)/, 'singular for one scene');
+  assert.match(artPrompts[7], /Used in 3 or more scenes already, so treat as used up unless the story truly goes back there: "digital-void"\. Set the next scenes somewhere new\./);
+  assert.doesNotMatch(artPrompts[7], /used up unless[^\n]*"loc-5"/, 'a place used once is not spent');
+});
+
+test('no place is called spent until it has been used three times', async () => {
+  const { ai, artPrompts } = fakeArtAi(monotonyPerScene([1, 2]));
+  await applyVisualDirection(ai, scriptWithScenes(12), RESEARCH, {});
+  assert.match(artPrompts[7], /"digital-void": a digital void \(used in 2 scenes so far: #1, #2\)/);
+  assert.doesNotMatch(artPrompts[7], /treat as used up/);
+});
+
 test('the documentary shot-rhythm hint only appears under Deep Dive Documentary tone', async () => {
   const perScene = (n: number) => ({
     sceneNumber: n,

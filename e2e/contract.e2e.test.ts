@@ -321,7 +321,9 @@ test('CVE SCRUB: a CVE id the model wrote into narration, on-screen text or an i
   await stopApp();
   reset({ cveInScene1: true });
   await startApp();
-  const r = await post('/api/script', SCRIPT_REQ, true);
+  // Its own run id, forced fresh: SCRIPT_REQ is shared with earlier tests, and a finished journal one of them left behind
+  // (its server killed before the delivered journal was dropped) would be served here instead of generating this script.
+  const r = await post('/api/script', { ...SCRIPT_REQ, runId: 'cve-scrub', fresh: true }, true);
   assert.equal(r.status, 200);
   assert.ok(!/CVE-\d{4}-\d+/.test(JSON.stringify(r.body.scenes)), 'no CVE id anywhere in the delivered scenes');
   const s1 = r.body.scenes[0];

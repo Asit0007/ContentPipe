@@ -216,14 +216,14 @@ For EVERY scene above return an object with:
 - "sceneNumber": matching integer
 - "visual":
   - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "${NO_CHARACTERS_SENTINEL}"
-  - "background": ONLY the environment — location, architecture, depth, atmosphere, time of day. Mention no people. If this scene returns to a place already established in PRIOR VISUAL CONTEXT above, match that wording as closely as you can (the code enforces it verbatim regardless — matching now avoids a jarring rewrite when it does).
+  - "background": ONLY the environment — the place the camera is in: location, architecture, depth, atmosphere, time of day. Mention no people, and no composition, panel split, overlay or on-screen text (those belong in "scene"). If this scene returns to a place already established in PRIOR VISUAL CONTEXT above, match that wording as closely as you can (the code enforces it verbatim regardless — matching now avoids a jarring rewrite when it does).
   - "scene": the composed shot — how character and background combine, staging, focal point, foreground/midground/background layering, composition rule.
   - "styleAnchor": the style guide restated compactly. This string MUST be byte-identical across every scene.
   - "negative": what must not appear in this image.
 - "motion": "shotType", "cameraMove", "subjectMotion", "durationSec" (match durationEst), "easing", "transitionOut", and "motionPrompt" — one ready-to-paste sentence for an image-to-video model. Vary "shotType" and "cameraMove" across this chunk and against PRIOR VISUAL CONTEXT's recent shots below — repeating the same combination scene after scene reads as one long take, not a cut cadence.
 - "citations": source ids backing the factual claims in that scene's narration; [] for purely rhetorical scenes. Never invent an id that is not listed above.
 - "charactersInFrame": the bible "id" of every character actually in frame in this scene (their promptAnchor is already folded into "character" above) — [] if nobody is in frame. Only use ids from CHARACTER BIBLE above; never invent one.
-- "locationId": a short, lowercase, hyphenated slug for this scene's environment (e.g. "server-room", "conference-hallway") — reused byte-for-byte whenever the story returns to the same place. Even a one-off location that never recurs gets its own slug; never leave this blank.
+- "locationId": a short, lowercase, hyphenated slug for the PLACE this scene is set in (e.g. "server-room", "conference-hallway"), reused byte-for-byte only when the story genuinely goes back to that place. A diagram, timeline or data graph is not a place, so set it in one: a whiteboard in a briefing room, a wall display in a control room, a printed blueprint on a desk, a tablet in someone's hand, each with its own slug, never a generic void. Viewers watch this as a sequence of pictures, and one picture behind most of the video reads as a slideshow, so give each new beat a new environment: one place for at most 2 scenes in a row, and for no more than about a quarter of all the scenes. Even a one-off location that never recurs gets its own slug; never leave this blank.
 
 Return exactly ${chunkScenes.length} entries, one per scene above, in order.`;
 
@@ -287,6 +287,8 @@ export function normalizeForAnchorMatch(text: string): string {
 }
 
 const PRIOR_SHOT_WINDOW = 6;
+/** A place used in this many scenes is shown to later chunks as spent. */
+const PLACE_USED_UP_AT = 3;
 
 /**
  * Gaps "recurring backgrounds" and "cut/shot rhythm" (CLAUDE.md "Visual consistency"): gives each
@@ -304,6 +306,7 @@ function buildPriorVisualContext(processedScenes: any[], directionsSoFar: any[],
 
   const visualTypeCounts: Record<string, number> = {};
   const locationsSeen = new Map<string, string>(); // locationId -> canonical background text
+  const locationScenes = new Map<string, number[]>(); // locationId -> the scenes set there so far
   const recentShots: string[] = [];
 
   for (const s of processedScenes) {
@@ -311,6 +314,7 @@ function buildPriorVisualContext(processedScenes: any[], directionsSoFar: any[],
     const d = byNumber.get(Number(s.sceneNumber));
     if (!d) continue;
     const loc = normalizeLocationId(d.locationId);
+    if (loc) locationScenes.set(loc, [...(locationScenes.get(loc) || []), Number(s.sceneNumber)]);
     if (loc && d.visual?.background && !locationsSeen.has(loc)) locationsSeen.set(loc, d.visual.background);
     if (d.motion?.shotType || d.motion?.cameraMove) {
       recentShots.push(`#${s.sceneNumber} ${d.motion.shotType || '?'}/${d.motion.cameraMove || '?'}`);
@@ -318,9 +322,19 @@ function buildPriorVisualContext(processedScenes: any[], directionsSoFar: any[],
   }
 
   const tally = Object.entries(visualTypeCounts).map(([k, v]) => `${k}=${v}`).join(', ') || 'none yet';
+  // How often each place has been used, so a later chunk can see that one is already spent. Without it a live run
+  // set 7 of 10 scenes in the same "digital void" (chunk 2 saw the place and reused it, unaware it was the fourth time).
+  const usage = (id: string) => {
+    const at = locationScenes.get(id) ?? [];
+    return at.length ? ` (used in ${at.length} scene${at.length === 1 ? '' : 's'} so far: ${at.map((n) => `#${n}`).join(', ')})` : '';
+  };
   const locationsBlock = locationsSeen.size
-    ? [...locationsSeen.entries()].map(([id, bg]) => `  - "${id}": ${bg}`).join('\n')
+    ? [...locationsSeen.entries()].map(([id, bg]) => `  - "${id}": ${bg}${usage(id)}`).join('\n')
     : '  (none established yet)';
+  const usedUp = [...locationScenes.entries()].filter(([, at]) => at.length >= PLACE_USED_UP_AT).map(([id]) => `"${id}"`);
+  const usedUpLine = usedUp.length
+    ? `\n- Used in ${PLACE_USED_UP_AT} or more scenes already, so treat as used up unless the story truly goes back there: ${usedUp.join(', ')}. Set the next scenes somewhere new.`
+    : '';
   const shotsBlock = recentShots.slice(-PRIOR_SHOT_WINDOW).join('; ') || '(none yet)';
   const docHint = isDocTone
     ? ` This is a documentary script: at least half of ALL scenes should end up "terminal", "diagram" or "headline" — lean into whichever the tally above is short on.`
@@ -329,7 +343,7 @@ function buildPriorVisualContext(processedScenes: any[], directionsSoFar: any[],
   return `PRIOR VISUAL CONTEXT (from earlier chunks of this same script — use it, don't repeat it):
 - visualType tally so far: ${tally}.${docHint}
 - Locations already established — if a scene below returns to one of these places, reuse its exact locationId:
-${locationsBlock}
+${locationsBlock}${usedUpLine}
 - Last ${PRIOR_SHOT_WINDOW} scenes' shot type / camera move, so you can vary rhythm rather than repeat it: ${shotsBlock}`;
 }
 

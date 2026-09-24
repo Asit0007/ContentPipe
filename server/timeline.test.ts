@@ -404,6 +404,25 @@ test('audit: a CVE id or CVSS score spoken or shown is flagged — the audience 
   assert.equal(find(auditScript({ scenes: scenes(4) }), 'severity-rating-shown'), undefined);
 });
 
+// Live run: one "split-screen terminal | void" background behind 7 of 10 scenes, and the audit had nothing to say.
+test('audit: one environment behind more than 40% of the scenes is flagged with the scenes it fills; a spread of places is not', () => {
+  const crowded = auditScript({ scenes: scenes(10, (i) => ({ locationId: i < 7 ? 'digital-void' : `place-${i}` })) });
+  const flagged = find(crowded, 'background-monotony');
+  assert.deepEqual(flagged.sceneNumbers, [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(flagged.severity, 'warn');
+  assert.match(flagged.message, /\("digital-void"\) fills 7 of 10 scenes/);
+  // Exactly 40% (4 of 10) is allowed: a story can go back to a place.
+  assert.equal(find(auditScript({ scenes: scenes(10, (i) => ({ locationId: i < 4 ? 'server-room' : `place-${i}` })) }), 'background-monotony'), undefined);
+  assert.equal(find(auditScript({ scenes: scenes(10, (i) => ({ locationId: `place-${i}` })) }), 'background-monotony'), undefined);
+});
+
+test('audit: the place check falls back to the background text, needs at least 4 scenes, and ignores scripts with no visuals', () => {
+  const same = { visual: { background: 'A dim data center.' } };
+  assert.deepEqual(find(auditScript({ scenes: scenes(6, () => same) }), 'background-monotony').sceneNumbers, [1, 2, 3, 4, 5, 6]);
+  assert.equal(find(auditScript({ scenes: scenes(3, () => same) }), 'background-monotony'), undefined, '3 of 3 is too short a video to call a slideshow');
+  assert.equal(find(auditScript({ scenes: scenes(10) }), 'background-monotony'), undefined, 'older scripts carry no place at all');
+});
+
 // The live run that put "CRITICAL RISK" on screen: SEVERITY_RATING_RE only knew ids and CVSS, so nothing was flagged.
 test('audit: a severity label — a "CRITICAL RISK" badge, "high severity", a score out of 10 — is flagged; ordinary prose is not', () => {
   const c = auditScript({
