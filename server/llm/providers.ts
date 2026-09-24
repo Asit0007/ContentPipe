@@ -84,8 +84,22 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     modelsEnv: 'OPENROUTER_MODELS',
     // The two original `:free` ids no longer exist (OpenRouter answers 404 "unavailable for free"). Free endpoints
     // are often rate-limited or overloaded upstream, so this is a fallback tier, not a workhorse. Left out on
-    // purpose: inkling:free (403 "only available on agentic harnesses") and ling-3.0-flash-fin:free (no JSON mode).
-    defaultModels: ['z-ai/glm-5.2:free', 'qwen/qwen3.8-27b:free', 'nvidia/nemotron-3.5-lightning:free'],
+    // purpose: inkling:free and inkling-small:free (both 403 "only available on agentic harnesses" — not callable
+    // as a plain completion, only through OpenRouter's own agent-harness integrations) and ling-3.0-flash-fin:free
+    // (no JSON mode).
+    //
+    // Added 2026-09-24 after live-testing (JSON mode, 3 attempts each, this repo's usual request shape):
+    // nemotron-3-ultra-550b-a55b (550B total / 1M context) answered clean JSON 2/3 — the third attempt only hit
+    // a deliberately tiny test max_tokens, not a real failure — so it now leads the list. nemotron-3-super-120b-a12b
+    // (120B total) answered 1/3, the other two "Upstream error from Nvidia: Service temporarily overloaded"; kept
+    // as a later rung anyway, since a miss here costs nothing and just moves on to the next model in this same list.
+    defaultModels: [
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'nvidia/nemotron-3-super-120b-a12b:free',
+      'z-ai/glm-5.2:free',
+      'qwen/qwen3.8-27b:free',
+      'nvidia/nemotron-3.5-lightning:free',
+    ],
     maxTokensParam: 'max_tokens',
     maxTokens: 8000,
     headers: { 'X-Title': 'ContentPipe' },

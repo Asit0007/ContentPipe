@@ -10,6 +10,16 @@ import {
 // Text model fallback chain, best-first. gemini-2.5-flash is intentionally
 // absent: Google returns 404 "no longer available to new users" for it, so
 // leading with it burned a guaranteed-failed call on every request.
+//
+// Newer models checked on 2026-09-24 (Artificial Analysis score in brackets) and NOT added, on evidence:
+//  - gemini-3.5-flash-lite (22) FAILED the real script pipeline: a 67k-character runaway JSON string, then only 3 of
+//    10 scenes. gemini-3-flash-preview (26) failed once too (narrative pass: 0 of 10 scenes after 233 s, cause not
+//    captured) and 503'd on the next run. Nothing here times out or benches a Gemini model after a non-retryable
+//    failure, so one slow failure costs minutes on every reach.
+//  - gemini-3.8-flash (41) and gemini-3.5-flash (33) answer tiny calls but 503 "high demand" on the pipeline's large
+//    ones, so they are unverified on our schemas. Re-run a real script on each when Gemini has capacity, then add them.
+//  - The Pro and Omni models answer 429 "limit: 0" on the free tier.
+// The free quota is about 20 requests/day PER MODEL, so every verified model added is another ~20 free calls a day.
 export const TEXT_MODELS = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
 
 // Lazy initialization of GoogleGenAI

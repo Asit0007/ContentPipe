@@ -248,11 +248,12 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 |---|---|---|---|
 | 1 | DeepSeek | pay-per-token | `deepseek-v4-pro`, `deepseek-flash` |
 | 2 | Grok (xAI) | pay-per-token | `grok-4.6`, `grok-4.3` |
-| 3 | Groq | free tier | `openai/gpt-oss-120b`, `llama-3.3-70b-versatile` |
+| 3 | Groq | free tier | `qwen/qwen3.8-27b`, `openai/gpt-oss-120b` |
 | 4 | Cerebras | free tier | `gpt-oss-120b`, `llama-3.3-70b` |
-| 5 | OpenRouter | free `:free` models | `openai/gpt-oss-120b:free`, `meta-llama/llama-3.3-70b-instruct:free` |
-| 6 | Mistral | free tier, trains on prompts | `mistral-large-latest`, `mistral-small-latest` |
-| 7 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
+| 5 | OpenRouter | free `:free` models | `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, `qwen/qwen3.8-27b:free`, `nvidia/nemotron-3.5-lightning:free` |
+| 6 | Ollama Cloud | free usage tier | `nemotron-3-ultra`, `gemma4:31b`, `nemotron-3-super`, `gpt-oss:120b` |
+| 7 | Mistral | free tier, trains on prompts | `mistral-large-latest`, `mistral-small-latest` |
+| 8 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
 
 **Those model ids are best guesses from documentation, not live calls.** Run `npm run llm:check`: it lists each provider's real `/models`, flags any configured id that isn't there, and makes one tiny JSON request per provider so a bad key, an empty balance or a rejected parameter shows up before a real run. Override with `<ID>_MODELS`.
 

@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
+import { TEXT_MODELS } from '../server/gemini';
 
 /**
  * End-to-end check of the failure contract over real HTTP.
@@ -214,7 +215,8 @@ test('STRICT + overload: 503 + Retry-After after one bounded wait; the UI path g
   assert.equal(strict.status, 503);
   assert.equal(strict.headers.get('retry-after'), '30');
   assert.ok(Date.now() - t0 >= 7000, 'waited the 8 s overload pause once before giving up');
-  assert.equal(stub.log.filter((l) => l === 'overloaded-call').length, 6, '3 tiers x 2 passes');
+  // Every model in TEXT_MODELS is tried once per pass, and there are two passes (the wait sits between them).
+  assert.equal(stub.log.filter((l) => l === 'overloaded-call').length, TEXT_MODELS.length * 2, `${TEXT_MODELS.length} tiers x 2 passes`);
   const ui = await post('/api/research', { messageText: 'no links here' }, false);
   assert.equal(ui.status, 200);
   assert.equal(ui.body.isQuotaFallback, true);
