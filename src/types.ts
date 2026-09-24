@@ -242,6 +242,18 @@ export interface VideoScriptScene {
   motion?: MotionDirection;
   /** Source ids ([S#]) backing the factual claims in this narration. */
   citations?: string[];
+  /**
+   * Bible character ids present in this scene (art-direction pass, CLAUDE.md "Visual consistency").
+   * Their promptAnchor is already force-included in visual.character by applyVisualDirection — this
+   * field is the audit trail for that, not something a consumer needs to act on itself.
+   */
+  charactersInFrame?: string[];
+  /**
+   * Short slug for this scene's environment (art-direction pass), reused across scenes that return to
+   * the same place. visual.background is force-matched to the first scene that established this id —
+   * see applyVisualDirection's canonicalBackgroundByLocation.
+   */
+  locationId?: string;
   visualType: 'headline' | 'terminal' | 'meme' | 'cyberpunk' | 'diagram' | 'character';
   cinematography?: string;
   onScreenText: string;

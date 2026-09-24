@@ -337,6 +337,25 @@ export function onScreenTexts(scene: any): string[] {
  */
 export const SEVERITY_RATING_RE = new RegExp(String.raw`\bCVE(?:s\b|[-${DASHES}]\d{4}[-${DASHES}]\d{4,7}(?!\d)|\b)|\bCVSS\b`, 'i');
 
+/**
+ * A severity rating in words rather than an id: "CRITICAL RISK", "high severity", "severity: critical", a bare
+ * "CRITICAL" badge, a score such as "9.8/10". A live run put a "CRITICAL RISK" badge on screen and the id-only
+ * check above did not notice. Deliberately label-shaped, so ordinary prose ("critical infrastructure", "the primary
+ * risk", "8 out of 10 servers") is not flagged. Kept apart from SEVERITY_RATING_RE, whose title and thumbnail
+ * linters say "CVE id or CVSS score".
+ */
+export const SEVERITY_LABEL_RE = new RegExp(
+  [
+    String.raw`\b(?:critical|severe)[\s-]+(?:severity|risk|vulnerabilit(?:y|ies)|flaw|bug|threat|issue)\b`,
+    String.raw`\b(?:high|medium|low)[\s-]+severity\b`,
+    String.raw`\bseverity[\s:=-]+(?:critical|high|medium|low)\b`,
+    String.raw`\b\d{1,2}(?:\.\d)?\s*/\s*10\b`,
+    // A whole badge or on-screen line that is only a rating: "CRITICAL", "HIGH RISK".
+    String.raw`^\s*(?:critical|severe|high|medium|low)(?:[\s-]+(?:risk|threat|impact|priority))?\s*$`,
+  ].join('|'),
+  'i'
+);
+
 export function auditScript(script: any, opts: { requestedDurationSec?: number; research?: any } = {}): QualityCheck[] {
   const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
   const checks: QualityCheck[] = [];
@@ -416,6 +435,12 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
   const rated = scenes.flatMap((s, i) => ([String(s.narration || ''), ...onScreenTexts(s)].some((t) => SEVERITY_RATING_RE.test(t)) ? [sn(i)] : []));
   if (rated.length) {
     checks.push({ id: 'severity-rating-shown', severity: 'warn', message: 'A CVE id or CVSS score is spoken or shown. The audience is not technical: show what the flaw let an attacker do and who it reached instead of rating it.', sceneNumbers: rated });
+  }
+  // A rating in words ("CRITICAL RISK", "high severity", "9.8/10") rates the flaw instead of showing what it did.
+  // Unlike a CVE id there is no clean stand-in, so it is flagged for a person to reword, not replaced in code.
+  const labelled = scenes.flatMap((s, i) => ([String(s.narration || ''), ...onScreenTexts(s)].some((t) => SEVERITY_LABEL_RE.test(t)) ? [sn(i)] : []));
+  if (labelled.length) {
+    checks.push({ id: 'severity-label-shown', severity: 'warn', message: 'A severity label ("critical risk", "high severity", a score out of 10) is spoken or shown. Rating a flaw means little to a non-technical viewer: show what it let an attacker do and who it reached instead.', sceneNumbers: labelled });
   }
 
   // Evidence mix: the spec bans a slideshow of AI stills.

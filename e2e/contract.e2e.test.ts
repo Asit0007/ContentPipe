@@ -24,7 +24,7 @@ const PERDAY = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemi
 // Captured live: the free tier has no quota at all for image models (limit: 0).
 const LIMIT0 = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemini-429-limit0.json'), 'utf8'));
 
-const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [] as string[], tts: 'ok' as 'ok' | 'perday', pollinations: 'fail' as 'fail' | 'ok' };
+const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, cveInScene1: false, log: [] as string[], tts: 'ok' as 'ok' | 'perday', pollinations: 'fail' as 'fail' | 'ok' };
 let stubServer: http.Server;
 let stubPort = 0;
 let app: ChildProcess | null = null;
@@ -60,7 +60,7 @@ function stubAnswer(prompt: string, url = ''): { status: number; body: any } {
   } else if (prompt.includes('art director and cinematographer')) {
     const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
     tag = `art@${nums[0]}`;
-    out = { scenes: nums.map((n) => ({ sceneNumber: n, visual: { character: 'c', background: 'b', scene: `s${n}`, styleAnchor: 'STYLE', negative: 'n' }, motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' }, citations: [] })) };
+    out = { scenes: nums.map((n) => ({ sceneNumber: n, visual: { character: 'c', background: 'b', scene: `s${n}`, styleAnchor: 'STYLE', negative: 'n' }, motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' }, citations: [], charactersInFrame: [], locationId: `loc${n}` })) };
   } else if (!/Write EXACTLY (\d+) new scenes/.test(prompt)) {
     // Fail loudly rather than leave the request hanging if a new prompt kind appears.
     return { status: 400, body: { error: { code: 400, status: 'INVALID_ARGUMENT', message: 'e2e stub does not recognise this prompt' } } };
@@ -72,7 +72,7 @@ function stubAnswer(prompt: string, url = ''): { status: number; body: any } {
       if (stub.log[stub.log.length - 1] !== tag) stub.log.push(tag);
       return { status: 429, body: PERDAY };
     }
-    out = { scenes: Array.from({ length: count }, (_, i) => ({ sceneNumber: at + i, title: `S${at + i}`, actPhase: at + i === 1 ? 'Hook' : 'Technical Breakdown', narration: 'word '.repeat(30).trim(), durationEst: 10, visualPrompt: 'vp', visualType: 'terminal', onScreenText: 'x', soundEffect: 'y' })) };
+    out = { scenes: Array.from({ length: count }, (_, i) => ({ sceneNumber: at + i, title: `S${at + i}`, actPhase: at + i === 1 ? 'Hook' : 'Technical Breakdown', narration: stub.cveInScene1 && at + i === 1 ? `It was tracked as CVE-2024-3094. ${'word '.repeat(26).trim()}` : 'word '.repeat(30).trim(), durationEst: 10, visualPrompt: 'vp', visualType: 'terminal', onScreenText: stub.cveInScene1 && at + i === 1 ? 'CVE-2024-3094' : 'x', soundEffect: 'y', ...(stub.cveInScene1 && at + i === 1 ? { infographic: { type: 'threat_scorecard', title: 'T', badge: 'CVE-2024-3094 RESOLVED', summary: 'The lifecycle of CVE-2024-3094 shows the gap.' } } : {}) })) };
   }
   if (stub.log[stub.log.length - 1] !== tag) stub.log.push(tag);
   return { status: 200, body: { candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(out) }] }, finishReason: 'STOP' }], usageMetadata: {} } };
@@ -114,7 +114,7 @@ async function startApp() {
     cwd: REPO,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
+    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', LLM_MODEL_ORDER: '', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
   });
   for (let i = 0; i < 120; i++) {
     try {
@@ -143,7 +143,7 @@ const SCRIPT_REQ = {
   researchData: { topicTitle: 'T', summary: 's', retrievedSources: [] },
   channelBrandName: 'Blast Radius',
 };
-const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, log: [], tts: 'ok', pollinations: 'fail' }, over);
+const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, cveInScene1: false, log: [], tts: 'ok', pollinations: 'fail' }, over);
 
 /** Independent of server/quota.ts: seconds until the next 00:00 in America/Los_Angeles. */
 function secondsToNextPacificMidnight(): number {
@@ -315,4 +315,21 @@ test('TWO VOICES: /api/script keeps the pipeline-assigned speaker on every scene
   assert.equal(r.body.scenes[0].speaker, 'narrator');
   assert.equal(r.body.scenes[16].speaker, 'narrator');
   assert.equal((r.body.qualityChecks || []).find((c: any) => c.id === 'analyst-scene-too-long'), undefined);
+});
+
+test('CVE SCRUB: a CVE id the model wrote into narration, on-screen text or an infographic never reaches the client — it is replaced and disclosed', async () => {
+  await stopApp();
+  reset({ cveInScene1: true });
+  await startApp();
+  const r = await post('/api/script', SCRIPT_REQ, true);
+  assert.equal(r.status, 200);
+  assert.ok(!/CVE-\d{4}-\d+/.test(JSON.stringify(r.body.scenes)), 'no CVE id anywhere in the delivered scenes');
+  const s1 = r.body.scenes[0];
+  assert.match(s1.narration, /tracked as the flaw\./);
+  assert.equal(s1.onScreenText, 'THE FLAW');
+  assert.equal(s1.infographic.badge, 'THE FLAW RESOLVED');
+  assert.equal(s1.infographic.summary, 'The lifecycle of the flaw shows the gap.');
+  const checks: any[] = r.body.qualityChecks || [];
+  assert.deepEqual(checks.find((c) => c.id === 'cve-ids-replaced')?.sceneNumbers, [1], 'the replacement is disclosed, not silent');
+  assert.equal(checks.find((c) => c.id === 'severity-rating-shown'), undefined, 'nothing left for the audit to flag');
 });

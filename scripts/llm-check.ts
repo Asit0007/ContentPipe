@@ -73,11 +73,15 @@ async function main() {
   if (process.env.GEMINI_API_KEY) {
     const { GoogleGenAI } = await import('@google/genai');
     const { TEXT_MODELS } = await import('../server/gemini');
-    console.log(`\nGemini ${dim(TEXT_MODELS.join(', '))}`);
+    const { modelOrder } = await import('../server/llm/providers');
+    // With LLM_MODEL_ORDER the Gemini models are the ones it names, in its order; otherwise the built-in list.
+    const ranked = modelOrder().filter((e) => e.provider === 'gemini').map((e) => e.model);
+    const geminiModels = ranked.length ? ranked : TEXT_MODELS;
+    console.log(`\nGemini ${dim(geminiModels.join(', '))}`);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      await ai.models.generateContent({ model: TEXT_MODELS[0], contents: 'Return {"ok":true}', config: { responseMimeType: 'application/json' } });
-      console.log(`  ${ok('json call ok')} ${TEXT_MODELS[0]}`);
+      await ai.models.generateContent({ model: geminiModels[0], contents: 'Return {"ok":true}', config: { responseMimeType: 'application/json' } });
+      console.log(`  ${ok('json call ok')} ${geminiModels[0]}`);
     } catch (e: any) {
       console.log(`  ${bad('failed')} ${String(e?.message ?? e).slice(0, 200)}`);
       failures++;

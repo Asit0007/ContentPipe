@@ -403,3 +403,22 @@ test('audit: a CVE id or CVSS score spoken or shown is flagged — the audience 
   assert.equal(flagged.severity, 'warn');
   assert.equal(find(auditScript({ scenes: scenes(4) }), 'severity-rating-shown'), undefined);
 });
+
+// The live run that put "CRITICAL RISK" on screen: SEVERITY_RATING_RE only knew ids and CVSS, so nothing was flagged.
+test('audit: a severity label — a "CRITICAL RISK" badge, "high severity", a score out of 10 — is flagged; ordinary prose is not', () => {
+  const c = auditScript({
+    scenes: [
+      scene(1, { infographic: { type: 'threat_scorecard', title: 'THREAT VECTOR: PRIVATE KEYS', badge: 'CRITICAL RISK' } }),
+      scene(2, { narration: 'Vendors rated it high severity within hours.' }),
+      scene(3, { onScreenText: 'CRITICAL' }),
+      scene(4, { infographic: { type: 'benchmark_chart', title: 'SCORE', metrics: [{ label: 'Rating', value: '9.8/10' }] } }),
+      scene(5, { narration: 'It sat inside critical infrastructure. The primary risk was silence, and 8 out of 10 servers ran it.' }),
+      scene(6, { onScreenText: 'NO LOGIN NEEDED', infographic: { type: 'architecture', title: 'WHO WAS EXPOSED', badge: 'ZERO LOGS RECORDED' } }),
+    ],
+  });
+  const flagged = find(c, 'severity-label-shown');
+  assert.deepEqual(flagged.sceneNumbers, [1, 2, 3, 4]);
+  assert.equal(flagged.severity, 'warn');
+  assert.equal(find(c, 'severity-rating-shown'), undefined, 'no CVE id or CVSS score here, so the id check stays quiet');
+  assert.equal(find(auditScript({ scenes: scenes(4) }), 'severity-label-shown'), undefined);
+});

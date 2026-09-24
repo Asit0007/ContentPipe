@@ -28,6 +28,8 @@ const EXPECTED_DEFAULT: TopicProfile = {
     'You are an award-winning tech infotainment director. Output strictly valid JSON strictly tailored to the topic in the research.',
   planTopicDriftClause:
     'Do NOT invent an unrelated topic (e.g. do NOT talk about virtual DOM or Rust if the story is about JFrog Artifactory or a security vulnerability).',
+  planAudienceNote:
+    'AUDIENCE: the viewer is curious but not technical, and many know no tech at all. Write "targetAudience" as that person in plain words that describe what they care about, and plan every act so someone with no background can follow it: explain the mechanism through one everyday analogy, and convey the stakes through what happened, who was exposed and what an attacker could do. A CVE id or a CVSS score means nothing to them, so keep both out of "title", "callToAction" and every act; the research keeps the id as a fact, the plan does not need it.',
 
   bibleShowDocumentary: 'an investigative cybersecurity documentary',
   bibleShowInfotainment: 'a short infotainment video',
@@ -83,6 +85,18 @@ test('any other topicDomain resolves to a generic profile templated on it, with 
     if (typeof value !== 'string') continue;
     assert.doesNotMatch(value, /\b(hack(ing|er)?|cve|cvss|exploit|cybersecurity)\b/i, `field "${key}" leaked cyber vocabulary: ${value}`);
   }
+});
+
+test('the plan is written for a non-technical viewer: the default note says so, and a generic one names its own domain', () => {
+  const def = resolveTopicProfile();
+  assert.match(def.planAudienceNote, /not technical/);
+  assert.match(def.planAudienceNote, /CVE id/);
+  // The plan and the publish package must agree on who the viewer is (the plan's inline example once said
+  // "Security engineers, SREs, CTOs" while the publish note said "not technical").
+  assert.match(def.publishAudienceNote, /not technical/);
+
+  const generic = resolveTopicProfile('personal finance and markets');
+  assert.match(generic.planAudienceNote, /not an expert in personal finance and markets/);
 });
 
 test('a generic profile still fills in the tone-branch pairs (documentary vs infotainment stay distinct)', () => {

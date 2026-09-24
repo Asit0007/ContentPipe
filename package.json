@@ -9,7 +9,7 @@
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "LLM_PROVIDER_ORDER=gemini tsx --test server/*.test.ts",
+    "test": "LLM_PROVIDER_ORDER=gemini LLM_MODEL_ORDER= tsx --test server/*.test.ts",
     "test:e2e": "tsx --test --test-concurrency=1 e2e/*.e2e.test.ts",
     "render:fixture": "tsx scripts/render-fixture.ts",
     "llm:check": "tsx scripts/llm-check.ts"

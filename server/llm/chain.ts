@@ -8,7 +8,7 @@ import {
   UpstreamUnavailableError,
   type ClassifiedError,
 } from '../quota';
-import { providerOrder, resolveProviders, type ResolvedProvider } from './providers';
+import { modelOrder, providerOrder, resolveProviders, type ResolvedProvider } from './providers';
 import { toJsonSchema, validateAgainstSchema } from './schema';
 
 /**
@@ -60,7 +60,10 @@ export class InvalidOutputError extends Error {
 // --------------------------------------------------------------------------
 
 const PER_DAY = /per day|daily|tokens per day|\bTPD\b|\bRPD\b|day limit/i;
-const NO_BALANCE = /insufficient[_ ](balance|credits?|funds|quota)|out of credits|no credits|exceeded your current quota|billing|credits? (have been )?(exhausted|used)/i;
+// "billing" alone is not here on purpose: Groq's per-minute 429 ends "Upgrade to Dev Tier at console.groq.com/…/billing",
+// and matching the URL classified a 3.5-second rate limit as "out of credits", benching the whole provider for 30 min.
+// Gemini's "check your plan and billing details" is caught by "exceeded your current quota" or "billing details".
+const NO_BALANCE = /insufficient[_ ](balance|credits?|funds|quota)|out of credits|no credits|exceeded your current quota|billing details|credits? (have been )?(exhausted|used)/i;
 const RETRY_IN = /(?:try again|retry) in ((?:[\d.]+\s*(?:ms|h|m|s)\s*)+)/i;
 /** OpenRouter puts `X-RateLimit-Reset` (epoch ms) in its error body's metadata; a 10-digit value is epoch seconds. */
 const RESET_EPOCH = /ratelimit[-_]reset["']?\s*[:=]\s*["']?(\d{10}|\d{13})\b/i;
@@ -71,6 +74,12 @@ const MAX_COOLDOWN_SEC = 1800;
 const TRANSIENT_COOLDOWN_SEC = 30;
 /** A 413 depends on the request's size, so a smaller one may fit sooner than a missing model reappears. */
 const TOO_LARGE_COOLDOWN_SEC = 600;
+/**
+ * A model that timed out is slow for our prompts, not down, so the next request will most likely time out too. The
+ * 30 s a 5xx earns meant a model needing over LLM_TIMEOUT_MS (default 120 s) was retried, and waited on, every
+ * request — a live run lost two minutes per call to Nemotron 3 Ultra that way.
+ */
+const TIMEOUT_COOLDOWN_SEC = 600;
 /** Floor for a daily limit that says nothing about when it resets. */
 const MIN_PER_DAY_WAIT_SEC = 3600;
 
@@ -102,7 +111,7 @@ function secondsUntilNextUtcMidnight(nowMs: number): number {
  * Why an `other` failure will repeat on the same model, so the chain skips that model for a while
  * instead of paying for the same refusal on every request.
  */
-export type RepeatCause = 'model_missing' | 'too_large';
+export type RepeatCause = 'model_missing' | 'too_large' | 'timeout';
 
 export interface ProviderClassification extends ClassifiedError {
   cause?: RepeatCause;
@@ -135,7 +144,8 @@ export function classifyProviderError(err: unknown, nowMs: number = Date.now()):
 
   // fetch() itself failed: DNS, connection reset, or our own timeout.
   const e: any = err;
-  if (e?.name === 'TimeoutError' || e?.name === 'AbortError' || e instanceof TypeError) return { kind: 'transient' };
+  if (e?.name === 'TimeoutError' || e?.name === 'AbortError') return { kind: 'transient', cause: 'timeout' };
+  if (e instanceof TypeError) return { kind: 'transient' };
   return classifyGeminiError(err);
 }
 
@@ -149,7 +159,7 @@ export function classifyProviderError(err: unknown, nowMs: number = Date.now()):
  * server runs is picked up), but a request that finds it cooling must still report the real reset,
  * not the shorter skip. `why` is the original failure, for the error a fully-cooled chain throws.
  */
-const cooldowns = new Map<string, { until: number; retryAt?: number; c: ProviderClassification; why: string }>();
+const cooldowns = new Map<string, { until: number; retryAt?: number; c: ProviderClassification; why: string; tooLargeChars?: number }>();
 
 export function resetLlmCooldowns(): void {
   cooldowns.clear();
@@ -162,27 +172,37 @@ function cooldownKey(providerId: string, model: string, c: ClassifiedError): str
   return isAuthStatus(c.status) || c.kind === 'zero' ? `${providerId}:*` : `${providerId}:${model}`;
 }
 
-function coolDown(providerId: string, model: string, c: ProviderClassification, nowMs: number, err?: unknown): void {
+/**
+ * `requestChars` is the size of the request that failed. A 413 is remembered with it, and only requests at least that
+ * big are skipped afterwards: Groq's 413 on a 10k-token research prompt said nothing about the 4k-token plan prompt
+ * that fits, and benching the model for every size hid the second-smartest model from the stages that could use it.
+ */
+function coolDown(providerId: string, model: string, c: ProviderClassification, nowMs: number, err?: unknown, requestChars?: number): void {
   let sec: number | undefined;
   if (c.kind === 'zero' || isAuthStatus(c.status)) sec = MAX_COOLDOWN_SEC;
   else if (c.kind === 'per_day' || c.kind === 'per_minute') sec = Math.min(c.retryAfterSec ?? 60, MAX_COOLDOWN_SEC);
-  else if (c.kind === 'transient') sec = TRANSIENT_COOLDOWN_SEC;
+  else if (c.kind === 'transient') sec = c.cause === 'timeout' ? TIMEOUT_COOLDOWN_SEC : TRANSIENT_COOLDOWN_SEC;
   else if (c.cause === 'model_missing') sec = MAX_COOLDOWN_SEC;
   else if (c.cause === 'too_large') sec = TOO_LARGE_COOLDOWN_SEC;
   if (!sec) return;
-  cooldowns.set(cooldownKey(providerId, model, c), {
+  const key = cooldownKey(providerId, model, c);
+  const tooLargeChars = c.cause === 'too_large' && requestChars ? Math.min(requestChars, cooldowns.get(key)?.tooLargeChars ?? Infinity) : undefined;
+  cooldowns.set(key, {
     until: nowMs + sec * 1000,
     retryAt: c.retryAfterSec !== undefined ? nowMs + c.retryAfterSec * 1000 : undefined,
     c,
     why: String((err as any)?.message ?? c.kind).slice(0, 200),
+    ...(tooLargeChars !== undefined ? { tooLargeChars } : {}),
   });
 }
 
-/** The remembered failure if this model is still cooling down, else undefined. */
-function activeCooldown(providerId: string, model: string, nowMs: number): (ProviderClassification & { why: string }) | undefined {
+/** The remembered failure if this model is still cooling down for a request of this size, else undefined. */
+function activeCooldown(providerId: string, model: string, nowMs: number, requestChars?: number): (ProviderClassification & { why: string }) | undefined {
   for (const key of [`${providerId}:*`, `${providerId}:${model}`]) {
     const cd = cooldowns.get(key);
     if (cd && cd.until > nowMs) {
+      // A 413 only rules out requests as large as the one that got it; a smaller one is worth a try.
+      if (cd.tooLargeChars !== undefined && requestChars !== undefined && requestChars < cd.tooLargeChars) continue;
       const retryAfterSec = cd.c.kind === 'zero' ? undefined : Math.max(1, Math.ceil(((cd.retryAt ?? cd.until) - nowMs) / 1000));
       return { ...cd.c, retryAfterSec, why: cd.why };
     }
@@ -365,10 +385,37 @@ async function jsonFromProvider<T>(
 // The chain
 // --------------------------------------------------------------------------
 
-type Tier = { kind: 'gemini' } | { kind: 'provider'; provider: ResolvedProvider };
+// `models` on a Gemini tier exists only in a model-ordered chain (LLM_MODEL_ORDER); without it the tier walks TEXT_MODELS.
+type Tier = { kind: 'gemini'; models?: string[] } | { kind: 'provider'; provider: ResolvedProvider };
+
+/**
+ * Tiers for LLM_MODEL_ORDER: one tier per run of consecutive entries from the same provider, so the same provider
+ * can appear more than once, interleaved with others, in strict model-by-model order. A provider with no key is
+ * skipped (so is Gemini without GEMINI_API_KEY); the model order itself is never reshuffled.
+ */
+function tiersFromModelOrder(env: Env): Tier[] {
+  const providers = new Map(resolveProviders(env).map((p) => [p.spec.id, p]));
+  const tiers: Tier[] = [];
+  for (const { provider: id, model } of modelOrder(env)) {
+    const last = tiers[tiers.length - 1];
+    if (id === 'gemini') {
+      if (!env.GEMINI_API_KEY) continue;
+      if (last?.kind === 'gemini') last.models!.push(model);
+      else tiers.push({ kind: 'gemini', models: [model] });
+    } else if (providers.has(id)) {
+      if (last?.kind === 'provider' && last.provider.spec.id === id) last.provider.models.push(model);
+      else tiers.push({ kind: 'provider', provider: { ...providers.get(id)!, models: [model] } });
+    }
+  }
+  return tiers;
+}
 
 /** Configured tiers in order. If nothing is configured, Gemini alone — the historical behaviour, fallbacks and all. */
 export function buildTiers(env: Env = process.env): Tier[] {
+  if (modelOrder(env).length) {
+    const ordered = tiersFromModelOrder(env);
+    return ordered.length ? ordered : [{ kind: 'gemini' }];
+  }
   const providers = new Map(resolveProviders(env).map((p) => [p.spec.id, p]));
   const tiers: Tier[] = [];
   for (const id of providerOrder(env)) {
@@ -384,7 +431,7 @@ export function buildTiers(env: Env = process.env): Tier[] {
 /** One line for the server log: what will actually be tried, in order. */
 export function describeChain(env: Env = process.env): string {
   return buildTiers(env)
-    .map((t) => (t.kind === 'gemini' ? `gemini(${TEXT_MODELS.join(',')})` : `${t.provider.spec.id}(${t.provider.models.join(',')})`))
+    .map((t) => (t.kind === 'gemini' ? `gemini(${(t.models ?? TEXT_MODELS).join(',')})` : `${t.provider.spec.id}(${t.provider.models.join(',')})`))
     .join(' -> ');
 }
 
@@ -409,11 +456,12 @@ export async function generateJson<T>(
   const tiers = buildTiers(opts.env ?? process.env);
   // Only Gemini configured: byte-for-byte the pre-chain behaviour.
   if (tiers.length === 1 && tiers[0].kind === 'gemini') {
-    return generateGeminiJson<T>(ai, prompt, systemInstruction, geminiModels, responseSchema, opts);
+    return generateGeminiJson<T>(ai, prompt, systemInstruction, tiers[0].models ?? geminiModels, responseSchema, opts);
   }
 
   const failures: ClassifiedError[] = [];
   let firstOther: unknown;
+  const requestChars = prompt.length + systemInstruction.length;
   const record = (err: unknown, c: ClassifiedError) => {
     failures.push(c);
     if (c.kind === 'other' && !firstOther) firstOther = err;
@@ -422,7 +470,10 @@ export async function generateJson<T>(
   for (const tier of tiers) {
     if (tier.kind === 'gemini') {
       try {
-        return await generateGeminiJson<T>(ai, prompt, systemInstruction, geminiModels, responseSchema, opts);
+        // In a model-ordered chain a Gemini tier that is not the last hands over at once when busy; only a Gemini
+        // tier at the very end, the last resort, keeps its one bounded wait-and-retry (generateGeminiJson).
+        const failOver = tier.models !== undefined && tier !== tiers[tiers.length - 1];
+        return await generateGeminiJson<T>(ai, prompt, systemInstruction, tier.models ?? geminiModels, responseSchema, failOver ? { ...opts, retryPass: false } : opts);
       } catch (err) {
         console.warn('[LLM Chain] gemini tier failed:', (err as any)?.message || err);
         record(err, classifyProviderError(err, now()));
@@ -431,7 +482,7 @@ export async function generateJson<T>(
     }
     const p = tier.provider;
     for (const model of p.models) {
-      const cd = activeCooldown(p.spec.id, model, now());
+      const cd = activeCooldown(p.spec.id, model, now(), requestChars);
       if (cd) {
         const { why, ...c } = cd;
         record(new Error(`${p.spec.id}/${model} skipped while cooling down after: ${why}`), c);
@@ -441,7 +492,7 @@ export async function generateJson<T>(
         return await jsonFromProvider<T>(p, model, prompt, systemInstruction, responseSchema, opts);
       } catch (err) {
         const c = classifyProviderError(err, now());
-        coolDown(p.spec.id, model, c, now(), err);
+        coolDown(p.spec.id, model, c, now(), err, requestChars);
         record(err, c);
         console.warn(`[LLM Chain] ${p.spec.id}/${model} -> ${c.kind}${c.status ? ` (HTTP ${c.status})` : ''}:`, (err as any)?.message || err);
       }
@@ -473,10 +524,12 @@ export async function generateText(
 ): Promise<{ text: string; via: string }> {
   const now = opts.now ?? Date.now;
   let lastErr: unknown;
+  const requestChars = systemInstruction.length + contents.reduce((n: number, c: any) => n + (c?.parts ?? []).reduce((m: number, p: any) => m + String(p?.text ?? '').length, 0), 0);
   for (const tier of buildTiers(opts.env ?? process.env)) {
     if (tier.kind === 'gemini') {
       try {
-        return { text: await generateGeminiText(ai, contents, systemInstruction, geminiModels), via: `gemini/${geminiModels[0]}` };
+        const models = tier.models ?? geminiModels;
+        return { text: await generateGeminiText(ai, contents, systemInstruction, models), via: `gemini/${models[0]}` };
       } catch (err) {
         lastErr = err;
         continue;
@@ -484,14 +537,14 @@ export async function generateText(
     }
     const p = tier.provider;
     for (const model of p.models) {
-      if (activeCooldown(p.spec.id, model, now())) continue;
+      if (activeCooldown(p.spec.id, model, now(), requestChars)) continue;
       try {
         const r = await callChat(p, model, toChatMessages(contents, systemInstruction), false, opts);
         if (r.text) return { text: r.text, via: `${p.spec.id}/${model}` };
         lastErr = new InvalidOutputError(`${p.spec.id}/${model} returned empty content`);
       } catch (err) {
         lastErr = err;
-        coolDown(p.spec.id, model, classifyProviderError(err, now()), now(), err);
+        coolDown(p.spec.id, model, classifyProviderError(err, now()), now(), err, requestChars);
         console.warn(`[LLM Chain] chat ${p.spec.id}/${model} failed:`, (err as any)?.message || err);
       }
     }

@@ -461,9 +461,18 @@ export function buildVisualDirectionSchema(sceneCount: number) {
             visual: sceneVisualSchema,
             motion: motionSchema,
             citations: { type: Type.ARRAY, items: { type: Type.STRING } },
+            // Cross-scene consistency signals for applyVisualDirection's accumulator (CLAUDE.md
+            // "Visual consistency"). Deliberately siblings of visual/motion/citations here, NOT added
+            // to sceneVisualSchema itself: that schema is also embedded in scriptSceneItemSchema (the
+            // narrative pass, hard-capped at maxItems:4 because of infographic's nesting), and the
+            // narrative pass never requests visual/motion at all — growing sceneVisualSchema would risk
+            // that ceiling for a field the narrative pass doesn't use. This is the same flat shape/depth
+            // `citations` already ships safely at, at maxItems:6 — still worth a live retest, see CLAUDE.md.
+            charactersInFrame: { type: Type.ARRAY, items: { type: Type.STRING } },
+            locationId: { type: Type.STRING },
           },
-          required: ['sceneNumber', 'visual', 'motion', 'citations'],
-          propertyOrdering: ['sceneNumber', 'visual', 'motion', 'citations'],
+          required: ['sceneNumber', 'visual', 'motion', 'citations', 'charactersInFrame', 'locationId'],
+          propertyOrdering: ['sceneNumber', 'visual', 'motion', 'citations', 'charactersInFrame', 'locationId'],
         },
       },
     },

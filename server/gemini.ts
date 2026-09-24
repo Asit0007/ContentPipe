@@ -77,6 +77,12 @@ export interface GeminiJsonOptions {
   /** Injected by tests so waits don't take real seconds. */
   sleep?: (ms: number) => Promise<unknown>;
   now?: () => number;
+  /**
+   * false: skip the wait-and-retry pass and throw after one pass over `models`. The pass is right when Gemini is
+   * the last resort; in a model-ordered chain (LLM_MODEL_ORDER) Gemini is one tier among several and a busy
+   * model should hand over to the next tier at once instead of costing every request up to 8 s.
+   */
+  retryPass?: boolean;
 }
 
 // Helper: Multi-tier resilient JSON generation
@@ -152,7 +158,7 @@ export async function generateGeminiJson<T>(
     }
 
     const waitSec = worthWaitingSec(retryable);
-    if (pass === 0 && waitSec !== undefined && waitedSec + waitSec <= MAX_TOTAL_WAIT_SEC) {
+    if (pass === 0 && opts.retryPass !== false && waitSec !== undefined && waitedSec + waitSec <= MAX_TOTAL_WAIT_SEC) {
       console.warn(`[Gemini Pipeline] every tier busy — waiting ${waitSec}s, then retrying the chain once`);
       await wait(waitSec * 1000);
       waitedSec += waitSec;

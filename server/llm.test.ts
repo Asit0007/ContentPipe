@@ -4,7 +4,7 @@ import { Type } from '@google/genai';
 import { resetModelCooldowns } from './gemini';
 import { QuotaExhaustedError, UpstreamUnavailableError } from './quota';
 import { buildTiers, classifyProviderError, parseDurationSec, describeChain, generateJson, generateText, ProviderHttpError, resetLlmCooldowns, toChatMessages } from './llm/chain';
-import { providerOrder, resolveProviders } from './llm/providers';
+import { modelOrder, providerOrder, resolveProviders } from './llm/providers';
 import { toJsonSchema, validateAgainstSchema } from './llm/schema';
 
 beforeEach(() => {
@@ -86,6 +86,77 @@ test('Gemini is last by default and is the only tier when nothing else is config
   assert.match(describeChain({ DEEPSEEK_API_KEY: 'd', GEMINI_API_KEY: 'k' }), /^deepseek\(deepseek-v4-pro,deepseek-flash\) -> gemini\(/);
 });
 
+test('Ollama Cloud resolves from OLLAMA_API_KEY or from the misspelt OLAMA_API_KEY the key was first saved under', () => {
+  for (const key of ['OLLAMA_API_KEY', 'OLAMA_API_KEY']) {
+    const [p] = resolveProviders({ [key]: 'o' });
+    assert.equal(p.spec.id, 'ollama');
+    assert.equal(p.spec.baseUrl, 'https://ollama.com/v1');
+    assert.deepEqual(p.models, ['nemotron-3-ultra', 'gemma4:31b', 'nemotron-3-super', 'gpt-oss:120b']);
+  }
+  assert.deepEqual(providerOrder({}).slice(-3), ['ollama', 'mistral', 'gemini'], 'in the default order, ahead of Mistral and Gemini');
+});
+
+// ---------- model-by-model order (LLM_MODEL_ORDER) ----------
+
+const RANKED =
+  'gemini:gemini-3.7-flash,groq:qwen/qwen3.8-27b,openrouter:z-ai/glm-5.2:free,gemini:gemini-3.6-flash,ollama:nemotron-3-ultra,ollama:gemma4:31b,groq:openai/gpt-oss-120b';
+const allKeys = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o', OLLAMA_API_KEY: 'l' };
+
+test('LLM_MODEL_ORDER: the provider is what precedes the first colon, so model ids may contain slashes and colons', () => {
+  assert.deepEqual(modelOrder({ LLM_MODEL_ORDER: RANKED }).map((e) => `${e.provider} | ${e.model}`), [
+    'gemini | gemini-3.7-flash',
+    'groq | qwen/qwen3.8-27b',
+    'openrouter | z-ai/glm-5.2:free',
+    'gemini | gemini-3.6-flash',
+    'ollama | nemotron-3-ultra',
+    'ollama | gemma4:31b',
+    'groq | openai/gpt-oss-120b',
+  ]);
+});
+
+test('LLM_MODEL_ORDER: malformed entries and repeats are dropped, providers are case-insensitive, unset means empty', () => {
+  assert.deepEqual(
+    modelOrder({ LLM_MODEL_ORDER: 'nocolon, :nomodel, noprovider:, Groq:a,groq:a, groq:b ' }).map((e) => `${e.provider}:${e.model}`),
+    ['groq:a', 'groq:b']
+  );
+  assert.deepEqual(modelOrder({}), []);
+  assert.deepEqual(modelOrder({ LLM_MODEL_ORDER: '  ' }), []);
+});
+
+test('LLM_MODEL_ORDER replaces the provider order and the model lists: only what it names, from providers that have a key', () => {
+  const providers = resolveProviders({ ...allKeys, GROQ_MODELS: 'ignored', LLM_PROVIDER_ORDER: 'ollama', LLM_MODEL_ORDER: RANKED });
+  assert.deepEqual(providers.map((p) => p.spec.id), ['groq', 'openrouter', 'ollama'], 'order of first mention; gemini is the chain\'s own tier');
+  assert.deepEqual(providers.find((p) => p.spec.id === 'groq')!.models, ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b']);
+  assert.deepEqual(providers.find((p) => p.spec.id === 'ollama')!.models, ['nemotron-3-ultra', 'gemma4:31b']);
+  const noGroq = resolveProviders({ OPENROUTER_API_KEY: 'o', LLM_MODEL_ORDER: RANKED });
+  assert.deepEqual(noGroq.map((p) => p.spec.id), ['openrouter'], 'an entry for a provider without a key is skipped');
+});
+
+test('LLM_MODEL_ORDER builds one tier per run of consecutive models, so a provider can appear again further down', () => {
+  const tiers = buildTiers({ ...allKeys, LLM_MODEL_ORDER: RANKED });
+  assert.deepEqual(
+    tiers.map((t) => (t.kind === 'gemini' ? `gemini[${t.models}]` : `${t.provider.spec.id}[${t.provider.models}]`)),
+    [
+      'gemini[gemini-3.7-flash]',
+      'groq[qwen/qwen3.8-27b]',
+      'openrouter[z-ai/glm-5.2:free]',
+      'gemini[gemini-3.6-flash]',
+      'ollama[nemotron-3-ultra,gemma4:31b]',
+      'groq[openai/gpt-oss-120b]',
+    ]
+  );
+  assert.equal(
+    describeChain({ ...allKeys, LLM_MODEL_ORDER: RANKED }),
+    'gemini(gemini-3.7-flash) -> groq(qwen/qwen3.8-27b) -> openrouter(z-ai/glm-5.2:free) -> gemini(gemini-3.6-flash) -> ollama(nemotron-3-ultra,gemma4:31b) -> groq(openai/gpt-oss-120b)'
+  );
+});
+
+test('LLM_MODEL_ORDER: no usable entry (no keys) falls back to Gemini alone, and without the variable nothing changes', () => {
+  assert.deepEqual(buildTiers({ LLM_MODEL_ORDER: RANKED }).map((t) => t.kind), ['gemini']);
+  const plain = buildTiers({ DEEPSEEK_API_KEY: 'd', GEMINI_API_KEY: 'k' });
+  assert.deepEqual(plain.map((t) => (t.kind === 'gemini' ? `gemini:${t.models ?? 'default'}` : t.provider.spec.id)), ['deepseek', 'gemini:default']);
+});
+
 // ---------- error classification ----------
 
 const http = (status: number, body: string, retryAfterSec?: number) => new ProviderHttpError('p', status, body, retryAfterSec);
@@ -100,6 +171,19 @@ test('classifyProviderError separates billing, per-minute, per-day, overload and
   assert.equal(classifyProviderError(http(401, 'bad key')).kind, 'other');
   assert.equal(classifyProviderError(Object.assign(new Error('t'), { name: 'TimeoutError' })).kind, 'transient');
   assert.equal(classifyProviderError(new TypeError('fetch failed')).kind, 'transient');
+});
+
+// Live run: Groq's per-minute limit on Qwen3.8 27B ("try again in 3.48s") ends with an upgrade link containing
+// "billing", which classified it as out of credits and benched the whole provider for 30 minutes.
+test('a per-minute rate limit whose upgrade link mentions billing is still just per-minute', () => {
+  const body =
+    '{"error":{"message":"Rate limit reached for model `qwen/qwen3.8-27b` in organization `org_x` service tier `on_demand` on output tokens per minute (OTPM): Limit 1000, Used 771, Requested 287. Please try again in 3.48s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}';
+  const c = classifyProviderError(http(429, body));
+  assert.equal(c.kind, 'per_minute');
+  assert.ok((c.retryAfterSec ?? 99) < 10, `waits seconds, not a provider-wide bench: ${c.retryAfterSec}`);
+  // The genuine no-credit wordings still classify as zero.
+  assert.equal(classifyProviderError(http(429, 'You exceeded your current quota, please check your plan and billing details')).kind, 'zero');
+  assert.equal(classifyProviderError(http(429, 'Please check your billing details to continue')).kind, 'zero');
 });
 
 test('parseDurationSec reads the compound durations providers put in 429 bodies', () => {
@@ -282,6 +366,44 @@ test('a 413 (request too large for this model) is skipped on the next request to
   assert.deepEqual(calls.map((c) => c.body.model), ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-flash']);
 });
 
+// Live run: Groq answered 413 to the 10k-token research prompt and the model was then skipped for the 4k-token plan
+// prompt that fits, so the second-smartest model sat out exactly the stages it could serve.
+test('a 413 benches the model only for requests as large as the one that failed; a smaller request still gets a try', async () => {
+  const { f, calls } = fakeFetch({ [DS]: [{ status: 413, body: 'Request too large' }, { content: '{"answer":"ok"}' }] });
+  const call = (prompt: string) => generateJson<any>(noGemini, prompt, 'sys', ['gm1'], simple, { fetch: f, env: { DEEPSEEK_API_KEY: 'k' }, sleep: async () => {}, now: () => 1_000_000 });
+  const big = 'x'.repeat(5000);
+  await call(big);
+  await call(big);
+  await call('short');
+  assert.deepEqual(calls.map((c) => c.body.model), ['deepseek-v4-pro', 'deepseek-flash', 'deepseek-flash', 'deepseek-v4-pro']);
+});
+
+test('a smaller request that also gets a 413 lowers the bar, so the next one that size is skipped', async () => {
+  const { f, calls } = fakeFetch({ [DS]: [{ status: 413, body: 'too large' }, { status: 413, body: 'too large' }, { content: '{"answer":"ok"}' }] });
+  const call = (prompt: string) => generateJson<any>(noGemini, prompt, 'sys', ['gm1'], simple, { fetch: f, env: { DEEPSEEK_API_KEY: 'k', DEEPSEEK_MODELS: 'm' }, sleep: async () => {}, now: () => 1_000_000 });
+  await assert.rejects(call('x'.repeat(5000)));
+  await assert.rejects(call('x'.repeat(2000)), 'smaller than the failure, so it was tried — and failed too');
+  await assert.rejects(call('x'.repeat(3000)), 'now skipped: 3000 is at least as big as the smallest failure');
+  assert.deepEqual(calls.map((c) => c.body.model), ['m', 'm'], 'the third request never reached the model');
+});
+
+// Live run: Nemotron 3 Ultra timed out at 120 s on every real prompt and, with a 30 s cooldown, was waited on again
+// for every request — two minutes lost per call.
+test('a timeout benches the model for ten minutes, not the 30 s a 5xx earns', async () => {
+  const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const { f, calls } = fakeFetch({ [DS]: [timeout], [XAI]: [{ content: '{"answer":"fast"}' }] });
+  let t = 1_000_000;
+  const e = { DEEPSEEK_API_KEY: 'k', DEEPSEEK_MODELS: 'slow', XAI_API_KEY: 'x', XAI_MODELS: 'fast' };
+  const call = () => generateJson<any>(noGemini, 'p', 's', ['gm1'], simple, { fetch: f, env: e, sleep: async () => {}, now: () => t });
+  assert.deepEqual(await call(), { answer: 'fast' });
+  t += 60_000; // past a transient cooldown, well inside a timeout one
+  await call();
+  assert.deepEqual(calls.map((c) => c.body.model), ['slow', 'fast', 'fast'], 'the slow model was not waited on again a minute later');
+  t += 600_000;
+  await call();
+  assert.deepEqual(calls.map((c) => c.body.model), ['slow', 'fast', 'fast', 'slow', 'fast'], 'after ten minutes it gets another chance');
+});
+
 test('every provider on a daily cap with no reset time -> a long Retry-After, not a one-minute re-poll', async () => {
   const daily = { status: 429, body: '{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day"}}' };
   const { f } = fakeFetch({ [DS]: [daily], [XAI]: [daily], [GROQ]: [daily] });
@@ -318,6 +440,78 @@ test('when every model is skipped for a non-retryable reason, the error still sa
 });
 
 // ---------- chat ----------
+
+// ---------- model-by-model order: behaviour ----------
+
+const OPENROUTER = 'openrouter.ai';
+const geminiOverloaded = () => Object.assign(new Error('{"error":{"code":503,"message":"This model is currently experiencing high demand.","status":"UNAVAILABLE"}}'), { status: 503 });
+/** A fake Gemini client that records the model of every call. */
+function geminiSpy(behave: (model: string) => string | Error) {
+  const models: string[] = [];
+  const ai: any = {
+    models: {
+      generateContent: async ({ model }: { model: string }) => {
+        models.push(model);
+        const r = behave(model);
+        if (r instanceof Error) throw r;
+        return { text: r, candidates: [{ finishReason: 'STOP' }], usageMetadata: {} };
+      },
+    },
+  };
+  return { ai, models };
+}
+const runOrdered = (ai: any, f: typeof fetch, e: Record<string, string>, sleeps: number[] = []) =>
+  generateJson<any>(ai, 'the prompt', 'the system', ['unused'], simple, { fetch: f, env: e, sleep: async (ms: number) => void sleeps.push(ms), now: () => 1_000_000 });
+
+test('a top model that fails hands over to the NEXT-RANKED model on another provider, not to a weaker one on the same provider', async () => {
+  // Provider-level order would have tried groq/low right after groq/top. Model order goes to openrouter/mid.
+  const { f, calls } = fakeFetch({
+    [GROQ]: [{ status: 429, headers: { 'retry-after': '30' }, body: 'rate' }],
+    [OPENROUTER]: [{ content: '{"answer":"from mid"}' }],
+  });
+  const e = { GROQ_API_KEY: 'q', OPENROUTER_API_KEY: 'o', LLM_MODEL_ORDER: 'groq:top,openrouter:mid,groq:low' };
+  assert.deepEqual(await runOrdered(noGemini, f, e), { answer: 'from mid' });
+  assert.deepEqual(calls.map((c) => c.body.model), ['top', 'mid']);
+});
+
+test('Gemini first and busy hands over at once: no 8 s wait-and-retry, and the next tier answers', async () => {
+  const gem = geminiSpy(() => geminiOverloaded());
+  const { f, calls } = fakeFetch({ [GROQ]: [{ content: '{"answer":"from groq"}' }] });
+  const sleeps: number[] = [];
+  const e = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', LLM_MODEL_ORDER: 'gemini:gm-a,groq:g-1,gemini:gm-b' };
+  assert.deepEqual(await runOrdered(gem.ai, f, e, sleeps), { answer: 'from groq' });
+  assert.deepEqual(gem.models, ['gm-a'], 'one attempt on the busy Gemini model, then on to Groq; gm-b is never reached');
+  assert.equal(calls.length, 1);
+  assert.ok(sleeps.every((ms) => ms < 1000), `no wait long enough to notice, got ${JSON.stringify(sleeps)}`);
+});
+
+test('a Gemini tier at the very end is the last resort and keeps its one bounded wait-and-retry', async () => {
+  const gem = geminiSpy(() => geminiOverloaded());
+  const { f } = fakeFetch({ [GROQ]: [{ status: 503, body: 'overloaded' }] });
+  const sleeps: number[] = [];
+  const e = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', LLM_MODEL_ORDER: 'groq:g-1,gemini:gm-a' };
+  await assert.rejects(runOrdered(gem.ai, f, e, sleeps), UpstreamUnavailableError);
+  assert.deepEqual(gem.models, ['gm-a', 'gm-a'], 'tried, waited, tried once more');
+  assert.ok(sleeps.includes(8000), `the 8 s transient wait is kept, got ${JSON.stringify(sleeps)}`);
+});
+
+test('an interleaved Gemini tier answers with the model the order named, not the built-in list', async () => {
+  const gem = geminiSpy(() => '{"answer":"from gemini"}');
+  const { f, calls } = fakeFetch({ [GROQ]: [{ content: '{"answer":"unused"}' }] });
+  const e = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', LLM_MODEL_ORDER: 'gemini:gemini-3.7-flash,groq:x' };
+  assert.deepEqual(await runOrdered(gem.ai, f, e), { answer: 'from gemini' });
+  assert.deepEqual(gem.models, ['gemini-3.7-flash']);
+  assert.equal(calls.length, 0);
+});
+
+test('generateText follows the same model order and reports who answered', async () => {
+  const gem = geminiSpy(() => geminiOverloaded());
+  const { f } = fakeFetch({ [GROQ]: [{ content: 'a plain reply' }] });
+  const e = { GEMINI_API_KEY: 'g', GROQ_API_KEY: 'q', LLM_MODEL_ORDER: 'gemini:gm-a,groq:qwen/qwen3.8-27b' };
+  const r = await generateText(gem.ai, [{ role: 'user', parts: [{ text: 'hi' }] }], 'sys', ['unused'], { fetch: f, env: e, now: () => 1_000_000 });
+  assert.deepEqual(r, { text: 'a plain reply', via: 'groq/qwen/qwen3.8-27b' });
+  assert.deepEqual(gem.models, ['gm-a']);
+});
 
 test('toChatMessages maps Gemini contents to OpenAI messages', () => {
   assert.deepEqual(

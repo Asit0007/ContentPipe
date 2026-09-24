@@ -12,6 +12,7 @@ import {
   applyVisualDirection,
   buildGenerationSummary,
   sceneTargetFor,
+  normalizeForAnchorMatch,
   type ScriptRunOptions,
 } from './scriptPipeline';
 
@@ -68,6 +69,8 @@ function fakeAi(faults: Fault[] = []) {
               visual: { character: 'c', background: 'b', scene: `scene ${n}`, styleAnchor: 'STYLE', negative: 'n' },
               motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
               citations: [],
+              charactersInFrame: [],
+              locationId: `loc-${n}`,
             })),
           };
         } else {
@@ -102,6 +105,45 @@ function fakeAi(faults: Fault[] = []) {
   return { ai, log, narrPrompts };
 }
 
+/**
+ * A fake Gemini client for art-direction-only tests (applyVisualDirection called directly, bypassing
+ * the bible/narrative passes). Calls `perScene(n)` for every requested scene number and returns
+ * `{ scenes: [...] }`; captures each call's full prompt keyed by the chunk's first scene number
+ * (mirrors fakeAi's narrPrompts). `faultOnFirstScene`, if given, throws a per-day quota error instead
+ * of answering when a chunk starting at that scene number is requested — for resume tests.
+ */
+function fakeArtAi(perScene: (n: number) => any, faultOnFirstScene?: number) {
+  const artPrompts: Record<number, string> = {};
+  const ai: any = {
+    models: {
+      generateContent: async ({ contents }: { model: string; contents: string }) => {
+        const prompt = String(contents);
+        const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
+        artPrompts[nums[0]] = prompt;
+        if (faultOnFirstScene === nums[0]) throw perDay();
+        return { text: JSON.stringify({ scenes: nums.map((n) => perScene(n)) }), candidates: [{ finishReason: 'STOP' }], usageMetadata: {} };
+      },
+    },
+  };
+  return { ai, artPrompts };
+}
+
+/** A minimal script for applyVisualDirection-only tests: `n` scenes, one bible character ('a'). */
+function scriptWithScenes(n: number, opts: { tonePacing?: string; visualType?: (sceneNumber: number) => string } = {}) {
+  return {
+    title: 'T',
+    tonePacing: opts.tonePacing ?? 'Deep Dive Documentary',
+    characterBible: [{ id: 'a', name: 'A', role: 'analyst', appearance: 'x', wardrobe: 'w', palette: 'p', promptAnchor: 'ANCHOR CLAUSE' }],
+    styleGuide: {},
+    scenes: Array.from({ length: n }, (_, i) => ({
+      sceneNumber: i + 1,
+      title: `S${i + 1}`,
+      visualType: (opts.visualType ?? (() => 'character'))(i + 1),
+      visualPrompt: 'fallback',
+    })),
+  };
+}
+
 let dir: string;
 const dirs: string[] = [];
 beforeEach(async () => {
@@ -116,7 +158,10 @@ after(async () => {
 async function runAll(ai: any, opts: ScriptRunOptions, plan: typeof PLAN = PLAN) {
   const bible = await generateProductionBible(ai, plan, RESEARCH, 'Brand', opts);
   const scenes = await generateSceneChunks(ai, plan, RESEARCH, bible, 'Brand', opts);
-  const script: any = { title: 'T', scenes: scenes.map((s, i) => ({ ...s, sceneNumber: i + 1 })), characterBible: bible.characterBible, styleGuide: bible.styleGuide };
+  // tonePacing mirrors what server.ts sets on `script` before calling applyVisualDirection in
+  // production (both the real and fallback-script paths) — applyVisualDirection reads it to decide
+  // the documentary shot-rhythm hint in buildPriorVisualContext.
+  const script: any = { title: 'T', tonePacing: plan.tone, scenes: scenes.map((s, i) => ({ ...s, sceneNumber: i + 1 })), characterBible: bible.characterBible, styleGuide: bible.styleGuide };
   return applyVisualDirection(ai, script, RESEARCH, opts);
 }
 
@@ -325,4 +370,239 @@ test('omitting topicDomain reproduces the historical cybersecurity persona exact
   const { ai, narrPrompts } = fakeAi();
   await runAll(ai, { journal, degraded: [] });
   assert.match(narrPrompts[1], /cybersecurity journalism/);
+});
+
+// A live run wrote "Millions of websites…", then, once numbers were ruled out, "the data stolen" and "the sheer
+// scale of the exposure" — claims, not figures, and against a dossier whose researchGaps said the reach and any
+// abuse in the wild were unknown. FACTUAL DISCIPLINE only covered specifics, and disclosureDiscipline asks for
+// "who and how many were exposed", so the rule about gaps has to sit after it and cover claims.
+test('the narrative prompt says what researchGaps means, and that a gap is narrated around, not filled', async () => {
+  const { ai, narrPrompts } = fakeAi();
+  await runAll(ai, {}, LONG_PLAN);
+  assert.ok(Object.keys(narrPrompts).length > 1);
+  for (const [at, p] of Object.entries(narrPrompts)) {
+    assert.match(p, /CLAIMS THE DOSSIER CANNOT BACK/, `chunk at scene ${at}`);
+    assert.match(p, /"researchGaps" lists what the sources never established/, `chunk at scene ${at}`);
+    assert.match(p, /what was possible, not what happened/, `chunk at scene ${at}`);
+    assert.match(p, /the analyst's included/, `chunk at scene ${at}`);
+    // It qualifies the disclosure discipline, so it has to come after it.
+    assert.ok(p.indexOf('SHOW THE DAMAGE') < p.indexOf('CLAIMS THE DOSSIER CANNOT BACK'), `chunk at scene ${at}: rule must follow disclosureDiscipline`);
+  }
+});
+
+test('the claims rule is not domain-specific: a custom topicDomain gets it too, with no cyber vocabulary', async () => {
+  const journal = await RunJournal.open('claims-custom', 'h', { dir });
+  const { ai, narrPrompts } = fakeAi();
+  await runAll(ai, { journal, degraded: [], topicDomain: 'personal finance and markets' });
+  assert.match(narrPrompts[1], /CLAIMS THE DOSSIER CANNOT BACK/);
+  assert.doesNotMatch(narrPrompts[1], /CVE|CVSS|hooded hacker|cybersecurity/i);
+});
+
+// CLAUDE.md "Visual consistency: what's enforced, what isn't" — promptAnchor reuse, recurring
+// backgrounds and cut/shot rhythm, closed in applyVisualDirection the same way styleAnchor already is:
+// ask the model, then verify or force it in code.
+
+test("recurring backgrounds are force-matched to the first chunk's wording, even when a later chunk drifts", async () => {
+  const script = scriptWithScenes(17); // 3 art-direction chunks: 1-6, 7-12, 13-17
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: {
+      character: 'No characters in frame.',
+      background: n === 1 ? 'Row A, humming racks' : n === 13 ? 'Row Z, dim lighting' : `bg-${n}`,
+      scene: `scene ${n}`,
+      styleAnchor: 'STYLE',
+      negative: 'n',
+    },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: [],
+    locationId: n === 1 || n === 13 ? 'server-room' : `loc-${n}`,
+  });
+  const { ai } = fakeArtAi(perScene);
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.equal(result.scenes[0].visual.background, 'Row A, humming racks');
+  assert.equal(result.scenes[12].visual.background, 'Row A, humming racks', "scene 13 must match scene 1's wording, not its own drifted text");
+  assert.match(result.scenes[12].visualPrompt, /Row A, humming racks/);
+  assert.doesNotMatch(result.scenes[12].visualPrompt, /Row Z/);
+});
+
+test('promptAnchor is force-spliced into visual.character when missing, and not duplicated when already present', async () => {
+  const script = scriptWithScenes(2);
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: {
+      character: n === 1 ? 'A tired analyst leans forward' : 'ANCHOR CLAUSE, leaning forward thoughtfully',
+      background: 'a dim office',
+      scene: 'the analyst studies a monitor',
+      styleAnchor: 'STYLE',
+      negative: 'n',
+    },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: ['a'],
+    locationId: 'office',
+  });
+  const { ai } = fakeArtAi(perScene);
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.match(result.scenes[0].visual.character, /^ANCHOR CLAUSE/, 'a missing anchor is prepended');
+  const occurrences = (result.scenes[1].visual.character.match(/ANCHOR CLAUSE/g) || []).length;
+  assert.equal(occurrences, 1, 'an anchor already present must not be duplicated');
+});
+
+// Live run, scene 6: the bible's anchor had non-breaking hyphens (U+2011) and a curly apostrophe; the art model
+// copied it with plain ones, the exact-substring check called that a miss, and the anchor was prepended a second time.
+test('an anchor the model copied with plain hyphens and apostrophes is recognised, not prepended a second time', async () => {
+  const script = scriptWithScenes(2);
+  script.characterBible[0].promptAnchor = 'mid‑30s woman, 5’6", medium‑brown skin, charcoal blazer';
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: {
+      character: n === 1 ? 'Dr. A: mid-30s woman, 5\'6", medium-brown skin, charcoal blazer, speaking to camera' : 'A tired analyst leans forward',
+      background: 'a dim office',
+      scene: 'the analyst studies a monitor',
+      styleAnchor: 'STYLE',
+      negative: 'n',
+    },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: ['a'],
+    locationId: 'office',
+  });
+  const { ai } = fakeArtAi(perScene);
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.equal(
+    result.scenes[0].visual.character,
+    'Dr. A: mid-30s woman, 5\'6", medium-brown skin, charcoal blazer, speaking to camera',
+    'a faithful copy in plain characters is left exactly as the model wrote it'
+  );
+  assert.equal((result.scenes[0].visualPrompt.match(/charcoal blazer/g) || []).length, 1, 'the description reaches the flat prompt once');
+  assert.match(result.scenes[1].visual.character, /^mid‑30s woman, 5’6", medium‑brown skin, charcoal blazer /, 'a genuinely missing anchor is still prepended, as the bible wrote it');
+});
+
+test('normalizeForAnchorMatch folds dash, quote, space and case variants, and only those', () => {
+  assert.equal(normalizeForAnchorMatch('Mid‑30s,  5’6" tall'), normalizeForAnchorMatch("mid-30s, 5'6\" tall"));
+  assert.equal(normalizeForAnchorMatch('a–b — c'), 'a-b - c');
+  assert.notEqual(normalizeForAnchorMatch('mid-30s woman'), normalizeForAnchorMatch('mid-40s woman'), 'a different description is still different');
+  assert.equal(normalizeForAnchorMatch(undefined as any), '');
+});
+
+test('an unknown charactersInFrame id is skipped without throwing', async () => {
+  const script = scriptWithScenes(1);
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: { character: 'A mysterious figure', background: 'a dark alley', scene: 'the figure waits', styleAnchor: 'STYLE', negative: 'n' },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: ['ghost'],
+    locationId: 'alley',
+  });
+  const { ai } = fakeArtAi(perScene);
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.equal(result.scenes[0].visual.character, 'A mysterious figure');
+});
+
+test('priorVisualContext is empty for the opening chunk and carries the tally, locations and shots from chunk 2 onward', async () => {
+  const script = scriptWithScenes(12, { visualType: (n) => (n <= 6 ? 'terminal' : 'diagram') }); // 2 art chunks: 1-6, 7-12
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: { character: 'No characters in frame.', background: n === 1 ? 'a server room' : `bg-${n}`, scene: `scene ${n}`, styleAnchor: 'STYLE', negative: 'n' },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: [],
+    locationId: n === 1 ? 'server-room' : `loc-${n}`,
+  });
+  const { ai, artPrompts } = fakeArtAi(perScene);
+  await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.match(artPrompts[1], /opening chunk of the art-direction pass/);
+  // The instructional text names "PRIOR VISUAL CONTEXT" on every chunk (telling the model where to
+  // look for it); only the dynamic block itself — this exact heading — is chunk-2-onward.
+  assert.doesNotMatch(artPrompts[1], /PRIOR VISUAL CONTEXT \(from earlier chunks/);
+  assert.match(artPrompts[7], /PRIOR VISUAL CONTEXT \(from earlier chunks/);
+  assert.match(artPrompts[7], /terminal=6/);
+  assert.match(artPrompts[7], /"server-room": a server room/);
+});
+
+test('the documentary shot-rhythm hint only appears under Deep Dive Documentary tone', async () => {
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: { character: 'No characters in frame.', background: `bg-${n}`, scene: `scene ${n}`, styleAnchor: 'STYLE', negative: 'n' },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: [],
+    locationId: `loc-${n}`,
+  });
+
+  const doc = fakeArtAi(perScene);
+  await applyVisualDirection(doc.ai, scriptWithScenes(12, { tonePacing: 'Deep Dive Documentary' }), RESEARCH, {});
+  assert.match(doc.artPrompts[7], /at least half of ALL scenes should end up "terminal", "diagram" or "headline"/);
+
+  const fun = fakeArtAi(perScene);
+  await applyVisualDirection(fun.ai, scriptWithScenes(12, { tonePacing: 'Witty Tech & Sarcastic' }), RESEARCH, {});
+  assert.doesNotMatch(fun.artPrompts[7], /at least half of ALL scenes/);
+});
+
+test("a journaled chunk still informs the next chunk's priorVisualContext after resume", async () => {
+  const script = scriptWithScenes(12);
+  const perScene = (n: number) => ({
+    sceneNumber: n,
+    visual: { character: 'No characters in frame.', background: n === 1 ? 'a server room' : `bg-${n}`, scene: `scene ${n}`, styleAnchor: 'STYLE', negative: 'n' },
+    motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+    citations: [],
+    charactersInFrame: [],
+    locationId: n === 1 ? 'server-room' : `loc-${n}`,
+  });
+
+  const journal1 = await RunJournal.open('art-resume', 'h', { dir });
+  const run1 = fakeArtAi(perScene, 7);
+  await assert.rejects(applyVisualDirection(run1.ai, { ...script }, RESEARCH, { strict: true, journal: journal1 }));
+  assert.equal(journal1.progress().artChunksDone, 1);
+
+  resetModelCooldowns();
+  const journal2 = await RunJournal.open('art-resume', 'h', { dir });
+  const run2 = fakeArtAi(perScene);
+  await applyVisualDirection(run2.ai, { ...script }, RESEARCH, { strict: true, journal: journal2 });
+
+  assert.ok(!(1 in run2.artPrompts), 'chunk 1 should be served from the journal, not regenerated');
+  assert.match(
+    run2.artPrompts[7],
+    /"server-room": a server room/,
+    "chunk 2's context must still know about chunk 1's location even though chunk 1 itself was replayed from the journal"
+  );
+});
+
+test("canonical anchor and background resolve by scene number, not the order scenes appear in a chunk's response", async () => {
+  const script = scriptWithScenes(2);
+  const ai: any = {
+    models: {
+      generateContent: async () => ({
+        // Scene 2 returned FIRST in the response array, before scene 1 — the code must still treat
+        // scene 1 (the lower scene number) as "first occurrence" for canonical values.
+        text: JSON.stringify({
+          scenes: [
+            {
+              sceneNumber: 2,
+              visual: { character: 'c', background: 'bg-2', scene: 's2', styleAnchor: 'ANCHOR-2', negative: 'n' },
+              motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+              citations: [],
+              charactersInFrame: [],
+              locationId: 'loc2',
+            },
+            {
+              sceneNumber: 1,
+              visual: { character: 'c', background: 'bg-1', scene: 's1', styleAnchor: 'ANCHOR-1', negative: 'n' },
+              motion: { shotType: 's', cameraMove: 'm', subjectMotion: 'x', durationSec: 10, easing: 'e', transitionOut: 't', motionPrompt: 'p' },
+              citations: [],
+              charactersInFrame: [],
+              locationId: 'loc1',
+            },
+          ],
+        }),
+        candidates: [{ finishReason: 'STOP' }],
+        usageMetadata: {},
+      }),
+    },
+  };
+  const result = await applyVisualDirection(ai, script, RESEARCH, {});
+  assert.equal(result.scenes[0].visual.styleAnchor, 'ANCHOR-1', "scene 1's own styleAnchor wins the canonical slot, since it is first by scene number");
+  assert.equal(result.scenes[1].visual.styleAnchor, 'ANCHOR-1', 'scene 2 is force-overwritten to match');
 });

@@ -168,7 +168,8 @@ async function generateVisualDirectionChunk(
   chunkScenes: any[],
   bible: any[],
   style: any,
-  researchData: any
+  researchData: any,
+  priorVisualContext: string
 ): Promise<any[]> {
   const sourceIds = (researchData?.retrievedSources || [])
     .filter((r: any) => r.ok)
@@ -193,6 +194,8 @@ ${JSON.stringify(style, null, 2)}
 AVAILABLE SOURCE IDS for citations:
 ${sourceIds.length ? sourceIds.join('\n') : '(none retrieved — return [] for every citations field)'}
 
+${priorVisualContext}
+
 SCENES (one chunk of a longer script — direct these ${chunkScenes.length} on their own terms; the shared style guide above is what keeps them visually unified with the rest):
 ${JSON.stringify(
   chunkScenes.map((s: any) => ({
@@ -213,23 +216,121 @@ For EVERY scene above return an object with:
 - "sceneNumber": matching integer
 - "visual":
   - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "${NO_CHARACTERS_SENTINEL}"
-  - "background": ONLY the environment — location, architecture, depth, atmosphere, time of day. Mention no people.
+  - "background": ONLY the environment — location, architecture, depth, atmosphere, time of day. Mention no people. If this scene returns to a place already established in PRIOR VISUAL CONTEXT above, match that wording as closely as you can (the code enforces it verbatim regardless — matching now avoids a jarring rewrite when it does).
   - "scene": the composed shot — how character and background combine, staging, focal point, foreground/midground/background layering, composition rule.
   - "styleAnchor": the style guide restated compactly. This string MUST be byte-identical across every scene.
   - "negative": what must not appear in this image.
-- "motion": "shotType", "cameraMove", "subjectMotion", "durationSec" (match durationEst), "easing", "transitionOut", and "motionPrompt" — one ready-to-paste sentence for an image-to-video model.
+- "motion": "shotType", "cameraMove", "subjectMotion", "durationSec" (match durationEst), "easing", "transitionOut", and "motionPrompt" — one ready-to-paste sentence for an image-to-video model. Vary "shotType" and "cameraMove" across this chunk and against PRIOR VISUAL CONTEXT's recent shots below — repeating the same combination scene after scene reads as one long take, not a cut cadence.
 - "citations": source ids backing the factual claims in that scene's narration; [] for purely rhetorical scenes. Never invent an id that is not listed above.
+- "charactersInFrame": the bible "id" of every character actually in frame in this scene (their promptAnchor is already folded into "character" above) — [] if nobody is in frame. Only use ids from CHARACTER BIBLE above; never invent one.
+- "locationId": a short, lowercase, hyphenated slug for this scene's environment (e.g. "server-room", "conference-hallway") — reused byte-for-byte whenever the story returns to the same place. Even a one-off location that never recurs gets its own slug; never leave this blank.
 
 Return exactly ${chunkScenes.length} entries, one per scene above, in order.`;
 
   const direction: any = await generateJson(
     ai,
     prompt,
-    'You are a precise art director. Output strictly valid JSON matching the schema. Reuse character promptAnchor strings verbatim so characters stay identical between scenes.',
+    'You are a precise art director. Output strictly valid JSON matching the schema. Reuse character promptAnchor strings verbatim so characters stay identical between scenes, and reuse locationId/background wording verbatim for a place you have already visited.',
     TEXT_MODELS,
     buildVisualDirectionSchema(chunkScenes.length)
   );
   return Array.isArray(direction?.scenes) ? direction.scenes : [];
+}
+
+/** Empty/whitespace-only ids are treated as "not provided" so an old journaled chunk (before this
+ *  field existed) or a model that skipped it degrades to pre-existing behavior instead of throwing. */
+function normalizeLocationId(id: unknown): string | undefined {
+  const t = String(id || '').trim().toLowerCase();
+  return t || undefined;
+}
+
+/**
+ * Gap "promptAnchor reuse" (CLAUDE.md "Visual consistency"), closed the same shape as styleAnchor's
+ * existing enforcement below: don't trust the model to have pasted a character's promptAnchor
+ * verbatim into `visual.character` — check, and splice it in if it didn't. Prepended rather than
+ * appended: the anchor is the character's fixed identity, and the rest of `character` is this
+ * scene's pose/expression on top of it, so leading with the anchor keeps that framing.
+ */
+function enforcePromptAnchors(characterText: string, characterIds: string[], bible: any[], sceneNumber: number): string {
+  let result = characterText;
+  for (const id of characterIds) {
+    const entry = bible.find((c: any) => c?.id === id);
+    const anchor = String(entry?.promptAnchor || '').trim();
+    if (!anchor) {
+      // The model listed an id that isn't in the bible it was given — nothing to enforce.
+      console.warn(`[Art Director] scene ${sceneNumber}: charactersInFrame referenced unknown character id "${id}"`);
+      continue;
+    }
+    // Compared in normalized form: a model that writes a plain hyphen for the bible's non-breaking one, or a straight
+    // apostrophe for a curly one, has still copied the anchor — prepending it again put the same description into
+    // the image prompt twice (live run, scene 6).
+    if (!normalizeForAnchorMatch(result).includes(normalizeForAnchorMatch(anchor))) result = `${anchor} ${result}`.trim();
+  }
+  return result;
+}
+
+/**
+ * The form in which a character description is compared with its anchor: Unicode-normalised, every dash and quote
+ * variant folded to ASCII, whitespace collapsed, case ignored. Models routinely emit non-breaking hyphens (U+2011)
+ * and curly apostrophes in the bible's anchor and plain ones when they copy it, so an exact substring test called
+ * a faithful copy a miss. Case is ignored because a lower-cased copy is still the same description.
+ */
+export function normalizeForAnchorMatch(text: string): string {
+  return String(text ?? '')
+    .normalize('NFKC')
+    .replace(/[‐-―−]/g, '-')
+    .replace(/[‘’‚‛′]/g, "'")
+    .replace(/[“”„‟″]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+const PRIOR_SHOT_WINDOW = 6;
+
+/**
+ * Gaps "recurring backgrounds" and "cut/shot rhythm" (CLAUDE.md "Visual consistency"): gives each
+ * chunk after the first visibility into every earlier chunk, the same shape as the narrative pass's
+ * existing priorScenesContext (generateSceneChunk). Built from `processedScenes` (the original
+ * scenes already sent to earlier chunks, which carry visualType) joined against `directionsSoFar`
+ * (their art-direction results, which carry motion/visual/locationId) by sceneNumber.
+ */
+function buildPriorVisualContext(processedScenes: any[], directionsSoFar: any[], isDocTone: boolean): string {
+  if (processedScenes.length === 0) {
+    return '(This is the opening chunk of the art-direction pass — no locations or shot rhythm established yet.)';
+  }
+  const byNumber = new Map<number, any>();
+  for (const d of directionsSoFar) byNumber.set(Number(d.sceneNumber), d);
+
+  const visualTypeCounts: Record<string, number> = {};
+  const locationsSeen = new Map<string, string>(); // locationId -> canonical background text
+  const recentShots: string[] = [];
+
+  for (const s of processedScenes) {
+    if (s.visualType) visualTypeCounts[s.visualType] = (visualTypeCounts[s.visualType] || 0) + 1;
+    const d = byNumber.get(Number(s.sceneNumber));
+    if (!d) continue;
+    const loc = normalizeLocationId(d.locationId);
+    if (loc && d.visual?.background && !locationsSeen.has(loc)) locationsSeen.set(loc, d.visual.background);
+    if (d.motion?.shotType || d.motion?.cameraMove) {
+      recentShots.push(`#${s.sceneNumber} ${d.motion.shotType || '?'}/${d.motion.cameraMove || '?'}`);
+    }
+  }
+
+  const tally = Object.entries(visualTypeCounts).map(([k, v]) => `${k}=${v}`).join(', ') || 'none yet';
+  const locationsBlock = locationsSeen.size
+    ? [...locationsSeen.entries()].map(([id, bg]) => `  - "${id}": ${bg}`).join('\n')
+    : '  (none established yet)';
+  const shotsBlock = recentShots.slice(-PRIOR_SHOT_WINDOW).join('; ') || '(none yet)';
+  const docHint = isDocTone
+    ? ` This is a documentary script: at least half of ALL scenes should end up "terminal", "diagram" or "headline" — lean into whichever the tally above is short on.`
+    : '';
+
+  return `PRIOR VISUAL CONTEXT (from earlier chunks of this same script — use it, don't repeat it):
+- visualType tally so far: ${tally}.${docHint}
+- Locations already established — if a scene below returns to one of these places, reuse its exact locationId:
+${locationsBlock}
+- Last ${PRIOR_SHOT_WINDOW} scenes' shot type / camera move, so you can vary rhythm rather than repeat it: ${shotsBlock}`;
 }
 
 /**
@@ -250,6 +351,10 @@ export async function applyVisualDirection(ai: GoogleGenAI, script: any, researc
 
   const bible = script.characterBible || [];
   const style = script.styleGuide || {};
+  // script.tonePacing is set by server.ts from videoPlan.tone before this runs (both the real and
+  // fallback-script paths) — applyVisualDirection doesn't take videoPlan directly, so this is the
+  // one signal it has for the documentary shot-rhythm hint in buildPriorVisualContext.
+  const isDocTone = isDocumentaryTone(script?.tonePacing);
 
   const allDirections: any[] = [];
   const numChunks = Math.ceil(scenes.length / VISUAL_DIRECTION_SCENES_PER_CHUNK);
@@ -263,8 +368,11 @@ export async function applyVisualDirection(ai: GoogleGenAI, script: any, researc
       allDirections.push(...cached);
       continue;
     }
+    // Built AFTER the cache-check `continue`, so a resumed chunk contributes its state to the next
+    // not-yet-generated chunk's context without needing to be regenerated itself.
+    const priorVisualContext = buildPriorVisualContext(scenes.slice(0, i), allDirections, isDocTone);
     try {
-      const chunkDirections = await generateVisualDirectionChunk(ai, chunk, bible, style, researchData);
+      const chunkDirections = await generateVisualDirectionChunk(ai, chunk, bible, style, researchData, priorVisualContext);
       allDirections.push(...chunkDirections);
       await opts.journal?.setArtChunk(chunkIndex, firstScene, chunkDirections);
     } catch (err: any) {
@@ -281,21 +389,47 @@ export async function applyVisualDirection(ai: GoogleGenAI, script: any, researc
 
   const byNumber = new Map<number, any>();
   for (const d of allDirections) byNumber.set(Number(d.sceneNumber), d);
+  // Walk `scenes`' original order rather than allDirections' raw push order: chunks are processed
+  // sequentially so chunk order is already correct, but nothing guarantees a chunk's own response
+  // preserves the requested scene order within itself. This makes "first occurrence" unambiguous
+  // for the canonical values below.
+  const orderedDirections = scenes.map((s: any) => byNumber.get(Number(s.sceneNumber))).filter(Boolean);
 
   // A single styleAnchor wins across the whole script even if a chunk varied
-  // it — the first one produced by any chunk, not just the first chunk,
-  // since an earlier chunk's call may have failed entirely.
-  const canonicalAnchor = allDirections.map((d: any) => d?.visual?.styleAnchor).find(Boolean);
+  // it — the first one produced by any scene in script order, since an
+  // earlier chunk's call may have failed entirely.
+  const canonicalAnchor = orderedDirections.map((d: any) => d?.visual?.styleAnchor).find(Boolean);
+
+  // Recurring backgrounds: first occurrence of a locationId sets the canonical background text;
+  // every later scene claiming the same locationId is force-overwritten to match it, exactly like
+  // styleAnchor above.
+  const canonicalBackgroundByLocation = new Map<string, string>();
+  for (const d of orderedDirections) {
+    const loc = normalizeLocationId(d.locationId);
+    const bg = d?.visual?.background;
+    if (loc && bg && !canonicalBackgroundByLocation.has(loc)) canonicalBackgroundByLocation.set(loc, bg);
+  }
 
   script.scenes = scenes.map((s: any) => {
     const d = byNumber.get(Number(s.sceneNumber));
     if (!d) return s;
-    const visual = d.visual ? { ...d.visual, styleAnchor: canonicalAnchor || d.visual.styleAnchor } : undefined;
+    const loc = normalizeLocationId(d.locationId);
+    const canonicalBackground = loc ? canonicalBackgroundByLocation.get(loc) : undefined;
+    // promptAnchor reuse: force-include every listed character's anchor, regardless of what the model did.
+    const character =
+      d.visual?.character && d.visual.character !== NO_CHARACTERS_SENTINEL && Array.isArray(d.charactersInFrame) && d.charactersInFrame.length
+        ? enforcePromptAnchors(d.visual.character, d.charactersInFrame, bible, s.sceneNumber)
+        : d.visual?.character;
+    const visual = d.visual
+      ? { ...d.visual, character, background: canonicalBackground || d.visual.background, styleAnchor: canonicalAnchor || d.visual.styleAnchor }
+      : undefined;
     return {
       ...s,
       ...(visual ? { visual } : {}),
       ...(d.motion ? { motion: d.motion } : {}),
       ...(Array.isArray(d.citations) ? { citations: d.citations } : {}),
+      ...(loc ? { locationId: loc } : {}),
+      ...(Array.isArray(d.charactersInFrame) ? { charactersInFrame: d.charactersInFrame } : {}),
       // Keep the flat prompt consistent with the layered one: subject, then setting, then
       // composition, then style — the same information the structured `visual` object carries,
       // just concatenated. Previously this dropped `character` and `background` entirely, which
@@ -376,6 +510,10 @@ Do NOT output generic text about unrelated topics.
 FACTUAL DISCIPLINE: every figure, date, version number and quoted comment in the narration must trace to the research dossier. The dossier lists what was actually retrieved under "retrievedSources" and per-fact attribution under "factCitations". Do not introduce specifics the dossier does not contain.
 
 ${profile.disclosureDiscipline}
+
+CLAIMS THE DOSSIER CANNOT BACK: how big it was and what it did are claims too, not just figures. Say only what "keyFacts" state. The dossier's "researchGaps" lists what the sources never established — typically how many people or systems were affected, whether it was actually abused, and what it cost. Where a gap covers it, narrate what is known instead (what it made possible, what it exposed, for how long) and phrase it as what was possible, not what happened: "this made it possible to read private records", not "private records were taken". Leave a gap unfilled: no size (a number, or "millions", "countless", "the sheer scale") and no consequence the dossier does not report (a breach, a theft, a panic, every user affected). A gap that reports sources disagreeing means the point is unsettled, so say that or leave it out. This holds for every scene, the analyst's included, and for onScreenText and the infographic, because whatever is said or shown on camera is a claim the channel makes.
+
+SCENE-TO-SCENE LOGIC: each scene must connect to the next by a stated causal or curiosity link — this fact causes that consequence, this question is what the next scene answers, this action creates the constraint the next scene has to resolve — never just the next fact in a list. If a scene doesn't cause, answer, or complicate what comes right after it, rewrite it so it does.
 
 The production bible and style guide are already fixed (given above). Write to them.
 

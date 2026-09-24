@@ -30,10 +30,13 @@ import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOl
 import { extractUrls, fetchSources, buildSourceContext, sourceId } from './server/sourceFetcher';
 import { writeSourceArchive } from './server/sourceArchive';
 import { measureCoverage } from './server/researchCoverage';
+import { reachGapFor } from './server/reachGap';
+import { scrubCveIds } from './server/severityScrub';
 import { generateSceneImage } from './server/imageProviders';
 import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import { DEFAULT_CHANNEL_BRAND } from './shared/brand';
 import { isDocumentaryTone } from './shared/tone';
+import { stripCveIds } from './shared/plainTitle';
 import { resolveTopicProfile, type TopicProfile } from './shared/topicProfile';
 import {
   generateNotebookLMAudioService,
@@ -121,7 +124,7 @@ ${messageText}
 </input>
 
 CRITICAL INSTRUCTIONS:
-0. SOURCE DISCIPLINE: Every specific figure, date, CVE id, version number, company name and direct quote must come from the PRIMARY SOURCE DOCUMENTS above. Populate "factCitations" mapping each entry of "keyFacts" to the source ids (S1, S2, …) that support it — every key fact gets an entry, because a fact nobody can trace is a fact the video cannot defend. If the sources do not cover a detail, omit it rather than inventing it. If no sources were retrieved, keep claims general and leave factCitations empty.
+0. SOURCE DISCIPLINE: Every specific figure, date, CVE id, version number, company name and direct quote must come from the PRIMARY SOURCE DOCUMENTS above. Populate "factCitations" mapping each entry of "keyFacts" to the source ids (S1, S2, …) that support it — every key fact gets an entry, because a fact nobody can trace is a fact the video cannot defend. When two or more retrieved sources independently state the same fact, list every one of their ids in "sourceIds" — corroboration is signaled by how many sources back a fact, not just by citing the first one that mentions it. If the sources do not cover a detail, omit it rather than inventing it. If no sources were retrieved, keep claims general and leave factCitations empty.
 ${profile.researchGroundingInstruction}
 ${profile.researchExplainClause}
 3. COMMUNITY REACTION comes ONLY from a source document whose retrieval note says it was read via the Hacker News API. If there is none, set "hnCommunitySentiment" to {"consensus": "No Hacker News discussion was retrieved for this story.", "contrarianView": "No Hacker News discussion was retrieved for this story.", "topHnComments": []}. Never write a comment, handle or reaction that is not printed in a retrieved document — inventing a commenter is fabrication. When such a document exists, each "topHnComments" entry uses an author handle exactly as printed and a "comment" copied verbatim (shortening with … is fine); leave out any point/karma figure, the API does not provide one; "consensus" and "contrarianView" must be supportable from the comments actually shown there.
@@ -131,6 +134,8 @@ ${profile.researchExplainClause}
         : 'This dossier has to carry a full video script.'
     } Aim for at least ${KEY_FACT_TARGET_WITH_SOURCES} distinct, citable entries in "keyFacts", and count as a fact anything concrete the documents state: the mechanism, affected versions and products, dates, who found it and how, numbers of systems or users, the vendor's response, the mitigation, what is still unresolved. Distinct is the point — one finding restated five ways is one fact.
    When the retrieved documents genuinely do not support that many, return the ones they do support and put the shortfall in "researchGaps": one short line per missing piece, naming what the script still needs and what would answer it (for example "no affected version range stated — the vendor advisory would give it"). A short "keyFacts" plus an honest "researchGaps" is the correct answer here; padding the list to reach a number is a failure, because every unsupported line becomes a sentence a narrator says on camera.
+   Sources disagreeing is worth reporting too: if two retrieved documents give different figures, dates or accounts for the same point, do not silently pick one to sound certain — add a "researchGaps" entry naming the disagreement and what would resolve it (for example "the vendor advisory and the researcher's write-up give different affected version ranges — the patched changelog would settle it"), the same honest-uncertainty shape as a coverage gap.
+   Check the documents for how far it reached, because that is a viewer's first question: how many people, systems or dollars were affected, whether it was actually abused, and what it cost. For each of those the documents do not state, add a "researchGaps" entry saying so (for example "no figure for how many sites were affected — the write-up explains the flaw but never its reach"). Report the absence rather than estimating it: a round number, or a word like "millions", that the documents do not contain becomes a claim the narrator makes on camera.
 5. DATES: take "when" from each document's \`published\` attribute, not from \`retrieved\` (which is only when this tool read the page) and not from today's date. Where \`published\` is "not stated by the page", write the timing as unknown or leave it out.
 
 Return strictly a valid JSON object matching this schema:
@@ -162,7 +167,7 @@ Return strictly a valid JSON object matching this schema:
     "… as many distinct ones as the documents actually support"
   ],
   "researchGaps": [
-    "What a script this long still needs that the documents do not answer, and what would answer it — empty array if nothing is missing"
+    "What a script this long still needs that the documents do not answer, and what would answer it — including how far it reached (how many affected, whether it was abused, what it cost) when no document gives a figure. Empty array only if nothing is missing"
   ],
   "factCitations": [
     { "fact": "the exact text of one keyFacts entry", "sourceIds": ["S1"] }
@@ -195,6 +200,13 @@ Return strictly a valid JSON object matching this schema:
     parsedData.researchCoverage = measureCoverage(parsedData, fetched, sourceArchiveId);
     if (sourcesUnavailable) {
       parsedData.sourcesUnavailable = true;
+    }
+    // A dossier that never says how far the incident reached invites the script to guess ("millions of
+    // websites"). The prompt asks for this gap, but a model that met its fact count still returns [],
+    // so it is also added here in code. Never onto canned content, which has no sources to be silent.
+    if (!sourcesUnavailable && !parsedData.isQuotaFallback) {
+      const reachGap = reachGapFor(parsedData);
+      if (reachGap) parsedData.researchGaps = [...(Array.isArray(parsedData.researchGaps) ? parsedData.researchGaps : []), reachGap];
     }
     const cov = parsedData.researchCoverage;
     console.log(
@@ -246,22 +258,25 @@ app.post('/api/plan', async (req, res) => {
       isDocumentary && duration >= 480
         ? `Long-form monetisation: plan so the problem is fully set up by about 2:30 and the technical fix is held back until about 6:00, so the two manual mid-roll ads fall on natural boundaries. Give the acts plain names (Hook, Context, Technical Breakdown, Impact, The Fix, Conclusion).\n\n`
         : '';
+    // The dossier's own title often carries a CVE id ("Name (CVE-…)"), and the examples below echo it,
+    // so the model copies it into the plan. Strip it here; the response title is cleaned again below.
+    const dossierTitle = stripCveIds(researchData.topicTitle || '');
     const documentaryExample = `{
-  "title": "${researchData.topicTitle || 'Accurate, specific video title'}",
+  "title": "${dossierTitle || 'Accurate, specific video title'}",
   "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
   "targetDurationSec": ${duration},
   "tone": "Deep Dive Documentary",
-  "hookStrategy": "One specific, verifiable fact from this story that reframes it, stated in the first 15 seconds — no logo intro, no title card",
+  "hookStrategy": "Curiosity-gap open loop: state one specific, verifiable fact from this story that reframes it, in the first 15 seconds — no logo intro, no title card, answer why only later",
   "coreConflict": "The central question this story forces: what failed, and why did it stay hidden?",
   "pacingStyle": "Measured documentary pacing: a distinct visual change (architecture diagram, terminal capture, source screenshot or data graph) at least every 20-30 seconds",
-  "targetAudience": "Security engineers, SREs, CTOs and technical founders",
+  "targetAudience": "Curious viewers who know no tech and want to understand what happened and why it matters to them",
   "narrativeBeats": [
     {
       "act": "Act 1: Cold Open",
       "purpose": "State the most consequential verified fact and what it put at risk",
       "durationSec": 8,
       "visualTone": "Slow push-in on a source document or terminal capture",
-      "keyTakeaway": "Why this matters to the viewer's own systems"
+      "keyTakeaway": "Why this matters to the viewer's own life"
     },
     {
       "act": "Act 2: Context",
@@ -272,24 +287,24 @@ app.post('/api/plan', async (req, res) => {
     },
     {
       "act": "Act 3: Technical Breakdown",
-      "purpose": "Explain exactly how it worked, step by step, with one analogy for the hard part",
+      "purpose": "Explain how it worked, step by step, in everyday words, with one analogy for the hard part",
       "durationSec": 18,
       "visualTone": "Terminal captures and an annotated attack-chain diagram",
-      "keyTakeaway": "The viewer could explain the mechanism to a colleague"
+      "keyTakeaway": "The viewer could explain the mechanism to a friend who knows no tech"
     },
     {
       "act": "Act 4: Impact",
-      "purpose": "Who and what was affected, using only figures found in the sources",
+      "purpose": "Who and what was affected, using only figures found in the sources; if the research lists the scale as a gap, use what could be exposed and for how long instead",
       "durationSec": 12,
       "visualTone": "Data graph or timeline built from sourced numbers",
       "keyTakeaway": "The real blast radius, without exaggeration"
     },
     {
       "act": "Act 5: The Fix",
-      "purpose": "What defenders should do now, then one calm closing line",
+      "purpose": "What was fixed and what changed afterwards, using only what the sources state, then one calm closing line",
       "durationSec": 10,
       "visualTone": "Checklist over a clean terminal, then a quiet hold",
-      "keyTakeaway": "A concrete next step for Monday morning"
+      "keyTakeaway": "One idea the viewer will remember"
     }
   ],
   "viralRetentionHooks": [
@@ -300,14 +315,14 @@ app.post('/api/plan', async (req, res) => {
   "callToAction": "One calm closing line that points to the sources in the description"
 }`;
     const infotainmentExample = `{
-  "title": "${researchData.topicTitle || 'High-CTR Video Title'}",
+  "title": "${dossierTitle || 'High-CTR Video Title'}",
   "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
   "targetDurationSec": ${duration},
   "tone": "${targetTone || 'Witty Tech & Sarcastic'}",
-  "hookStrategy": "Specific visual + verbal 3-second hook pattern to stop scrolling on this exact story",
+  "hookStrategy": "In-medias-res cold open: a 3-second visual + verbal hook that drops the viewer into this story's most striking moment before any setup",
   "coreConflict": "The central drama or technological dilemma for this topic",
   "pacingStyle": "Fast-cut with terminal memes, code alerts, and dramatic pauses",
-  "targetAudience": "Developers, DevOps engineers, security researchers, and curious hackers",
+  "targetAudience": "Curious viewers who know no tech and want the story told fast, clearly and entertainingly",
   "narrativeBeats": [
     {
       "act": "Act 1: The Inciting Incident",
@@ -328,7 +343,7 @@ app.post('/api/plan', async (req, res) => {
       "purpose": "Highlight the community panic, funny debates, and roasted PRs/disclosures",
       "durationSec": 15,
       "visualTone": "Retro forum thread floating in cyberspace with upvote counters",
-      "keyTakeaway": "Relatable developer and security humor"
+      "keyTakeaway": "Relatable, shareable humor"
     },
     {
       "act": "Act 4: The Twist / Revelation",
@@ -350,17 +365,17 @@ app.post('/api/plan', async (req, res) => {
     "On-screen visual easter egg at second 25",
     "Open loop question before the reveal"
   ],
-  "callToAction": "Drop a comment: How is your team handling this?"
+  "callToAction": "Drop a comment: What would you have done?"
 }`;
     // Same JSON shape as documentaryExample/infotainmentExample above (per CLAUDE.md, the inline
     // example wins over instructions, so a cyber-flavored example would bias every topic toward
     // cyber content regardless of what was asked for) — only the illustrative content is generic.
     const genericDocumentaryExample = `{
-  "title": "${researchData.topicTitle || 'Accurate, specific video title'}",
+  "title": "${dossierTitle || 'Accurate, specific video title'}",
   "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
   "targetDurationSec": ${duration},
   "tone": "Deep Dive Documentary",
-  "hookStrategy": "One specific, verifiable fact from this story that reframes it, stated in the first 15 seconds — no logo intro, no title card",
+  "hookStrategy": "Curiosity-gap open loop: state one specific, verifiable fact from this story that reframes it, in the first 15 seconds — no logo intro, no title card, answer why only later",
   "coreConflict": "The central question this story forces: what happened, and why did it stay hidden or go unnoticed?",
   "pacingStyle": "Measured documentary pacing: a distinct visual change (a document, a data graph, a real photo or a clean diagram) at least every 20-30 seconds",
   "targetAudience": "Curious, general-audience viewers who want ${profile.domainLabel} explained with real depth and no oversimplification",
@@ -388,7 +403,7 @@ app.post('/api/plan', async (req, res) => {
     },
     {
       "act": "Act 4: Impact",
-      "purpose": "Who and what was affected, using only figures found in the sources",
+      "purpose": "Who and what was affected, using only figures found in the sources; if the research lists the scale as a gap, use what could be exposed and for how long instead",
       "durationSec": 12,
       "visualTone": "Data graph or timeline built from sourced numbers",
       "keyTakeaway": "The real scale, without exaggeration"
@@ -409,11 +424,11 @@ app.post('/api/plan', async (req, res) => {
   "callToAction": "One calm closing line that points to the sources in the description"
 }`;
     const genericInfotainmentExample = `{
-  "title": "${researchData.topicTitle || 'High-CTR Video Title'}",
+  "title": "${dossierTitle || 'High-CTR Video Title'}",
   "format": "${targetFormat?.includes('16:9') ? '16:9' : '9:16'}",
   "targetDurationSec": ${duration},
   "tone": "${targetTone || 'Witty & Sarcastic'}",
-  "hookStrategy": "Specific visual + verbal 3-second hook pattern to stop scrolling on this exact story",
+  "hookStrategy": "In-medias-res cold open: a 3-second visual + verbal hook that drops the viewer into this story's most striking moment before any setup",
   "coreConflict": "The central drama or dilemma at the heart of this story",
   "pacingStyle": "Fast-cut with on-screen text callouts, quick zooms, and dramatic pauses",
   "targetAudience": "Fans of fast-paced ${profile.domainLabel} content who want it explained in an entertaining, shareable way",
@@ -483,6 +498,12 @@ CRITICAL MANDATE:
 The entire video plan MUST be strictly focused on the topic in the Research Data: "${researchData.topicTitle || 'the provided story'}".
 ${profile.planTopicDriftClause}
 
+${profile.planAudienceNote}
+
+EVIDENCE LIMITS: the Research Data's "researchGaps" lists what the sources do not say. Plan each act only around what its "keyFacts" support. Where a gap says the scale is unknown (how many were affected, whether it was abused, what it cost), build that act on what is known — how it worked, what it exposed, for how long — and let the plan treat the scale as unconfirmed. A number, or a word like "millions", that the dossier does not contain becomes a claim the narrator makes on camera. This includes "hookStrategy": open on a fact from "keyFacts", not on an estimate.
+
+HOOK MECHANISM: "hookStrategy" must name a deliberate technique, not generic boilerplate like "grab attention fast" — pick whichever actually fits this story: a curiosity-gap / open loop (state a striking consequence before its cause, resolve it only later), an in-medias-res cold open (start mid-action, explain how it got there), a contrast or reversal (what everyone assumed vs. what was actually true), or a ticking-clock frame (a window that was closing, before it's revealed how). Say which one you used and why it fits this specific story.
+
 ${placementHint}Create a structured video plan with narrative acts, retention hooks, and visual direction.
 The narrativeBeats' durationSec values MUST sum to approximately ${duration} seconds. For anything past ~90 seconds, add MORE acts rather than inflating a handful of them to unrealistic individual lengths — e.g. a ${duration}s plan should have roughly ${Math.max(5, Math.round(duration / 45))} acts, each covering a distinct beat of the story, not 5 acts stretched thin.
 Output strictly a JSON object matching this schema:
@@ -501,6 +522,7 @@ REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum
       }
     );
 
+    if (typeof plan?.title === 'string') plan.title = stripCveIds(plan.title);
     res.json(plan);
   } catch (error: any) {
     if (strict) return sendStrictFailure(res, error);
@@ -652,8 +674,23 @@ app.post('/api/script', async (req, res) => {
 
     if (usedFallback) degraded.push('Canned fallback script: AI generation was unavailable, so this is placeholder content, not a real draft.');
     script.generation = buildGenerationSummary(script, { runId: runKey, resumed: journal.resumed, requestedDurationSec, degraded });
+    // A CVE id in what the viewer sees or hears is replaced here, before the audit and before the journal keeps
+    // the script: the prompt asks for none and the audit only warns, yet a live run still put one in a badge and a
+    // summary (server/severityScrub.ts). Labels such as "CRITICAL RISK" have no clean stand-in and are flagged instead.
+    const scrub = scrubCveIds(script.scenes);
+    script.scenes = scrub.scenes;
     // Deterministic: timeline, chapters, mid-roll markers and the retention/compliance audit.
     Object.assign(script, analyzeScript(script, { requestedDurationSec, research: researchData }));
+    if (scrub.changes.length) {
+      script.qualityChecks.push({
+        id: 'cve-ids-replaced',
+        // A warn, not info: CyberPipe's Telegram review lists only warn and error checks, and this one exists so a
+        // person reads the scenes whose wording was changed.
+        severity: 'warn',
+        message: 'CVE ids were replaced with "the flaw" in what the viewer sees or hears; the wording around a replaced id may read oddly, so read these scenes.',
+        sceneNumbers: scrub.changes.map((c) => c.sceneNumber),
+      });
+    }
     if (!usedFallback) await journal.markComplete(script);
     deliver(script);
   } catch (error: any) {

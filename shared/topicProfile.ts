@@ -35,6 +35,8 @@ export interface TopicProfile {
   planSystemInstructionDocumentary: string;
   planSystemInstructionInfotainment: string;
   planTopicDriftClause: string;
+  /** Who the plan is for. Sits beside `publishAudienceNote`: the plan's inline example used to hardcode a different audience. */
+  planAudienceNote: string;
 
   // server/scriptPipeline.ts — production bible pass
   bibleShowDocumentary: string;
@@ -86,6 +88,8 @@ const DEFAULT_PROFILE: TopicProfile = {
     'You are an award-winning tech infotainment director. Output strictly valid JSON strictly tailored to the topic in the research.',
   planTopicDriftClause:
     'Do NOT invent an unrelated topic (e.g. do NOT talk about virtual DOM or Rust if the story is about JFrog Artifactory or a security vulnerability).',
+  planAudienceNote:
+    'AUDIENCE: the viewer is curious but not technical, and many know no tech at all. Write "targetAudience" as that person in plain words that describe what they care about, and plan every act so someone with no background can follow it: explain the mechanism through one everyday analogy, and convey the stakes through what happened, who was exposed and what an attacker could do. A CVE id or a CVSS score means nothing to them, so keep both out of "title", "callToAction" and every act; the research keeps the id as a fact, the plan does not need it.',
 
   bibleShowDocumentary: 'an investigative cybersecurity documentary',
   bibleShowInfotainment: 'a short infotainment video',
@@ -141,6 +145,7 @@ function buildGenericProfile(domainLabel: string): TopicProfile {
     planSystemInstructionDocumentary: `You are an award-winning documentary director for an investigative channel covering ${domainLabel}. Output strictly valid JSON strictly tailored to the topic in the research. No hype, no fearmongering, no clickbait.`,
     planSystemInstructionInfotainment: `You are an award-winning ${domainLabel} infotainment director. Output strictly valid JSON strictly tailored to the topic in the research.`,
     planTopicDriftClause: 'Do NOT invent an unrelated topic or substitute a different story than the one in the Research Data.',
+    planAudienceNote: `AUDIENCE: the viewer is curious but not an expert in ${domainLabel}. Write "targetAudience" as that person in plain words that describe what they care about, and plan every act so someone with no background can follow it: explain the mechanism through one everyday analogy, and translate any raw statistic, id or rating into what it meant in practice (what happened, who or what was affected, what it changed).`,
 
     bibleShowDocumentary: `an investigative documentary about ${domainLabel}`,
     bibleShowInfotainment: `a short ${domainLabel} infotainment video`,

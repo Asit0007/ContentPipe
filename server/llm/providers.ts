@@ -61,7 +61,8 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     baseUrl: 'https://api.groq.com/openai/v1',
     keyEnv: ['GROQ_API_KEY'],
     modelsEnv: 'GROQ_MODELS',
-    defaultModels: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],
+    // llama-3.3-70b-versatile is gone from Groq's live list (checked 2026-09-24); qwen3.8-27b replaced it.
+    defaultModels: ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'],
     maxTokensParam: 'max_completion_tokens',
     maxTokens: 16000,
   },
@@ -81,10 +82,26 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     baseUrl: 'https://openrouter.ai/api/v1',
     keyEnv: ['OPENROUTER_API_KEY'],
     modelsEnv: 'OPENROUTER_MODELS',
-    defaultModels: ['openai/gpt-oss-120b:free', 'meta-llama/llama-3.3-70b-instruct:free'],
+    // The two original `:free` ids no longer exist (OpenRouter answers 404 "unavailable for free"). Free endpoints
+    // are often rate-limited or overloaded upstream, so this is a fallback tier, not a workhorse. Left out on
+    // purpose: inkling:free (403 "only available on agentic harnesses") and ling-3.0-flash-fin:free (no JSON mode).
+    defaultModels: ['z-ai/glm-5.2:free', 'qwen/qwen3.8-27b:free', 'nvidia/nemotron-3.5-lightning:free'],
     maxTokensParam: 'max_tokens',
     maxTokens: 8000,
     headers: { 'X-Title': 'ContentPipe' },
+  },
+  {
+    id: 'ollama',
+    label: 'Ollama Cloud',
+    baseUrl: 'https://ollama.com/v1',
+    // OLAMA_API_KEY is accepted because that is how the key was first named in .env; OLLAMA_API_KEY is the right spelling.
+    keyEnv: ['OLLAMA_API_KEY', 'OLAMA_API_KEY'],
+    modelsEnv: 'OLLAMA_MODELS',
+    // Only what the free usage covers (probed 2026-09-24): every DeepSeek, Kimi, GLM 5.x, Qwen 397B, MiniMax and
+    // Mistral Large 3 model answers 402 "add usage credits". Add those to OLLAMA_MODELS once credits are bought.
+    defaultModels: ['nemotron-3-ultra', 'gemma4:31b', 'nemotron-3-super', 'gpt-oss:120b'],
+    maxTokensParam: 'max_tokens',
+    maxTokens: 8000,
   },
   {
     id: 'mistral',
@@ -99,7 +116,7 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
 ];
 
 /** Default order: strongest first, no-training free tiers before the training one, Gemini last. */
-export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'mistral', 'gemini'];
+export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'ollama', 'mistral', 'gemini'];
 
 export interface ResolvedProvider {
   spec: ProviderSpec;
@@ -129,11 +146,44 @@ export function providerOrder(env: Env = process.env): string[] {
   return out;
 }
 
+export interface ModelOrderEntry {
+  provider: string;
+  model: string;
+}
+
+/**
+ * LLM_MODEL_ORDER: one model-by-model ranking across providers, best first, for when the smartest models live on
+ * different providers and a provider-level order would try a weak model on one before a strong model on another:
+ *
+ *   gemini:gemini-3.7-flash,groq:qwen/qwen3.8-27b,openrouter:z-ai/glm-5.2:free,gemini:gemini-3.6-flash
+ *
+ * Each entry is a provider id, then everything after the FIRST colon as the model id (ids contain slashes and
+ * colons). When set it replaces LLM_PROVIDER_ORDER and the per-provider model lists: only what is named here is
+ * tried. Unset or empty means the provider-level behaviour is unchanged. Malformed entries and repeats are dropped.
+ */
+export function modelOrder(env: Env = process.env): ModelOrderEntry[] {
+  const seen = new Set<string>();
+  const out: ModelOrderEntry[] = [];
+  for (const raw of csv(env.LLM_MODEL_ORDER)) {
+    const i = raw.indexOf(':');
+    if (i <= 0 || i === raw.length - 1) continue;
+    const provider = raw.slice(0, i).trim().toLowerCase();
+    const model = raw.slice(i + 1).trim();
+    if (!provider || !model || seen.has(`${provider}:${model}`)) continue;
+    seen.add(`${provider}:${model}`);
+    out.push({ provider, model });
+  }
+  return out;
+}
+
 /** OpenAI-compatible providers that have a key, in configured order. Gemini is handled by the chain itself. */
 export function resolveProviders(env: Env = process.env): ResolvedProvider[] {
   const byId = new Map(OPENAI_COMPAT_PROVIDERS.map((p) => [p.id, p]));
   const resolved: ResolvedProvider[] = [];
-  for (const id of providerOrder(env)) {
+  const ranked = modelOrder(env);
+  // With an explicit model order, the providers (and their models) are exactly those it names, in order of first mention.
+  const ids = ranked.length ? [...new Set(ranked.map((e) => e.provider))] : providerOrder(env);
+  for (const id of ids) {
     const spec = byId.get(id);
     if (!spec) continue;
     const apiKey = spec.keyEnv.map((k) => env[k]?.trim()).find(Boolean);
@@ -144,7 +194,7 @@ export function resolveProviders(env: Env = process.env): ResolvedProvider[] {
     resolved.push({
       spec: baseUrl ? { ...spec, baseUrl } : spec,
       apiKey,
-      models: override.length ? override : spec.defaultModels,
+      models: ranked.length ? ranked.filter((e) => e.provider === id).map((e) => e.model) : override.length ? override : spec.defaultModels,
       maxTokens: Number.isInteger(cap) && cap > 0 ? cap : spec.maxTokens,
     });
   }
