@@ -1,0 +1,423 @@
+{
+ "title": "Fixture: The Quiet Backdoor",
+ "aspectRatio": "16:9",
+ "scenes": [
+  {
+   "id": "scene-1",
+   "sceneNumber": 1,
+   "title": "Cold open",
+   "actPhase": "Hook",
+   "narration": "...",
+   "durationEst": 8,
+   "visualType": "cyberpunk",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "server-hall",
+   "charactersInFrame": [
+    "mara"
+   ],
+   "visual": {
+    "character": "Mara Quinn, 34, cropped grey hair, navy field jacket, silver ring on left thumb",
+    "background": "background for server-hall",
+    "scene": "composition 1",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "slow push-in",
+    "subjectMotion": "Mara turns toward a flickering rack",
+    "durationSec": 8,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": "Mara turns toward a flickering rack. Slow push-in."
+   }
+  },
+  {
+   "id": "scene-2",
+   "sceneNumber": 2,
+   "title": "The headline",
+   "actPhase": "Hook",
+   "narration": "...",
+   "durationEst": 6,
+   "visualType": "headline",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "newsroom",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for newsroom",
+    "scene": "composition 2",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 6,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  },
+  {
+   "id": "scene-3",
+   "sceneNumber": 3,
+   "title": "The quiet maintainer",
+   "actPhase": "Setup",
+   "narration": "...",
+   "durationEst": 12,
+   "visualType": "cyberpunk",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "maintainer-desk",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for maintainer-desk",
+    "scene": "composition 3",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "slow pan right",
+    "subjectMotion": "none",
+    "durationSec": 12,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  },
+  {
+   "id": "scene-4",
+   "sceneNumber": 4,
+   "title": "Something is off",
+   "actPhase": "Setup",
+   "narration": "...",
+   "durationEst": 14,
+   "visualType": "character",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "maintainer-desk",
+   "charactersInFrame": [
+    "mara"
+   ],
+   "visual": {
+    "character": "Mara Quinn, 34, cropped grey hair, navy field jacket, silver ring on left thumb",
+    "background": "background for maintainer-desk",
+    "scene": "composition 4",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "dolly in",
+    "subjectMotion": "Mara types, then stops and leans back",
+    "durationSec": 14,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": "Mara types then stops. Pan left and zoom in while tilting up."
+   }
+  },
+  {
+   "id": "scene-5",
+   "sceneNumber": 5,
+   "title": "The commit",
+   "actPhase": "Setup",
+   "narration": "...",
+   "durationEst": 9,
+   "visualType": "terminal",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "terminal",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for terminal",
+    "scene": "composition 5",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 9,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  },
+  {
+   "id": "scene-6",
+   "sceneNumber": 6,
+   "title": "Analyst reaction",
+   "actPhase": "Setup",
+   "narration": "...",
+   "durationEst": 11,
+   "visualType": "character",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "server-hall",
+   "charactersInFrame": [
+    "mara"
+   ],
+   "visual": {
+    "character": "Mara Quinn, 34, cropped grey hair, navy field jacket, silver ring on left thumb",
+    "background": "background for server-hall",
+    "scene": "composition 6",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 11,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   },
+   "speaker": "analyst"
+  },
+  {
+   "id": "scene-7",
+   "sceneNumber": 7,
+   "title": "The chase",
+   "actPhase": "Escalation",
+   "narration": "...",
+   "durationEst": 10,
+   "visualType": "cyberpunk",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "city-night",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for city-night",
+    "scene": "composition 7",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "whip pan",
+    "subjectMotion": "A courier runs through rain as sirens flash",
+    "durationSec": 10,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": "A courier runs through rain. Whip pan."
+   }
+  },
+  {
+   "id": "scene-8",
+   "sceneNumber": 8,
+   "title": "How it spread",
+   "actPhase": "Escalation",
+   "narration": "...",
+   "durationEst": 12,
+   "visualType": "diagram",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "briefing-room",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for briefing-room",
+    "scene": "composition 8",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 12,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  },
+  {
+   "id": "scene-9",
+   "sceneNumber": 9,
+   "title": "Inside the machines",
+   "actPhase": "Escalation",
+   "narration": "...",
+   "durationEst": 16,
+   "visualType": "cyberpunk",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "server-hall",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for server-hall",
+    "scene": "composition 9",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "slow zoom in",
+    "subjectMotion": "Cooling fans spin, cables sway",
+    "durationSec": 16,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": "Cooling fans spin and cables sway. Slow zoom in."
+   }
+  },
+  {
+   "id": "scene-10",
+   "sceneNumber": 10,
+   "title": "The catch",
+   "actPhase": "Climax",
+   "narration": "...",
+   "durationEst": 9,
+   "visualType": "character",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "maintainer-desk",
+   "charactersInFrame": [
+    "mara"
+   ],
+   "visual": {
+    "character": "Mara Quinn, 34, cropped grey hair, navy field jacket, silver ring on left thumb",
+    "background": "background for maintainer-desk",
+    "scene": "composition 10",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "push-in",
+    "subjectMotion": "Mara slams the laptop shut",
+    "durationSec": 9,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": "Mara slams the laptop shut. Push-in."
+   }
+  },
+  {
+   "id": "scene-11",
+   "sceneNumber": 11,
+   "title": "Aftermath",
+   "actPhase": "Climax",
+   "narration": "...",
+   "durationEst": 7,
+   "visualType": "cyberpunk",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "city-night",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for city-night",
+    "scene": "composition 11",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 7,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  },
+  {
+   "id": "scene-12",
+   "sceneNumber": 12,
+   "title": "The fix",
+   "actPhase": "Resolution",
+   "narration": "...",
+   "durationEst": 6,
+   "visualType": "headline",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "newsroom",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for newsroom",
+    "scene": "composition 12",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 6,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  },
+  {
+   "id": "scene-13",
+   "sceneNumber": 13,
+   "title": "What it means",
+   "actPhase": "Resolution",
+   "narration": "...",
+   "durationEst": 12,
+   "visualType": "character",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "maintainer-desk",
+   "charactersInFrame": [
+    "mara"
+   ],
+   "visual": {
+    "character": "Mara Quinn, 34, cropped grey hair, navy field jacket, silver ring on left thumb",
+    "background": "background for maintainer-desk",
+    "scene": "composition 13",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "slow pull-out",
+    "subjectMotion": "Mara exhales and looks out the window",
+    "durationSec": 12,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": "Mara exhales and looks out the window. Slow pull-out."
+   }
+  },
+  {
+   "id": "scene-14",
+   "sceneNumber": 14,
+   "title": "Outro",
+   "actPhase": "Outro",
+   "narration": "...",
+   "durationEst": 8,
+   "visualType": "cyberpunk",
+   "onScreenText": "",
+   "visualPrompt": "flat prompt",
+   "locationId": "city-night",
+   "charactersInFrame": [],
+   "visual": {
+    "character": "No characters in frame.",
+    "background": "background for city-night",
+    "scene": "composition 14",
+    "styleAnchor": "Muted teal and amber grade, 35mm film grain, soft practical light, cinematic 16:9",
+    "negative": "text artifacts, extra fingers"
+   },
+   "motion": {
+    "shotType": "medium",
+    "cameraMove": "static",
+    "subjectMotion": "none",
+    "durationSec": 8,
+    "easing": "ease",
+    "transitionOut": "cut",
+    "motionPrompt": ""
+   }
+  }
+ ]
+}

@@ -1,0 +1,53 @@
+{
+  "_note": "Edit freely. commercialOk: true | false | \"unknown\". A tool with commercialOk false is never chosen unless --allow-noncommercial (drafts). Checked 2026-09-25; see ~/.claude/skills/free-ai-video-stack/SKILL.md for sources.",
+  "tools": {
+    "kenburns": {
+      "label": "Ken Burns on the still (assemble.ts or Resolve)",
+      "durations": null,
+      "creditsPerSec": 0,
+      "dailyFreeCredits": null,
+      "commercialOk": true
+    },
+    "graphic": {
+      "label": "Code-rendered graphic (Resolve Fusion / HTML screenshot)",
+      "durations": null,
+      "creditsPerSec": 0,
+      "dailyFreeCredits": null,
+      "commercialOk": true
+    },
+    "wan-hf": {
+      "label": "Wan 2.2 image-to-video on a Hugging Face ZeroGPU Space (Apache 2.0)",
+      "durations": [5],
+      "creditsPerSec": 0,
+      "dailyFreeCredits": null,
+      "dailyClipCap": 2,
+      "commercialOk": true
+    },
+    "flow": {
+      "label": "Google Flow (Veo 3.1 / Omni Flash), by hand",
+      "durations": [8],
+      "creditsPerSec": 2.5,
+      "dailyFreeCredits": 50,
+      "commercialOk": "unknown"
+    },
+    "seedance": {
+      "label": "Seedance (Dreamina / Higgsfield), by hand",
+      "durations": [5, 10, 15, 30],
+      "creditsPerSec": null,
+      "dailyFreeCredits": null,
+      "commercialOk": "unknown"
+    },
+    "kling-free": {
+      "label": "Kling 3.0 free tier, by hand (logo required, non-commercial)",
+      "durations": [5, 10],
+      "creditsPerSec": 6,
+      "dailyFreeCredits": 66,
+      "commercialOk": false
+    }
+  },
+  "routes": {
+    "action": ["flow", "wan-hf", "kling-free"],
+    "long": ["seedance", "flow", "wan-hf"],
+    "motion": ["flow", "wan-hf", "kling-free"]
+  }
+}
