@@ -1,5 +1,8 @@
 import { GoogleGenAI } from '@google/genai';
 import { generateFallbackImage } from './fallbackGenerators';
+import { classifyGeminiError } from './quota';
+import { attemptOutcome } from './gemini';
+import { noteModelAttempt, trackModelCall, withModelTask } from './llm/usage';
 
 /**
  * Scene image generation, tried best-first.
@@ -20,6 +23,8 @@ export interface ImageResult {
   imageUrl: string;
   provider: ImageProviderId;
   providerLabel: string;
+  /** The model that drew it: a Gemini image model id, Pollinations' default, or none for the placeholder. */
+  model?: string;
   isPlaceholder: boolean;
   /** Back-compat with the pre-chain response shape; true whenever `provider !== 'gemini'`. */
   isQuotaFallback: boolean;
@@ -28,8 +33,10 @@ export interface ImageResult {
   attempts: Array<{ provider: ImageProviderId; error: string }>;
 }
 
-const GEMINI_IMAGE_MODELS = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'];
+export const GEMINI_IMAGE_MODELS = ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'];
 // Overridable so the end-to-end test can stand in for the service instead of reaching the network.
+/** Pollinations picks its own default model when the request names none, and this one names none. */
+export const POLLINATIONS_MODEL_LABEL = 'Pollinations default model (not named in the request)';
 const POLLINATIONS_BASE_URL = process.env.POLLINATIONS_BASE_URL || 'https://image.pollinations.ai';
 const POLLINATIONS_TIMEOUT_MS = 25000;
 const POLLINATIONS_MAX_PROMPT_CHARS = 1500; // layered visualPrompts can overflow URL path limits
@@ -58,6 +65,7 @@ function geminiDimensionsFor(aspectRatio: string, imageSize: string): { width: n
 interface ProviderResult {
   ok: boolean;
   imageUrl?: string;
+  model?: string;
   width?: number;
   height?: number;
   error?: string;
@@ -70,6 +78,7 @@ async function tryGemini(
   imageSize: string
 ): Promise<ProviderResult> {
   for (const model of GEMINI_IMAGE_MODELS) {
+    const t0 = Date.now();
     try {
       const response = await ai.models.generateContent({
         model,
@@ -80,10 +89,15 @@ async function tryGemini(
       for (const part of parts) {
         if (part.inlineData?.data) {
           const mime = part.inlineData.mimeType || 'image/png';
-          return { ok: true, imageUrl: `data:${mime};base64,${part.inlineData.data}` };
+          noteModelAttempt({ provider: 'gemini', model, outcome: 'ok', ms: Date.now() - t0 });
+          return { ok: true, model, imageUrl: `data:${mime};base64,${part.inlineData.data}` };
         }
       }
+      noteModelAttempt({ provider: 'gemini', model, outcome: 'invalid_output', detail: 'no image in the response', ms: Date.now() - t0 });
     } catch (err: any) {
+      const c = classifyGeminiError(err);
+      // `limit: 0` is the normal free-tier answer here: no image quota exists without billing.
+      noteModelAttempt({ provider: 'gemini', model, outcome: attemptOutcome(c.kind), detail: c.kind === 'zero' ? 'no free-tier quota (limit: 0)' : `${c.status ? `HTTP ${c.status} ` : ''}${c.kind.replace('_', '-')}`, ms: Date.now() - t0 });
       console.warn(`[Image Agent] Gemini model ${model} notice:`, err?.message || err);
     }
   }
@@ -117,7 +131,14 @@ async function tryPollinations(prompt: string, aspectRatio: string): Promise<Pro
   }
 }
 
-export async function generateSceneImage(
+export function generateSceneImage(
+  ai: GoogleGenAI,
+  req: { prompt: string; aspectRatio: string; imageSize: string }
+): Promise<ImageResult> {
+  return withModelTask(`Scene image (${req.aspectRatio}, ${req.imageSize})`, () => trackModelCall('image', () => sceneImageChain(ai, req)));
+}
+
+async function sceneImageChain(
   ai: GoogleGenAI,
   req: { prompt: string; aspectRatio: string; imageSize: string }
 ): Promise<ImageResult> {
@@ -132,6 +153,7 @@ export async function generateSceneImage(
       imageUrl: gemini.imageUrl,
       provider: 'gemini',
       providerLabel: 'Gemini',
+      model: gemini.model,
       isPlaceholder: false,
       isQuotaFallback: false,
       width: geminiDims.width,
@@ -141,12 +163,21 @@ export async function generateSceneImage(
   }
   attempts.push({ provider: 'gemini', error: gemini.error || 'Unknown error' });
 
+  const tp = Date.now();
   const pollinations = await tryPollinations(prompt, aspectRatio);
+  noteModelAttempt({
+    provider: 'pollinations',
+    model: POLLINATIONS_MODEL_LABEL,
+    outcome: pollinations.ok ? 'ok' : 'error',
+    ...(pollinations.ok ? {} : { detail: pollinations.error }),
+    ms: Date.now() - tp,
+  });
   if (pollinations.ok && pollinations.imageUrl) {
     return {
       imageUrl: pollinations.imageUrl,
       provider: 'pollinations',
       providerLabel: 'Pollinations',
+      model: POLLINATIONS_MODEL_LABEL,
       isPlaceholder: false,
       isQuotaFallback: true,
       width: pollinations.width || requested.width,

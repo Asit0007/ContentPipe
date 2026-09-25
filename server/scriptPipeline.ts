@@ -1,6 +1,7 @@
 import type { GoogleGenAI } from '@google/genai';
 import { TEXT_MODELS } from './gemini';
 import { generateJson } from './llm/chain';
+import { withModelTask } from './llm/usage';
 import { buildScriptScenesSchema, buildVisualDirectionSchema, productionBibleSchema } from './schemas';
 import { isRetryableError } from './quota';
 import type { RunJournal } from './runJournal';
@@ -139,13 +140,13 @@ A. "characterBible": 1 to 3 recurring characters who carry this story ${profile.
 B. "styleGuide": "artDirection", "colorPalette", "lighting", "lensAndFilm", "negativePrompt".${isDocumentary ? profile.bibleDocumentaryVisualDiscipline : ''}`;
 
   try {
-    const bible: any = await generateJson(
+    const bible: any = await withModelTask('Production bible (cast + style guide)', () => generateJson(
       ai,
       prompt,
       'You are a precise production designer. Output strictly valid JSON matching the schema.',
       TEXT_MODELS,
       productionBibleSchema
-    );
+    ));
     console.log(`[Production Bible] ${bible?.characterBible?.length || 0} character(s) defined`);
     const result = { characterBible: bible?.characterBible || [], styleGuide: bible?.styleGuide || {} };
     // An empty bible is a degraded result, not progress worth replaying on resume.
@@ -386,7 +387,10 @@ export async function applyVisualDirection(ai: GoogleGenAI, script: any, researc
     // not-yet-generated chunk's context without needing to be regenerated itself.
     const priorVisualContext = buildPriorVisualContext(scenes.slice(0, i), allDirections, isDocTone);
     try {
-      const chunkDirections = await generateVisualDirectionChunk(ai, chunk, bible, style, researchData, priorVisualContext);
+      const chunkDirections = await withModelTask(
+        `Art direction, scenes ${firstScene}-${firstScene + chunk.length - 1} (chunk ${chunkIndex + 1}/${numChunks})`,
+        () => generateVisualDirectionChunk(ai, chunk, bible, style, researchData, priorVisualContext)
+      );
       allDirections.push(...chunkDirections);
       await opts.journal?.setArtChunk(chunkIndex, firstScene, chunkDirections);
     } catch (err: any) {
@@ -635,7 +639,8 @@ export async function generateSceneChunks(
       if (chunkScenes) {
         console.log(`[Script Agent] scene chunk ${chunkIndex + 1}/${numChunks} resumed from journal`);
       } else {
-        chunkScenes = await generateSceneChunk(
+        const from = allScenes.length + 1;
+        chunkScenes = await withModelTask(`Narrative, scenes ${from}-${from + thisChunkCount - 1} (chunk ${chunkIndex + 1}/${numChunks})`, () => generateSceneChunk(
           ai,
           videoPlan,
           researchData,
@@ -647,7 +652,7 @@ export async function generateSceneChunks(
           chunkIndex === numChunks - 1,
           totalScenesTarget,
           opts.topicDomain
-        );
+        ));
         await opts.journal?.setNarrativeChunk(chunkIndex, chunkScenes);
       }
       for (const s of chunkScenes) {

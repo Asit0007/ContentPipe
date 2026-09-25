@@ -1,5 +1,8 @@
 import type { Speaker } from '../shared/speakers';
 
+import type { ModelCall } from '../shared/modelUsage';
+export type { ModelCall, ModelAttempt } from '../shared/modelUsage';
+
 export type AspectRatio = '16:9' | '9:16' | '1:1';
 export type ImageResolution = '1K' | '2K' | '4K';
 export type ImageProviderId = 'gemini' | 'pollinations' | 'placeholder';
@@ -156,6 +159,8 @@ export interface ResearchData {
   };
   isQuotaFallback?: boolean;
   selectedAngle?: string;
+  /** Which model answered, and every model tried before it (server/llm/usage.ts). Stripped server-side from inputs. */
+  modelUsage?: ModelCall[];
 }
 
 export interface VideoPlan {
@@ -178,6 +183,7 @@ export interface VideoPlan {
   callToAction: string;
   /** True when this is canned fallback content (AI generation was unavailable). */
   isQuotaFallback?: boolean;
+  modelUsage?: ModelCall[];
 }
 
 export interface SceneInfographicStep {
@@ -265,6 +271,9 @@ export interface VideoScriptScene {
   /** Which backend actually produced generatedImageUrl. Absent = not yet generated. */
   imageProvider?: ImageProviderId;
   imageProviderLabel?: string;
+  /** The model that drew generatedImageUrl / voiced generatedAudioBase64, as the server reported it. */
+  imageModel?: string;
+  audioModel?: string;
   /** True when generatedImageUrl is a generated placeholder, not real artwork. */
   imageIsPlaceholder?: boolean;
   generatedAudioBase64?: string;
@@ -359,6 +368,7 @@ export interface PublishPackage {
   deterministicOnly?: boolean;
   isQuotaFallback?: boolean;
   generatedAt: string;
+  modelUsage?: ModelCall[];
 }
 
 export interface VideoScript {
@@ -391,6 +401,8 @@ export interface VideoScript {
   /** Look applied across every scene. */
   styleGuide?: StyleGuide;
   scenes: VideoScriptScene[];
+  /** Every model call behind this script — bible, narrative chunks, art direction — including ones replayed from a checkpoint. */
+  modelUsage?: ModelCall[];
 }
 
 export interface IPBranding {

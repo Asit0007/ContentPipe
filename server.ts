@@ -14,7 +14,7 @@ import {
   generateFallbackNotebookLMPodcast,
 } from './server/fallbackGenerators';
 import { researchSchema, planSchema, KEY_FACT_TARGET_WITH_SOURCES } from './server/schemas';
-import { getAIClient, TEXT_MODELS } from './server/gemini';
+import { getAIClient, TEXT_MODELS, attemptOutcome } from './server/gemini';
 import { generateJson, generateText, describeChain } from './server/llm/chain';
 import {
   generateProductionBible,
@@ -23,7 +23,7 @@ import {
   buildGenerationSummary,
 } from './server/scriptPipeline';
 import { isStrict, sendStrictFailure, orFallback } from './server/strict';
-import { reduceModelErrors, UpstreamUnavailableError } from './server/quota';
+import { reduceModelErrors, UpstreamUnavailableError, classifyGeminiError } from './server/quota';
 import { analyzeScript } from './server/timeline';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
@@ -37,6 +37,9 @@ import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import { DEFAULT_CHANNEL_BRAND } from './shared/brand';
 import { isDocumentaryTone } from './shared/tone';
 import { stripCveIds } from './shared/plainTitle';
+import { withoutModelUsage, type ModelCall } from './shared/modelUsage';
+import { enterModelUsage, withModelTask, noteModelAttempt, trackModelCall } from './server/llm/usage';
+import { describeModelLineup, TTS_MODELS, TTS_VOICES } from './server/modelLineup';
 import { resolveTopicProfile, type TopicProfile } from './shared/topicProfile';
 import {
   generateNotebookLMAudioService,
@@ -52,9 +55,28 @@ const HOST = process.env.HOST || '127.0.0.1';
 
 app.use(express.json({ limit: '20mb' }));
 
+// Model provenance (server/llm/usage.ts): every /api request records which model answered each of its calls into
+// res.locals.modelUsage, and the routes that generate text return it as `modelUsage`. Research, plan and script
+// bodies echo earlier responses back, so an incoming `modelUsage` is dropped here: it must never reach a prompt
+// (the plan and script prompts JSON.stringify the dossier and the plan) or a /api/script resume hash.
+// The Markdown export keeps it, because the brief lists the models that wrote it.
+app.use('/api', (req, res, next) => {
+  if (req.body && typeof req.body === 'object' && req.path !== '/export/markdown') {
+    for (const key of Object.keys(req.body)) req.body[key] = withoutModelUsage(req.body[key]);
+  }
+  const calls: ModelCall[] = [];
+  res.locals.modelUsage = calls;
+  enterModelUsage(calls, next);
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Which models each page of the UI uses, in the order they are tried, from the live configuration (.env).
+app.get('/api/models', (_req, res) => {
+  res.json(describeModelLineup());
 });
 
 // 1. Research Agent: Takes input message, extracts topic, and conducts deep technical research
@@ -185,7 +207,7 @@ Return strictly a valid JSON object matching this schema:
 
     const parsedData: any = await orFallback(
       strict,
-      () => generateJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, researchSchema),
+      () => withModelTask('Research dossier', () => generateJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, researchSchema)),
       (aiErr: any) => {
         console.warn('[Research Agent] Live AI tiers unavailable, utilizing dynamic research synthesizer:', aiErr?.message || aiErr);
         return generateFallbackResearch(messageText, channelName);
@@ -216,7 +238,7 @@ Return strictly a valid JSON object matching this schema:
         `${parsedData.researchGaps?.length ? `, ${parsedData.researchGaps.length} gap(s) reported` : ''}`
     );
 
-    res.json(parsedData);
+    res.json({ ...parsedData, modelUsage: res.locals.modelUsage });
   } catch (error: any) {
     if (strict) return sendStrictFailure(res, error);
     console.error('[Research Agent] Exception caught, providing synthesized dossier:', error);
@@ -229,6 +251,7 @@ Return strictly a valid JSON object matching this schema:
       groundingSources,
       researchCoverage: measureCoverage(fallback, fetched, sourceArchiveId),
       ...(sourcesUnavailable ? { sourcesUnavailable: true } : {}),
+      modelUsage: res.locals.modelUsage,
     });
   }
 });
@@ -515,7 +538,7 @@ REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum
 
     const plan: any = await orFallback(
       strict,
-      () => generateJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, planSchema),
+      () => withModelTask('Video blueprint', () => generateJson<any>(ai, prompt, systemInstruction, TEXT_MODELS, planSchema)),
       (aiErr: any) => {
         console.warn('[Plan Agent] Live AI tiers unavailable, utilizing dynamic plan generator:', aiErr?.message || aiErr);
         return generateFallbackPlan(researchData, targetFormat, targetTone);
@@ -523,12 +546,12 @@ REMINDER: the 5 acts above are a SHAPE example, not a length target — they sum
     );
 
     if (typeof plan?.title === 'string') plan.title = stripCveIds(plan.title);
-    res.json(plan);
+    res.json({ ...plan, modelUsage: res.locals.modelUsage });
   } catch (error: any) {
     if (strict) return sendStrictFailure(res, error);
     console.error('[Plan Agent] Exception caught, activating video plan generator:', error);
     const fallback = generateFallbackPlan(researchData, targetFormat, targetTone);
-    res.json(fallback);
+    res.json({ ...fallback, modelUsage: res.locals.modelUsage });
   }
 });
 
@@ -579,6 +602,10 @@ app.post('/api/script', async (req, res) => {
       return deliver({ ...stored, generation: { ...stored.generation, resumed: true } });
     }
     if (journal.resumed) console.log(`[Script Agent] resuming run ${runKey}:`, JSON.stringify(journal.progress()));
+    // Calls from an interrupted earlier request come first, marked as replayed; this request's follow as they finish.
+    const modelUsage: ModelCall[] = res.locals.modelUsage;
+    modelUsage.unshift(...journal.priorModelCalls());
+    journal.trackModelCalls(modelUsage);
 
     const ai = getAIClient();
     const opts = { strict, journal, degraded, topicDomain };
@@ -674,6 +701,7 @@ app.post('/api/script', async (req, res) => {
 
     if (usedFallback) degraded.push('Canned fallback script: AI generation was unavailable, so this is placeholder content, not a real draft.');
     script.generation = buildGenerationSummary(script, { runId: runKey, resumed: journal.resumed, requestedDurationSec, degraded });
+    script.modelUsage = modelUsage;
     // A CVE id in what the viewer sees or hears is replaced here, before the audit and before the journal keeps
     // the script: the prompt asks for none and the audit only warns, yet a live run still put one in a badge and a
     // summary (server/severityScrub.ts). Labels such as "CRITICAL RISK" have no clean stand-in and are flagged instead.
@@ -708,6 +736,7 @@ app.post('/api/script', async (req, res) => {
       degraded: ['Canned fallback script: AI generation was unavailable, so this is placeholder content, not a real draft.'],
     });
     Object.assign(fallback, analyzeScript(fallback, { requestedDurationSec, research: researchData }));
+    fallback.modelUsage = res.locals.modelUsage;
     res.json(fallback);
   } finally {
     releaseRun(runKey);
@@ -725,7 +754,8 @@ app.post('/api/publish-package', async (req, res) => {
   const strict = isStrict(req);
   try {
     const ai = getAIClient();
-    res.json(await buildPublishPackage(ai, { script, research, plan, channelBrandName, topicDomain }, { strict }));
+    const pkg = await buildPublishPackage(ai, { script, research, plan, channelBrandName, topicDomain }, { strict });
+    res.json({ ...pkg, modelUsage: res.locals.modelUsage });
   } catch (error: any) {
     if (strict) return sendStrictFailure(res, error);
     console.error('[Publish Package] failed:', error);
@@ -733,7 +763,7 @@ app.post('/api/publish-package', async (req, res) => {
   }
 });
 
-// 4. Text-To-Speech (TTS): Uses 'gemini-3.1-flash-tts-preview' with a 2.5 TTS fallback
+// 4. Text-To-Speech (TTS): TTS_MODELS in order (server/modelLineup.ts)
 app.post('/api/tts', async (req, res) => {
   const strict = isStrict(req);
   const { text, voice = 'Puck' } = req.body;
@@ -741,48 +771,57 @@ app.post('/api/tts', async (req, res) => {
     return res.status(400).json({ error: 'text is required for TTS' });
   }
 
-  const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
-  const selectedVoice = validVoices.includes(voice) ? voice : 'Puck';
+  const selectedVoice = TTS_VOICES.includes(voice) ? voice : 'Puck';
 
   try {
     const ai = getAIClient();
     let base64Audio: string | null = null;
+    let ttsModel: string | undefined;
     const modelErrors: unknown[] = [];
 
-    const ttsModels = ['gemini-3.1-flash-tts-preview', 'gemini-2.5-flash-preview-tts'];
-    for (const model of ttsModels) {
-      try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: [{ parts: [{ text: `Speak in a punchy, engaging infotainment documentary narrator voice: ${text}` }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: selectedVoice },
+    // One recorded call per clip, every TTS model tried for it listed in order.
+    await withModelTask(`Narration audio (voice ${selectedVoice})`, () =>
+      trackModelCall('speech', async () => {
+        for (const model of TTS_MODELS) {
+          const t0 = Date.now();
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: [{ parts: [{ text: `Speak in a punchy, engaging infotainment documentary narrator voice: ${text}` }] }],
+              config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: selectedVoice },
+                  },
+                },
               },
-            },
-          },
-        });
-        const candidateAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (candidateAudio) {
-          base64Audio = candidateAudio;
-          break;
+            });
+            const candidateAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            if (candidateAudio) {
+              base64Audio = candidateAudio;
+              ttsModel = model;
+              noteModelAttempt({ provider: 'gemini', model, outcome: 'ok', ms: Date.now() - t0 });
+              return;
+            }
+            noteModelAttempt({ provider: 'gemini', model, outcome: 'invalid_output', detail: 'no audio in the response', ms: Date.now() - t0 });
+          } catch (ttsErr: any) {
+            modelErrors.push(ttsErr);
+            const c = classifyGeminiError(ttsErr);
+            noteModelAttempt({ provider: 'gemini', model, outcome: attemptOutcome(c.kind), detail: `${c.status ? `HTTP ${c.status} ` : ''}${c.kind.replace('_', '-')}`, ms: Date.now() - t0 });
+            console.warn(`[TTS Agent] Model ${model} notice:`, ttsErr?.message || ttsErr);
+          }
         }
-      } catch (ttsErr: any) {
-        modelErrors.push(ttsErr);
-        console.warn(`[TTS Agent] Model ${model} notice:`, ttsErr?.message || ttsErr);
-      }
-    }
-
-    if (!base64Audio) {
-      throw reduceModelErrors(modelErrors, 'No audio returned by models');
-    }
+        throw reduceModelErrors(modelErrors, 'No audio returned by models');
+      })
+    );
 
     res.json({
       audioBase64: base64Audio,
       voice: selectedVoice,
       sampleRate: 24000,
+      model: ttsModel,
+      modelUsage: res.locals.modelUsage,
     });
   } catch (error: any) {
     // The fallback is a synthesized tone. A render would publish it as narration, so an
@@ -795,6 +834,8 @@ app.post('/api/tts', async (req, res) => {
       voice: selectedVoice,
       sampleRate: 24000,
       isQuotaFallback: true,
+      model: 'synthesized tone (no model)',
+      modelUsage: res.locals.modelUsage,
     });
   }
 });
@@ -821,7 +862,7 @@ app.post('/api/generate-image', async (req, res) => {
       const why = result.attempts.map((a) => `${a.provider}: ${a.error}`).join('; ');
       return sendStrictFailure(res, new UpstreamUnavailableError(30, `No image provider returned an image (${why})`));
     }
-    res.json({ ...result, imageSize: targetSize, aspectRatio: targetAspectRatio });
+    res.json({ ...result, imageSize: targetSize, aspectRatio: targetAspectRatio, modelUsage: res.locals.modelUsage });
   } catch (error: any) {
     if (strict) return sendStrictFailure(res, error);
     console.log('[Image Agent] Exception handled, returning placeholder artwork.');
@@ -938,11 +979,11 @@ You help refine voiceover scripts, inject sharp humor, punch up hooks, sharpen e
     let modelUsed = preferredModel;
     try {
       // customModel only steers the Gemini tier; the provider chain picks who answers first.
-      const chat = await generateText(ai, contents, systemInstruction, [
+      const chat = await withModelTask('Chat reply', () => generateText(ai, contents, systemInstruction, [
         preferredModel,
         'gemini-3.7-flash',
         'gemini-3.1-flash-lite',
-      ]);
+      ]));
       replyText = chat.text;
       modelUsed = chat.via;
     } catch (chatErr: any) {
@@ -950,9 +991,11 @@ You help refine voiceover scripts, inject sharp humor, punch up hooks, sharpen e
       replyText = generateFallbackChatReply(message, rolePreset);
       return res.json({
         reply: replyText,
-        modelUsed: 'gemini-local-strategist',
+        // Canned text: naming a model here (it used to say 'gemini-local-strategist') would credit one that never ran.
+        modelUsed: 'canned reply (no model answered)',
         rolePreset,
         isQuotaFallback: true,
+        modelUsage: res.locals.modelUsage,
       });
     }
 
@@ -960,15 +1003,17 @@ You help refine voiceover scripts, inject sharp humor, punch up hooks, sharpen e
       reply: replyText,
       modelUsed,
       rolePreset,
+      modelUsage: res.locals.modelUsage,
     });
   } catch (error: any) {
     console.log('[Chatbot] Exception handled, returning strategist guidance.');
     const reply = generateFallbackChatReply(message, rolePreset);
     res.json({
       reply,
-      modelUsed: 'gemini-local-strategist',
+      modelUsed: 'canned reply (no model answered)',
       rolePreset,
       isQuotaFallback: true,
+      modelUsage: res.locals.modelUsage,
     });
   }
 });
@@ -1011,14 +1056,14 @@ Return strictly a JSON array of 5 IP brand identity objects, shaped like this (i
 
     let ipList: any = null;
     try {
-      ipList = await generateJson(
+      ipList = await withModelTask('Channel name ideas', () => generateJson(
         ai,
         prompt,
         systemInstruction,
         ['gemini-3.7-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite'],
         undefined,
         { rootArray: true } // this prompt asks for an array; json_object providers get {"items": [...]} and are unwrapped
-      );
+      ));
     } catch (aiErr: any) {
       console.warn('[IP Names] AI tiers busy, returning curated brands:', aiErr?.message || aiErr);
       ipList = generateFallbackIpList(topicContext);
@@ -1097,7 +1142,7 @@ Output STRICTLY valid JSON adhering to this schema:
 
     let podcast: any = null;
     try {
-      podcast = await generateJson(ai, prompt, systemInstruction, TEXT_MODELS);
+      podcast = await withModelTask('Podcast dialogue', () => generateJson(ai, prompt, systemInstruction, TEXT_MODELS));
     } catch (aiErr: any) {
       console.warn('[NotebookLM] Live AI tiers unavailable, returning dynamic podcast dialogue:', aiErr?.message || aiErr);
       podcast = generateFallbackNotebookLMPodcast(researchData, topicText);
@@ -1124,7 +1169,7 @@ app.post('/api/notebooklm/generate-audio', async (req, res) => {
       podcastStyle: podcastStyle || 'deep_dive',
     });
 
-    res.json(result);
+    res.json({ ...result, modelUsage: res.locals.modelUsage });
   } catch (error: any) {
     console.warn('[Server /api/notebooklm/generate-audio] Error generating NotebookLM audio:', error?.message);
     res.status(500).json({ error: 'Failed to generate NotebookLM audio', details: error?.message });

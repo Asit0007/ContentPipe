@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import type { ModelCall } from '../shared/modelUsage';
 
 /**
  * On-disk checkpoints for /api/script.
@@ -49,6 +50,8 @@ interface JournalState {
   narrativeChunks: Record<string, any[]>;
   artChunks: Record<string, { firstScene: number; directions: any[] }>;
   finalScript?: any;
+  /** Every model call made for this run so far, so a resumed run can still say which model wrote its earlier chunks. */
+  modelCalls?: ModelCall[];
 }
 
 // One in-flight generation per run id. Express keeps working after a client
@@ -65,6 +68,7 @@ export function releaseRun(key: string): void {
 }
 
 export class RunJournal {
+  private liveModelCalls: ModelCall[] = [];
   private constructor(
     private readonly dir: string,
     private state: JournalState,
@@ -141,6 +145,18 @@ export class RunJournal {
     await this.save();
   }
 
+  /** Calls recorded by earlier, interrupted requests for this run — marked, because this request did not make them. */
+  priorModelCalls(): ModelCall[] {
+    return (this.state.modelCalls ?? []).map((c) => ({ ...c, fromCheckpoint: true }));
+  }
+  /**
+   * The array this request's calls are being recorded into (server/llm/usage.ts). Every save writes prior + live,
+   * so the calls behind a checkpointed chunk are on disk with the chunk.
+   */
+  trackModelCalls(live: ModelCall[]) {
+    this.liveModelCalls = live;
+  }
+
   getFinalScript(): any | undefined {
     return this.state.finalScript;
   }
@@ -187,6 +203,12 @@ export class RunJournal {
   /** Temp file + rename, so a crash mid-write can never leave a half-written journal. */
   private async save() {
     this.state.updatedAt = new Date().toISOString();
+    if (this.state.status !== 'delivered') {
+      const prior = this.state.modelCalls ?? [];
+      // Replayed calls (fromCheckpoint) are copies of ones already in `prior`.
+      const live = this.liveModelCalls.filter((c) => !c.fromCheckpoint && !prior.includes(c));
+      if (live.length) this.state.modelCalls = [...prior, ...live];
+    }
     const file = path.join(this.dir, `${this.state.runId}.json`);
     const tmp = `${file}.tmp-${process.pid}`;
     await fs.writeFile(tmp, JSON.stringify(this.state), 'utf8');

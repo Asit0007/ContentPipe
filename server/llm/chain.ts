@@ -10,6 +10,8 @@ import {
 } from '../quota';
 import { modelOrder, providerOrder, resolveProviders, type ResolvedProvider } from './providers';
 import { toJsonSchema, validateAgainstSchema } from './schema';
+import { attemptOutcome } from '../gemini';
+import { noteModelAttempt, trackModelCall } from './usage';
 
 /**
  * Multi-provider text generation. Walks the configured providers best-first (DeepSeek -> Grok ->
@@ -331,7 +333,8 @@ async function jsonFromProvider<T>(
   prompt: string,
   systemInstruction: string,
   responseSchema: unknown,
-  opts: LlmOptions
+  opts: LlmOptions,
+  usage: { inputTokens?: number; outputTokens?: number } = {}
 ): Promise<T> {
   const schema = responseSchema ? toJsonSchema(responseSchema) : undefined;
   const shape = opts.rootArray
@@ -348,6 +351,9 @@ async function jsonFromProvider<T>(
   for (let attempt = 0; attempt < 2; attempt++) {
     const t0 = Date.now();
     const r = await callChat(p, model, messages, true, opts);
+    // Summed across the repair round: both calls are billed.
+    if (r.usage?.prompt_tokens) usage.inputTokens = (usage.inputTokens ?? 0) + r.usage.prompt_tokens;
+    if (r.usage?.completion_tokens) usage.outputTokens = (usage.outputTokens ?? 0) + r.usage.completion_tokens;
     console.log(
       `[LLM Chain] ${p.spec.id}/${model} finish=${r.finishReason} in=${r.usage?.prompt_tokens} out=${r.usage?.completion_tokens} ${((Date.now() - t0) / 1000).toFixed(1)}s`
     );
@@ -435,6 +441,13 @@ export function describeChain(env: Env = process.env): string {
     .join(' -> ');
 }
 
+/** The gist of a provider failure for the provenance panel: status and kind, or the message for a request bug. */
+function providerDetail(c: ClassifiedError, err: unknown): string {
+  const retry = c.retryAfterSec ? `, retry in ${c.retryAfterSec}s` : '';
+  if (c.kind === 'other' || err instanceof InvalidOutputError) return String((err as any)?.message || err).slice(0, 200);
+  return `${c.status ? `HTTP ${c.status} ` : ''}${c.kind.replace('_', '-')}${retry}`;
+}
+
 /** Mirrors reduceModelErrors: quota dominates and says when to retry; overload is retryable; else surface a real error. */
 function reduceFailures(failures: ClassifiedError[], firstOther: unknown): unknown {
   const retryable = failures.filter((f) => f.kind !== 'other');
@@ -451,6 +464,17 @@ export async function generateJson<T>(
   geminiModels: string[] = TEXT_MODELS,
   responseSchema?: unknown,
   opts: LlmOptions & { sleep?: (ms: number) => Promise<unknown>; now?: () => number } = {}
+): Promise<T> {
+  return trackModelCall('json', () => chainJson<T>(ai, prompt, systemInstruction, geminiModels, responseSchema, opts));
+}
+
+async function chainJson<T>(
+  ai: GoogleGenAI,
+  prompt: string,
+  systemInstruction: string,
+  geminiModels: string[],
+  responseSchema: unknown,
+  opts: LlmOptions & { sleep?: (ms: number) => Promise<unknown>; now?: () => number }
 ): Promise<T> {
   const now = opts.now ?? Date.now;
   const tiers = buildTiers(opts.env ?? process.env);
@@ -485,13 +509,19 @@ export async function generateJson<T>(
       const cd = activeCooldown(p.spec.id, model, now(), requestChars);
       if (cd) {
         const { why, ...c } = cd;
+        noteModelAttempt({ provider: p.spec.id, model, outcome: 'skipped', detail: `cooling down after: ${why}` });
         record(new Error(`${p.spec.id}/${model} skipped while cooling down after: ${why}`), c);
         continue;
       }
+      const t0 = now();
+      const usage: { inputTokens?: number; outputTokens?: number } = {};
       try {
-        return await jsonFromProvider<T>(p, model, prompt, systemInstruction, responseSchema, opts);
+        const value = await jsonFromProvider<T>(p, model, prompt, systemInstruction, responseSchema, opts, usage);
+        noteModelAttempt({ provider: p.spec.id, model, outcome: 'ok', ms: now() - t0, ...usage });
+        return value;
       } catch (err) {
         const c = classifyProviderError(err, now());
+        noteModelAttempt({ provider: p.spec.id, model, outcome: attemptOutcome(c.kind, err instanceof InvalidOutputError), detail: providerDetail(c, err), ms: now() - t0 });
         coolDown(p.spec.id, model, c, now(), err, requestChars);
         record(err, c);
         console.warn(`[LLM Chain] ${p.spec.id}/${model} -> ${c.kind}${c.status ? ` (HTTP ${c.status})` : ''}:`, (err as any)?.message || err);
@@ -522,14 +552,24 @@ export async function generateText(
   geminiModels: string[] = TEXT_MODELS,
   opts: LlmOptions = {}
 ): Promise<{ text: string; via: string }> {
+  return trackModelCall('text', () => chainText(ai, contents, systemInstruction, geminiModels, opts));
+}
+
+async function chainText(
+  ai: GoogleGenAI,
+  contents: any[],
+  systemInstruction: string,
+  geminiModels: string[],
+  opts: LlmOptions
+): Promise<{ text: string; via: string }> {
   const now = opts.now ?? Date.now;
   let lastErr: unknown;
   const requestChars = systemInstruction.length + contents.reduce((n: number, c: any) => n + (c?.parts ?? []).reduce((m: number, p: any) => m + String(p?.text ?? '').length, 0), 0);
   for (const tier of buildTiers(opts.env ?? process.env)) {
     if (tier.kind === 'gemini') {
       try {
-        const models = tier.models ?? geminiModels;
-        return { text: await generateGeminiText(ai, contents, systemInstruction, models), via: `gemini/${models[0]}` };
+        const r = await generateGeminiText(ai, contents, systemInstruction, tier.models ?? geminiModels);
+        return { text: r.text, via: `gemini/${r.model}` };
       } catch (err) {
         lastErr = err;
         continue;
@@ -537,14 +577,25 @@ export async function generateText(
     }
     const p = tier.provider;
     for (const model of p.models) {
-      if (activeCooldown(p.spec.id, model, now(), requestChars)) continue;
+      const cd = activeCooldown(p.spec.id, model, now(), requestChars);
+      if (cd) {
+        noteModelAttempt({ provider: p.spec.id, model, outcome: 'skipped', detail: `cooling down after: ${cd.why}` });
+        continue;
+      }
+      const t0 = now();
       try {
         const r = await callChat(p, model, toChatMessages(contents, systemInstruction), false, opts);
-        if (r.text) return { text: r.text, via: `${p.spec.id}/${model}` };
+        if (r.text) {
+          noteModelAttempt({ provider: p.spec.id, model, outcome: 'ok', ms: now() - t0, inputTokens: r.usage?.prompt_tokens, outputTokens: r.usage?.completion_tokens });
+          return { text: r.text, via: `${p.spec.id}/${model}` };
+        }
+        noteModelAttempt({ provider: p.spec.id, model, outcome: 'invalid_output', detail: 'empty reply', ms: now() - t0 });
         lastErr = new InvalidOutputError(`${p.spec.id}/${model} returned empty content`);
       } catch (err) {
         lastErr = err;
-        coolDown(p.spec.id, model, classifyProviderError(err, now()), now(), err, requestChars);
+        const c = classifyProviderError(err, now());
+        noteModelAttempt({ provider: p.spec.id, model, outcome: attemptOutcome(c.kind), detail: providerDetail(c, err), ms: now() - t0 });
+        coolDown(p.spec.id, model, c, now(), err, requestChars);
         console.warn(`[LLM Chain] chat ${p.spec.id}/${model} failed:`, (err as any)?.message || err);
       }
     }

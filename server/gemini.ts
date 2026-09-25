@@ -6,6 +6,24 @@ import {
   UpstreamUnavailableError,
   type ClassifiedError,
 } from './quota';
+import { noteModelAttempt, trackModelCall } from './llm/usage';
+import type { ModelAttempt } from '../shared/modelUsage';
+
+/** How the provenance panel names a classified failure. */
+export function attemptOutcome(kind: ClassifiedError['kind'] | undefined, invalidOutput = false): ModelAttempt['outcome'] {
+  if (invalidOutput) return 'invalid_output';
+  if (kind === 'zero' || kind === 'per_day' || kind === 'per_minute') return 'quota';
+  if (kind === 'transient') return 'overloaded';
+  return 'error';
+}
+
+/** "HTTP 429 per_day" — the gist of a failure for the panel, never the error body. */
+function attemptDetail(c: ClassifiedError, err: any): string {
+  const status = c.status ?? err?.status;
+  const retry = c.retryAfterSec ? `, retry in ${c.retryAfterSec}s` : '';
+  if (c.kind === 'other') return `${status ? `HTTP ${status}: ` : ''}${String(err?.message || err).slice(0, 160)}`;
+  return `${status ? `HTTP ${status} ` : ''}${c.kind.replace('_', '-')}${retry}`;
+}
 
 // Text model fallback chain, best-first. gemini-2.5-flash is intentionally
 // absent: Google returns 404 "no longer available to new users" for it, so
@@ -109,6 +127,17 @@ export async function generateGeminiJson<T>(
   responseSchema?: unknown,
   opts: GeminiJsonOptions = {}
 ): Promise<T> {
+  return trackModelCall('json', () => geminiJsonAttempts<T>(ai, prompt, systemInstruction, models, responseSchema, opts));
+}
+
+async function geminiJsonAttempts<T>(
+  ai: GoogleGenAI,
+  prompt: string,
+  systemInstruction: string,
+  models: string[],
+  responseSchema: unknown,
+  opts: GeminiJsonOptions
+): Promise<T> {
   const wait = opts.sleep ?? sleep;
   const now = opts.now ?? Date.now;
   let waitedSec = 0;
@@ -120,12 +149,14 @@ export async function generateGeminiJson<T>(
     for (const model of models) {
       const cd = cooldowns.get(model);
       if (cd && cd.until > now()) {
+        noteModelAttempt({ provider: 'gemini', model, outcome: 'skipped', detail: `cooling down after ${cd.c.kind.replace('_', '-')}` });
         failures.push({
           ...cd.c,
           retryAfterSec: cd.c.kind === 'zero' ? undefined : Math.ceil((cd.until - now()) / 1000),
         });
         continue;
       }
+      const t0 = now();
       try {
         const response = await ai.models.generateContent({
           model,
@@ -148,9 +179,18 @@ export async function generateGeminiJson<T>(
         if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
           throw new Error(`${model} returned an empty JSON object`);
         }
+        noteModelAttempt({
+          provider: 'gemini',
+          model,
+          outcome: 'ok',
+          ms: now() - t0,
+          inputTokens: um?.promptTokenCount,
+          outputTokens: um?.candidatesTokenCount,
+        });
         return parsed;
       } catch (err: any) {
         const c = classifyGeminiError(err);
+        noteModelAttempt({ provider: 'gemini', model, outcome: attemptOutcome(c.kind, err instanceof SyntaxError || /empty JSON object/.test(err?.message)), detail: attemptDetail(c, err), ms: now() - t0 });
         failures.push(c);
         coolDown(model, c, now());
         if (c.kind === 'other' && !firstOtherErr) firstOtherErr = err;
@@ -188,15 +228,17 @@ export async function generateGeminiJson<T>(
   throw new UpstreamUnavailableError(30, 'All model tiers exhausted');
 }
 
-// Helper: Multi-tier resilient Text generation
+// Helper: Multi-tier resilient Text generation. Returns the model that answered, not just the text: the chat panel
+// used to credit the first model in the list whichever one actually replied.
 export async function generateGeminiText(
   ai: GoogleGenAI,
   contents: any[],
   systemInstruction: string,
   models: string[] = TEXT_MODELS
-): Promise<string> {
+): Promise<{ text: string; model: string }> {
   let lastErr: any = null;
   for (const model of models) {
+    const t0 = Date.now();
     try {
       const response = await ai.models.generateContent({
         model,
@@ -206,10 +248,15 @@ export async function generateGeminiText(
         },
       });
       if (response?.text) {
-        return response.text;
+        const um: any = response?.usageMetadata;
+        noteModelAttempt({ provider: 'gemini', model, outcome: 'ok', ms: Date.now() - t0, inputTokens: um?.promptTokenCount, outputTokens: um?.candidatesTokenCount });
+        return { text: response.text, model };
       }
+      noteModelAttempt({ provider: 'gemini', model, outcome: 'invalid_output', detail: 'empty reply', ms: Date.now() - t0 });
     } catch (err: any) {
       lastErr = err;
+      const c = classifyGeminiError(err);
+      noteModelAttempt({ provider: 'gemini', model, outcome: attemptOutcome(c.kind), detail: attemptDetail(c, err), ms: Date.now() - t0 });
       console.warn(`[Gemini Chat Pipeline] Model ${model} error:`, err?.message || err?.status || err);
       await sleep(250);
     }

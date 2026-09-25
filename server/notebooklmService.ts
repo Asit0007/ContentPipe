@@ -1,5 +1,9 @@
 import { GoogleGenAI, Modality } from '@google/genai';
 import { generateFallbackTTSAudio } from './fallbackGenerators';
+import { noteModelAttempt, trackModelCall, withModelTask } from './llm/usage';
+
+/** The one model the podcast audio is read with (a single voice: host1Voice). */
+export const NOTEBOOKLM_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
 
 // In-memory cache for synthesized NotebookLM audio files
 interface CachedAudioEntry {
@@ -159,40 +163,45 @@ export async function generateNotebookLMAudioService(
 
   // Try generating direct high-quality speech through Google GenAI Audio modalities
   if (apiKey) {
-    try {
-      console.log('[NotebookLM Service] Requesting multi-voice audio synthesis from Google Gemini Audio Modality...');
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-tts-preview',
-        contents: `Read this NotebookLM technical deep dive podcast discussion with energetic pacing and clear articulation: "${combinedText.substring(0, 1200)}"`,
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: host1Voice || 'Puck',
+    await withModelTask('Podcast audio', () => trackModelCall('speech', async () => {
+      const t0 = Date.now();
+      try {
+        console.log('[NotebookLM Service] Requesting multi-voice audio synthesis from Google Gemini Audio Modality...');
+        const response = await ai.models.generateContent({
+          model: NOTEBOOKLM_TTS_MODEL,
+          contents: `Read this NotebookLM technical deep dive podcast discussion with energetic pacing and clear articulation: "${combinedText.substring(0, 1200)}"`,
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: host1Voice || 'Puck',
+                },
               },
             },
           },
-        },
-      });
+        });
 
-      const candidates = response.candidates || [];
-      for (const candidate of candidates) {
-        const parts = candidate.content?.parts || [];
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            const rawPcm = Buffer.from(part.inlineData.data, 'base64');
-            audioBuffer = pcmToWavBuffer(rawPcm, 24000, 1);
-            isAiLive = true;
-            console.log('[NotebookLM Service] Gemini Audio Modality generated binary audio successfully.');
-            break;
+        const candidates = response.candidates || [];
+        for (const candidate of candidates) {
+          const parts = candidate.content?.parts || [];
+          for (const part of parts) {
+            if (part.inlineData?.data) {
+              const rawPcm = Buffer.from(part.inlineData.data, 'base64');
+              audioBuffer = pcmToWavBuffer(rawPcm, 24000, 1);
+              isAiLive = true;
+              console.log('[NotebookLM Service] Gemini Audio Modality generated binary audio successfully.');
+              break;
+            }
           }
+          if (audioBuffer) break;
         }
-        if (audioBuffer) break;
+        noteModelAttempt({ provider: 'gemini', model: NOTEBOOKLM_TTS_MODEL, outcome: audioBuffer ? 'ok' : 'invalid_output', ...(audioBuffer ? {} : { detail: 'no audio in the response' }), ms: Date.now() - t0 });
+      } catch (apiError: any) {
+        noteModelAttempt({ provider: 'gemini', model: NOTEBOOKLM_TTS_MODEL, outcome: 'error', detail: String(apiError?.status ? `HTTP ${apiError.status}` : apiError?.message || apiError), ms: Date.now() - t0 });
+        console.log('[NotebookLM Service] Audio modality call handled, transitioning to high-fidelity audio generator:', apiError?.message);
       }
-    } catch (apiError: any) {
-      console.log('[NotebookLM Service] Audio modality call handled, transitioning to high-fidelity audio generator:', apiError?.message);
-    }
+    }));
   }
 
   // If live model audio wasn't generated or hit quota, use high-fidelity synthesized studio buffer

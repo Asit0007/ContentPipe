@@ -267,6 +267,23 @@ How it behaves:
 - **Not covered:** TTS, image generation and the NotebookLM service still call Gemini directly; none of these providers offer them.
 - **Privacy.** Every prompt goes to whichever provider answers. DeepSeek's API is hosted in China and Mistral's free tier trains on prompts. That is acceptable here because prompts describe public news stories; it is a different question for private data.
 
+### Which model wrote what (the "AI models on this page" panel)
+
+The chain skips any model that is busy, rate-limited or cooling down, so the configuration alone doesn't tell you who wrote a script. Every page of the UI therefore has an **AI models on this page** panel (`src/components/ModelsPanel.tsx`):
+
+- **What produced this page.** One row per model call ("Narrative, scenes 4-6 (chunk 2/4)", "Scene image (16:9, 1K)"). Each row gives the model that answered (name, maker, provider, exact id), the time, tokens in and out, and every model tried before it with the reason it was passed over. Calls reused from an interrupted run's checkpoint are tagged *from checkpoint*.
+- **Configured models, in the order they are tried.** From `GET /api/models` (`server/modelLineup.ts`), built by the same `buildTiers` the chain uses, so it lists only models that have a key. Each one shows its maker, Artificial Analysis intelligence score, cost on this account and what live runs showed (`shared/modelCatalog.ts`, dated 2026-09-24).
+
+| Page | Shows |
+|---|---|
+| 1. Story Input | the text models Research will use |
+| 2. Topic Research | the research dossier call |
+| 3. Video Blueprint | the blueprint call |
+| 4. Detailed Script | production bible, every narrative and art-direction chunk, the publish package, per-scene voice and image calls |
+| 5. Video Player | voice, images, podcast dialogue and podcast audio |
+
+For API callers, `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/tts`, `/api/generate-image`, `/api/chat` and the NotebookLM routes return the same record as `modelUsage` (shape in `shared/modelUsage.ts`). It is recorded per request with AsyncLocalStorage (`server/llm/usage.ts`). The server strips an incoming `modelUsage` from request bodies, so echoing a research or plan response back never puts it into a prompt or changes a script's resume key.
+
 ### The Gemini tier
 
 The Gemini tier uses the `TEXT_MODELS` chain in `server/gemini.ts`, tried best-first:
@@ -322,7 +339,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 247 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 318 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
@@ -342,6 +359,8 @@ server/
   llm/chain.ts                the provider chain: generateJson / generateText, error classification, cooldowns
   llm/providers.ts            provider registry, default model ids, env resolution
   llm/schema.ts               Gemini schema -> JSON Schema, and the local validator
+  llm/usage.ts                per-request record of which model answered each call (modelUsage)
+  modelLineup.ts              GET /api/models: the configured models per kind of generation, in order
   gemini.ts                   Gemini client, TEXT_MODELS chain, quota-aware generateGeminiJson (the chain's last tier)
   quota.ts                    classifies Gemini errors (per-minute / per-day / limit: 0 / overload) and reduces failures across providers
   strict.ts                   strict-mode status mapping (X-ContentPipe-Strict)
@@ -365,6 +384,8 @@ server/
 shared/
   brand.ts                    DEFAULT_CHANNEL_BRAND — imported by both server/ and src/
   speakers.ts                 narrator / analyst placement (every 6th scene except the last) — imported by both server/ and src/
+  modelUsage.ts               the modelUsage shape, and withoutModelUsage (strips it from echoed inputs)
+  modelCatalog.ts             per-model details for the UI: maker, intelligence score, cost, live notes
 src/
   App.tsx                     Stage orchestration
   components/                 One component per pipeline stage

@@ -1,6 +1,7 @@
 import type { GoogleGenAI } from '@google/genai';
 import { TEXT_MODELS } from './gemini';
 import { generateJson } from './llm/chain';
+import { withModelTask } from './llm/usage';
 import { publishPackageSchema } from './schemas';
 import { orFallback } from './strict';
 import { analyzeScript, dossierSpecifics, extractSpecifics, isSupportedSpecific, formatTimestamp, SEVERITY_RATING_RE, type Chapter } from './timeline';
@@ -167,6 +168,8 @@ export interface PublishPackage {
   deterministicOnly?: boolean;
   isQuotaFallback?: boolean;
   generatedAt: string;
+  /** Added by the route (server.ts), not built here. */
+  modelUsage?: unknown[];
 }
 
 export interface PublishInput {
@@ -304,12 +307,12 @@ export async function buildPublishPackage(ai: GoogleGenAI, input: PublishInput, 
   const generated = await orFallback<any | null>(
     !!opts.strict,
     async () => {
-      let raw: any = await generateJson(ai, buildPrompt(input), profile.publishSystemInstruction, TEXT_MODELS, publishPackageSchema);
+      let raw: any = await withModelTask('Titles, thumbnails, description and tags', () => generateJson(ai, buildPrompt(input), profile.publishSystemInstruction, TEXT_MODELS, publishPackageSchema));
       let linted = lintAll(raw, input);
       if (linted.titles.filter((t) => t.passesLint).length < MIN_PASSING_TITLES) {
         // One retry, telling the model exactly which rules it broke.
         try {
-          const retry: any = await generateJson(ai, buildPrompt(input, feedbackFor(linted.titles, linted.thumbnails)), profile.publishSystemInstruction, TEXT_MODELS, publishPackageSchema);
+          const retry: any = await withModelTask('Titles retry (fewer than 3 passed the linter)', () => generateJson(ai, buildPrompt(input, feedbackFor(linted.titles, linted.thumbnails)), profile.publishSystemInstruction, TEXT_MODELS, publishPackageSchema));
           const relinted = lintAll(retry, input);
           if (relinted.titles.filter((t) => t.passesLint).length >= linted.titles.filter((t) => t.passesLint).length) {
             raw = retry;

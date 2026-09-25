@@ -176,6 +176,17 @@ Text generation is no longer Gemini-only. `generateJson` / `generateText` (`serv
 - **Model ids drift and the defaults are best guesses** — `npm run llm:check` lists each provider's live `/models`, flags any configured id that isn't there, and makes one tiny JSON call per provider. Run it after adding a key and before trusting the chain.
 - **Privacy:** every prompt now goes to whichever provider answers. DeepSeek's API is hosted in China. Fine for public-news scripts; `JobPipe` has its own Gemini client (`src/jobpipe/llm.py`) and is not on this chain — résumé data is a separate privacy decision.
 
+## Model provenance: which model wrote what (2026-09-25)
+
+Every page of the UI has an **"AI models on this page"** panel (`src/components/ModelsPanel.tsx`) with two parts: the models the page is configured to try, in order (`GET /api/models`, built by `server/modelLineup.ts` from the same `buildTiers` the chain uses, so it can't drift), and the model that actually produced each part of what's on screen.
+
+- **Recording.** `server/llm/usage.ts` uses AsyncLocalStorage. Middleware in `server.ts` opens a recording per `/api` request; `trackModelCall` wraps each `generateJson` / `generateText` / TTS / image call; `noteModelAttempt` logs every model tried: the winner, and every failed or skipped one with the reason and tokens. `withModelTask` labels calls ("Narrative, scenes 4-6 (chunk 2/4)"). Research, plan, script, publish-package, tts, generate-image, chat and both NotebookLM routes return it as `modelUsage` (shape: `shared/modelUsage.ts`).
+- **Never in a prompt.** Research and plan bodies echo back into later requests, and the plan and script prompts `JSON.stringify` them. The middleware strips a top-level `modelUsage` from every body field, except on `/api/export/markdown`, so prompts and `/api/script` resume hashes are unchanged.
+- **Resume.** The run journal persists the calls with each checkpoint. A resumed run reports its earlier calls first, marked `fromCheckpoint` (e2e "CRASH" asserts this).
+- **Details** (maker, intelligence score, cost, live notes) live in `shared/modelCatalog.ts`. They are dated evidence; update them when you re-rank `LLM_MODEL_ORDER`. A model missing from it still shows up, just without details.
+- Per-scene TTS/image calls are kept in memory per page (`src/utils/modelUsageLog.ts`), and the scene stores `imageModel` / `audioModel`.
+- Fixed along the way: chat's `via` always credited the first Gemini model in its list; its canned reply claimed a model (`gemini-local-strategist`); and the footer named Gemini 3.1 Pro and Pro Image, which this free key cannot call.
+
 ## Failure contract for API clients (strict mode)
 
 Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/tts` and `/api/generate-image`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:

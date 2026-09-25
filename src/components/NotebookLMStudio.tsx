@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, RotateCcw, Volume2, VolumeX, Sparkles, Mic, Download, Share2, Headphones, Radio, Flame, CheckCircle, RefreshCw, Layers, Copy, Check, ExternalLink, Link as LinkIcon } from 'lucide-react';
 import { NotebookLMPodcast, PodcastTurn, ResearchData, IPBranding, NotebookLMAudioResult } from '../types';
 import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
+import { logModelCalls } from '../utils/modelUsageLog';
 import { speakWithBrowserSpeech, stopAllSpeechAndAudio, playWebAudioSFX, playAudioFromBase64, pcmBase64ToWavDataUrl } from '../utils/audioUtils';
 
 interface NotebookLMStudioProps {
@@ -47,6 +48,7 @@ export const NotebookLMStudio: React.FC<NotebookLMStudioProps> = ({
       });
 
       const data = await response.json();
+      logModelCalls('studio', data.modelUsage);
       setPodcast(data);
       playWebAudioSFX('success');
 
@@ -82,6 +84,7 @@ export const NotebookLMStudio: React.FC<NotebookLMStudioProps> = ({
         }),
       });
       const data = await res.json();
+      logModelCalls('studio', data.modelUsage);
       if (data.audioUrl) {
         setAudioResult(data);
       }

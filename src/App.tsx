@@ -7,6 +7,7 @@ import { ScriptEditor } from './components/ScriptEditor';
 import { VideoStudio } from './components/VideoStudio';
 import { IPBrandingChatbot } from './components/IPBrandingChatbot';
 import { GoogleWorkspaceExportModal } from './components/GoogleWorkspaceExportModal';
+import { ModelsPanel } from './components/ModelsPanel';
 import { SAMPLE_TELEGRAM_MESSAGES } from './data/sampleMessages';
 import { PLAN_PRESETS, PlanPresetKey } from './data/planPresets';
 import { TelegramMessage, ResearchData, VideoPlan, VideoScript, IPBranding, WorkflowStep } from './types';
@@ -162,6 +163,21 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 px-4 py-8 sm:px-6 lg:px-8">
+        {/* Which models this page uses, and which one produced what is on it. */}
+        <ModelsPanel
+          key={currentStep}
+          page={currentStep}
+          calls={
+            currentStep === 'research'
+              ? researchData?.modelUsage
+              : currentStep === 'plan'
+                ? videoPlan?.modelUsage
+                : currentStep === 'script'
+                  ? [...(videoScript?.modelUsage ?? []), ...(videoScript?.publish?.modelUsage ?? [])]
+                  : undefined
+          }
+        />
+
         {currentStep === 'telegram' && (
           <TelegramIngestion
             currentMessage={currentMessage}
@@ -221,7 +237,8 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-zinc-900 bg-zinc-950 py-6 text-center text-xs text-zinc-600">
-        <p>News-to-Video Brief Agent • Powered by Gemini 3.7 Flash, Gemini 3.1 Pro, Gemini Pro Image & Gemini TTS</p>
+        {/* It used to name Gemini 3.1 Pro and Gemini Pro Image, neither of which this free key can call. */}
+        <p>News-to-Video Brief Agent • The models each page uses, and which one wrote what, are under “AI models on this page”</p>
       </footer>
 
       {/* IP Branding & Gemini Chatbot Modal */}

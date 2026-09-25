@@ -182,6 +182,18 @@ test('CRASH: kill -9, restart, quota reset → the identical request resumes and
   assert.equal(r.body.generation.resumed, true);
   assert.deepEqual(r.body.scenes.map((s: any) => s.sceneNumber), [1, 2, 3, 4, 5]);
   assert.equal(r.body.signatureIntro, '', 'documentary tone opens cold — no "Welcome back"');
+  // MODEL PROVENANCE: the calls the crashed request made are kept in the journal and replayed, marked as such.
+  const usage: any[] = r.body.modelUsage;
+  assert.deepEqual(
+    usage.map((c) => [c.task, !!c.fromCheckpoint, c.ok]),
+    [
+      ['Production bible (cast + style guide)', true, true],
+      ['Narrative, scenes 1-3 (chunk 1/2)', true, true],
+      ['Narrative, scenes 4-5 (chunk 2/2)', false, true],
+      ['Art direction, scenes 1-5 (chunk 1/1)', false, true],
+    ]
+  );
+  assert.ok(usage.every((c) => c.provider === 'gemini' && c.model), 'each call names the model that answered');
 });
 
 test('REGENERATE after delivery starts a fresh run instead of replaying the delivered one', async () => {

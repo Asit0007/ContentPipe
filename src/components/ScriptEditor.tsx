@@ -31,6 +31,8 @@ import { VideoScript, VideoScriptScene, ImageResolution, VoiceName, VideoPlan, R
 import { playAudioFromBase64, pcmBase64ToWavDataUrl, speakWithBrowserSpeech, stopAllSpeechAndAudio, playWebAudioSFX } from '../utils/audioUtils';
 import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
 import { ScriptQualityPanel } from './ScriptQualityPanel';
+import { logModelCalls } from '../utils/modelUsageLog';
+import { modelInfo } from '../../shared/modelCatalog';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -150,9 +152,11 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'TTS failed');
+      logModelCalls('script', data.modelUsage);
 
       handleSceneChange(scene.id, {
         generatedAudioBase64: data.audioBase64,
+        audioModel: data.model,
         isAudioLoading: false,
       });
       playWebAudioSFX('pop');
@@ -179,11 +183,13 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Image gen failed');
+      logModelCalls('script', data.modelUsage);
 
       handleSceneChange(scene.id, {
         generatedImageUrl: data.imageUrl,
         imageProvider: data.provider,
         imageProviderLabel: data.providerLabel,
+        imageModel: data.model,
         imageIsPlaceholder: !!data.isPlaceholder,
         isImageLoading: false,
       });
@@ -708,7 +714,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 {/* Status Pills */}
                 <div className="flex items-center gap-2 shrink-0">
                   {scene.generatedAudioBase64 ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400 border border-emerald-500/20">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-400 border border-emerald-500/20" title={scene.audioModel ? `Voiced by ${modelInfo(scene.audioModel)?.name || scene.audioModel}` : undefined}>
                       <CheckCircle2 className="h-3 w-3" /> Audio Ready
                     </span>
                   ) : (
@@ -723,7 +729,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         🧩 Placeholder
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-sky-400 border border-sky-500/20" title={scene.imageProviderLabel ? `Generated via ${scene.imageProviderLabel}` : undefined}>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-sky-400 border border-sky-500/20" title={scene.imageProviderLabel ? `Generated via ${scene.imageProviderLabel}${scene.imageModel ? ` (${modelInfo(scene.imageModel)?.name || scene.imageModel})` : ''}` : undefined}>
                         <CheckCircle2 className="h-3 w-3" /> Image Ready
                       </span>
                     )
@@ -896,6 +902,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         ) : scene.imageProviderLabel ? (
                           <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-zinc-900/70 border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300">
                             🖼️ {scene.imageProviderLabel}
+                            {scene.imageModel && scene.imageProvider === 'gemini' ? ` · ${modelInfo(scene.imageModel)?.name || scene.imageModel}` : ''}
                           </span>
                         ) : null}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex items-end justify-between">

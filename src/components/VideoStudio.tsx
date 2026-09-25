@@ -36,6 +36,8 @@ import {
   playWebAudioSFX
 } from '../utils/audioUtils';
 import { NotebookLMStudio } from './NotebookLMStudio';
+import { logModelCalls } from '../utils/modelUsageLog';
+import { modelInfo } from '../../shared/modelCatalog';
 import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
 import { DEFAULT_CHANNEL_BRAND } from '../../shared/brand';
 
@@ -113,8 +115,9 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
             body: JSON.stringify({ text: scene.narration, voice: 'Puck' }),
           });
           const data = await res.json();
+          logModelCalls('studio', data.modelUsage);
           if (data.audioBase64) {
-            scenes[i] = { ...scenes[i], generatedAudioBase64: data.audioBase64 };
+            scenes[i] = { ...scenes[i], generatedAudioBase64: data.audioBase64, audioModel: data.model };
           }
         } catch (e) {
           console.warn('TTS error in batch:', e);
@@ -141,12 +144,14 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
             }),
           });
           const data = await res.json();
+          logModelCalls('studio', data.modelUsage);
           if (data.imageUrl) {
             scenes[i] = {
               ...scenes[i],
               generatedImageUrl: data.imageUrl,
               imageProvider: data.provider,
               imageProviderLabel: data.providerLabel,
+              imageModel: data.model,
               imageIsPlaceholder: !!data.isPlaceholder,
             };
           }
@@ -186,6 +191,7 @@ export const VideoStudio: React.FC<VideoStudioProps> = ({
       });
 
       const result = await response.json();
+      logModelCalls('studio', result.modelUsage);
       if (result.audioUrl) {
         setNotebooklmAudioResult(result);
         playWebAudioSFX('success');
@@ -699,6 +705,7 @@ ${videoScript.scenes
                     ) : currentScene.imageProviderLabel ? (
                       <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-zinc-900/70 border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300 backdrop-blur-sm">
                         🖼️ {currentScene.imageProviderLabel}
+                        {currentScene.imageModel && currentScene.imageProvider === 'gemini' ? ` · ${modelInfo(currentScene.imageModel)?.name || currentScene.imageModel}` : ''}
                       </span>
                     ) : null}
                   </>
