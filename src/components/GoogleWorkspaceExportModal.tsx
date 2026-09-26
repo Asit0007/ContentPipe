@@ -187,7 +187,7 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
 
         {/* Modal Header */}
         <div className="flex items-start gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-emerald-500 shadow-lg shadow-blue-500/20 text-white shrink-0">
+          <div className="bg-zinc-800 flex h-12 w-12 items-center justify-center rounded-xl shadow-lg text-white shrink-0">
             <Sparkles className="h-6 w-6" />
           </div>
           <div>
@@ -368,7 +368,7 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
               onClick={() => setSelectedFormat('doc')}
               className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
                 selectedFormat === 'doc'
-                  ? 'border-blue-500 bg-blue-500/10 shadow-lg shadow-blue-500/10'
+                  ? 'border-blue-500 bg-blue-500/10 shadow-lg'
                   : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700'
               }`}
             >
@@ -389,7 +389,7 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
               onClick={() => setSelectedFormat('sheet')}
               className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
                 selectedFormat === 'sheet'
-                  ? 'border-emerald-500 bg-emerald-500/10 shadow-lg shadow-emerald-500/10'
+                  ? 'border-emerald-500 bg-emerald-500/10 shadow-lg'
                   : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700'
               }`}
             >
@@ -410,7 +410,7 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
               onClick={() => setSelectedFormat('both')}
               className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
                 selectedFormat === 'both'
-                  ? 'border-orange-500 bg-orange-500/10 shadow-lg shadow-orange-500/10'
+                  ? 'border-orange-500 bg-orange-500/10 shadow-lg'
                   : 'border-zinc-800 bg-zinc-900/50 hover:border-zinc-700'
               }`}
             >
@@ -481,8 +481,8 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
                       rel="noopener noreferrer"
                       className={`px-3 py-1 rounded text-xs font-bold flex items-center gap-1.5 transition-all text-white ${
                         res.type === 'doc'
-                          ? 'bg-blue-600 hover:bg-blue-500 shadow-sm shadow-blue-500/30'
-                          : 'bg-emerald-600 hover:bg-emerald-500 shadow-sm shadow-emerald-500/30'
+                          ? 'bg-blue-600 hover:bg-blue-500 shadow-sm'
+                          : 'bg-emerald-600 hover:bg-emerald-500 shadow-sm'
                       }`}
                     >
                       <span>Open in {res.type === 'doc' ? 'Docs' : 'Sheets'}</span>
@@ -513,7 +513,7 @@ export const GoogleWorkspaceExportModal: React.FC<GoogleWorkspaceExportModalProp
               type="button"
               disabled={isExporting || !currentUser}
               onClick={handleConfirmExport}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 cursor-pointer"
+              className="bg-zinc-800 hover:bg-zinc-700 w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl px-5 py-2 text-xs font-bold text-white shadow-lg transition-all disabled:opacity-50 cursor-pointer"
             >
               {isExporting ? (
                 <>

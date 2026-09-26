@@ -210,7 +210,7 @@ How can I help you build a dominant tech media brand today?`,
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/80">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 shadow-md shadow-orange-500/30">
+            <div className="bg-orange-500 flex h-9 w-9 items-center justify-center rounded-xl shadow-md">
               <Sparkles className="h-5 w-5 text-white" />
             </div>
             <div>
@@ -446,7 +446,7 @@ How can I help you build a dominant tech media brand today?`,
                       className={`w-full py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                         isSelected
                           ? 'bg-zinc-800 text-zinc-300 border border-zinc-700'
-                          : 'bg-gradient-to-r from-orange-500 to-amber-500 text-white hover:from-orange-400 hover:to-amber-400 shadow-md shadow-orange-500/20'
+                          : 'bg-orange-500 hover:bg-orange-600 text-white shadow-md'
                       }`}
                     >
                       {isSelected ? (

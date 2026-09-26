@@ -31,10 +31,18 @@ const PAGE_LINEUPS: Record<string, Array<{ cap: Capability; label: string; usedF
 
 // One fetch per page load; every panel shares it.
 let lineupPromise: Promise<ModelLineup> | null = null;
-function loadLineup(): Promise<ModelLineup> {
+export function loadLineup(): Promise<ModelLineup> {
   if (!lineupPromise) {
     lineupPromise = fetch('/api/models')
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        // An HTML page here means the running server predates this route (Vite hot-reloads the UI, `tsx` does
+        // not reload the server) and the request fell through to index.html.
+        if (!(r.headers.get('content-type') || '').includes('json')) {
+          throw new Error('the server is older than this page; restart `npm run dev`');
+        }
+        return r.json();
+      })
       .catch((err) => {
         lineupPromise = null; // let the next panel try again
         throw err;
@@ -43,7 +51,7 @@ function loadLineup(): Promise<ModelLineup> {
   return lineupPromise;
 }
 
-function displayName(model?: string): string {
+export function displayName(model?: string): string {
   return modelInfo(model)?.name || model || 'unknown';
 }
 

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Send, ArrowRight, MessageSquare, Flame, CheckCircle2, Sparkles, RefreshCw, Layers, Radio, PenTool, Link2, FileText, Trash2, Compass } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Send, ArrowRight, MessageSquare, Flame, CheckCircle2, Sparkles, RefreshCw, Layers, Radio, Cpu, PenTool, Link2, FileText, Trash2, Compass } from 'lucide-react';
 import { TelegramMessage } from '../types';
 import { SAMPLE_TELEGRAM_MESSAGES } from '../data/sampleMessages';
 import { DEFAULT_TOPIC_DOMAIN } from '../../shared/topicProfile';
+import { displayName, loadLineup } from './ModelsPanel';
 
 interface TelegramIngestionProps {
   currentMessage: TelegramMessage;
@@ -22,6 +23,20 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
   onTopicDomainChange,
 }) => {
   const [inputMode, setInputMode] = useState<'custom' | 'telegram' | 'presets'>('custom');
+  // What research will actually try, from the live .env — this used to be a hardcoded "Gemini ... Ready" that nothing
+  // checked. It is the configured order, not a health check: the first model may still be busy when you press Research.
+  const [researchModelLabel, setResearchModelLabel] = useState('Loading model order…');
+  useEffect(() => {
+    loadLineup()
+      .then(({ text }) => {
+        if (!text.length) return setResearchModelLabel('No text model configured');
+        const rest = text.length - 1;
+        setResearchModelLabel(
+          `Research tries ${displayName(text[0].model)} first` + (rest ? `, then ${rest} fallback${rest === 1 ? '' : 's'}` : ''),
+        );
+      })
+      .catch(() => setResearchModelLabel('Model order unavailable'));
+  }, []);
   const [customText, setCustomText] = useState(currentMessage.text);
   const [sourceUrlsText, setSourceUrlsText] = useState((currentMessage.sourceUrls || []).join('\n'));
   const [channelName, setChannelName] = useState(currentMessage.channelName || 'Custom Input');
@@ -60,20 +75,19 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       {/* Top Banner / Concept Explainer */}
-      <div className="rounded-2xl border border-zinc-800 bg-gradient-to-b from-zinc-900/90 to-zinc-950 p-6 sm:p-8 shadow-xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-orange-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="bg-zinc-900 rounded-2xl border border-zinc-800 p-6 sm:p-8 shadow-xl relative overflow-hidden">
         
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-orange-500/10 border border-orange-500/20 px-3 py-1 text-xs font-semibold text-orange-400 mb-3">
               <Radio className="h-3.5 w-3.5 animate-pulse" />
-              <span>Stage 1 of 4 • Story & Topic Input</span>
+              <span>Stage 1 of 5 • Story & Topic Input</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-              Transform Any Tech Topic into an Amazing Infotainment Script
+            <h1 className="font-serif text-3xl sm:text-4xl font-normal tracking-tight text-white">
+              Turn a hacking story into a script anyone can follow
             </h1>
             <p className="mt-2 text-sm sm:text-base text-zinc-400 max-w-2xl leading-relaxed">
-              Provide any story, breaking news, forum controversy, Telegram message, or raw prompt. Our agentic pipeline runs deep web research, extracts viral angles, builds a retention blueprint, and writes a detailed, master-grade scene script.
+              Paste the story and the links it came from. The pipeline reads those sources, builds a cited dossier, plans the story beats, and writes a scene-by-scene script with narration, image prompts and motion direction.
             </p>
           </div>
         </div>
@@ -87,7 +101,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
             onClick={() => setInputMode('custom')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               inputMode === 'custom'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                ? 'bg-orange-500 text-white shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
             }`}
           >
@@ -99,7 +113,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
             onClick={() => setInputMode('telegram')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               inputMode === 'telegram'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                ? 'bg-orange-500 text-white shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
             }`}
           >
@@ -111,7 +125,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
             onClick={() => setInputMode('presets')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               inputMode === 'presets'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                ? 'bg-orange-500 text-white shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
             }`}
           >
@@ -121,8 +135,8 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
         </div>
 
         <div className="hidden sm:flex items-center gap-2 text-xs text-zinc-500">
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Gemini 3.7 Flash Research Engine Ready</span>
+          <Cpu className="h-3.5 w-3.5 text-zinc-500" />
+          <span>{researchModelLabel}</span>
         </div>
       </div>
 
@@ -265,7 +279,7 @@ export const TelegramIngestion: React.FC<TelegramIngestionProps> = ({
               type="submit"
               id="start-research-agent-button"
               disabled={isLoading || !customText.trim()}
-              className="w-full flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-3.5 text-sm sm:text-base font-bold text-white shadow-xl shadow-orange-600/25 hover:from-orange-500 hover:to-amber-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="bg-orange-500 hover:bg-orange-600 w-full flex items-center justify-center gap-2.5 rounded-xl px-6 py-3.5 text-sm sm:text-base font-bold text-white shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isLoading ? (
                 <>

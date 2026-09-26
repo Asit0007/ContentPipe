@@ -358,7 +358,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
       />
 
       {/* Top Banner: Master Script Dossier */}
-      <div className="rounded-2xl border border-orange-500/30 bg-gradient-to-br from-zinc-900 via-zinc-900 to-orange-950/20 p-6 sm:p-8 shadow-xl space-y-6 relative overflow-hidden">
+      <div className="bg-zinc-900 rounded-2xl border border-orange-500/30 p-6 sm:p-8 shadow-xl space-y-6 relative overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 px-3 py-1 text-xs font-semibold text-orange-400">
@@ -378,7 +378,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 setGoogleExportType('both');
                 setIsGoogleExportModalOpen(true);
               }}
-              className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 px-3 py-1.5 rounded-lg shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+              className="bg-zinc-800 hover:bg-zinc-700 flex items-center gap-1.5 text-xs font-bold text-white px-3 py-1.5 rounded-lg shadow-md transition-all cursor-pointer"
             >
               <FileText className="h-3.5 w-3.5" />
               <span>Export to Docs & Sheets</span>
@@ -459,7 +459,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                   onClick={() => setSelectedResolution(res)}
                   className={`py-1.5 px-2 rounded-lg text-xs font-bold transition-all border ${
                     selectedResolution === res
-                      ? 'bg-orange-500 text-white border-orange-400 shadow-sm shadow-orange-500/30'
+                      ? 'bg-orange-500 text-white border-orange-400 shadow-sm'
                       : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-zinc-200'
                   }`}
                 >
@@ -508,7 +508,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
               type="button"
               disabled={isBatchGenerating}
               onClick={handleBatchGenerateAll}
-              className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-orange-500 to-amber-500 py-1.5 px-3 text-xs font-bold text-white shadow hover:from-orange-400 hover:to-amber-400 transition-all disabled:opacity-50 cursor-pointer"
+              className="bg-orange-500 hover:bg-orange-600 mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg py-1.5 px-3 text-xs font-bold text-white shadow transition-all disabled:opacity-50 cursor-pointer"
             >
               {isBatchGenerating ? (
                 <>
@@ -534,7 +534,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             </div>
             <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-orange-500 to-amber-400 transition-all duration-300"
+                className="bg-orange-500 h-full transition-all duration-300"
                 style={{ width: `${(batchProgress.current / Math.max(1, batchProgress.total)) * 100}%` }}
               />
             </div>
@@ -552,7 +552,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 setGoogleExportType('doc');
                 setIsGoogleExportModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-500/30 transition-all cursor-pointer shadow-sm shadow-blue-500/10"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 text-xs font-semibold border border-blue-500/30 transition-all cursor-pointer shadow-sm"
               title="Export script to a new Google Doc"
             >
               <FileText className="h-3.5 w-3.5 text-blue-400" />
@@ -565,7 +565,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 setGoogleExportType('sheet');
                 setIsGoogleExportModalOpen(true);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-all cursor-pointer shadow-sm shadow-emerald-500/10"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-all cursor-pointer shadow-sm"
               title="Export script to a new Google Sheet"
             >
               <Table className="h-3.5 w-3.5 text-emerald-400" />
@@ -619,7 +619,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             onClick={() => setViewMode('director')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               viewMode === 'director'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                ? 'bg-orange-500 text-white shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
             }`}
           >
@@ -631,7 +631,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             onClick={() => setViewMode('document')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               viewMode === 'document'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                ? 'bg-orange-500 text-white shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
             }`}
           >
@@ -643,7 +643,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
             onClick={() => setViewMode('teleprompter')}
             className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               viewMode === 'teleprompter'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                ? 'bg-orange-500 text-white shadow-sm'
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
             }`}
           >
@@ -1152,7 +1152,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
         <button
           id="proceed-to-studio-button"
           onClick={onProceedToStudio}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-600/30 hover:from-orange-500 hover:to-amber-400 transition-all cursor-pointer shrink-0"
+          className="bg-orange-500 hover:bg-orange-600 flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold text-white shadow-lg transition-all cursor-pointer shrink-0"
         >
           <Play className="h-4 w-4 fill-white" />
           <span>Launch Interactive Video Player</span>

@@ -377,7 +377,7 @@ ${podcast.turns
         <div className="lg:col-span-8 space-y-4">
           <div
             id="notebooklm-stage"
-            className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-b from-zinc-900 via-zinc-950 to-black p-6 shadow-2xl"
+            className="bg-zinc-900 relative overflow-hidden rounded-2xl border border-zinc-800 p-6 shadow-2xl"
           >
             {/* Background Ambient Aura */}
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(6,182,212,0.08),transparent_70%)] pointer-events-none" />
@@ -403,7 +403,7 @@ ${podcast.turns
               <div
                 className={`relative rounded-xl border p-4 transition-all duration-300 flex flex-col items-center text-center ${
                   isAlexTurn && isPlaying
-                    ? 'border-orange-500 bg-orange-500/10 shadow-lg shadow-orange-500/20 scale-[1.02]'
+                    ? 'border-orange-500 bg-orange-500/10 shadow-lg scale-[1.02]'
                     : 'border-zinc-800/80 bg-zinc-900/40 opacity-70'
                 }`}
               >
@@ -433,7 +433,7 @@ ${podcast.turns
               <div
                 className={`relative rounded-xl border p-4 transition-all duration-300 flex flex-col items-center text-center ${
                   !isAlexTurn && isPlaying
-                    ? 'border-cyan-500 bg-cyan-500/10 shadow-lg shadow-cyan-500/20 scale-[1.02]'
+                    ? 'border-cyan-500 bg-cyan-500/10 shadow-lg scale-[1.02]'
                     : 'border-zinc-800/80 bg-zinc-900/40 opacity-70'
                 }`}
               >
@@ -502,7 +502,7 @@ ${podcast.turns
                 </button>
                 <button
                   onClick={handleTogglePlay}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-zinc-950 font-extrabold shadow-lg shadow-orange-500/30 transition-transform active:scale-95"
+                  className="bg-orange-500 hover:bg-orange-600 flex items-center gap-2 px-5 py-2 rounded-xl text-white font-extrabold shadow-lg transition-transform active:scale-95"
                 >
                   {isPlaying ? (
                     <>

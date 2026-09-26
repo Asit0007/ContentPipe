@@ -494,7 +494,7 @@ ${videoScript.scenes
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
                 studioMode === 'infotainment'
-                  ? 'bg-orange-500 text-white shadow-md shadow-orange-500/30'
+                  ? 'bg-orange-500 text-white shadow-md'
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
@@ -508,7 +508,7 @@ ${videoScript.scenes
               }}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
                 studioMode === 'notebooklm'
-                  ? 'bg-cyan-500 text-white shadow-md shadow-cyan-500/30'
+                  ? 'bg-cyan-500 text-white shadow-md'
                   : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
@@ -548,7 +548,7 @@ ${videoScript.scenes
               <button
                 onClick={handleAutoGenerateAllAssets}
                 disabled={isBatchGenerating}
-                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold shadow-lg shadow-orange-500/30 transition-all disabled:opacity-50"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-xs font-bold shadow-lg transition-all disabled:opacity-50"
               >
                 {isBatchGenerating ? (
                   <>
@@ -566,7 +566,7 @@ ${videoScript.scenes
           )}
 
           {/* Google NotebookLM High-Quality Audio Narration Service Banner */}
-          <div className="rounded-2xl border border-cyan-500/40 bg-gradient-to-r from-cyan-950/40 via-zinc-900 to-zinc-900 p-4 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="bg-zinc-900 rounded-2xl border border-cyan-500/40 p-4 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="flex items-start gap-3.5">
               <div className="h-10 w-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center shrink-0">
                 <Radio className="h-5 w-5 text-cyan-400" />
@@ -625,7 +625,7 @@ ${videoScript.scenes
                 <button
                   onClick={handleGenerateNotebookLMAudio}
                   disabled={isGeneratingNotebookLMAudio}
-                  className="w-full md:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-zinc-950 text-xs font-extrabold shadow-lg shadow-cyan-500/20 transition-all disabled:opacity-50"
+                  className="bg-orange-500 hover:bg-orange-600 w-full md:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-lg transition-all disabled:opacity-50"
                 >
                   {isGeneratingNotebookLMAudio ? (
                     <>
@@ -760,7 +760,7 @@ ${videoScript.scenes
 
                 {/* Kinetic On-Screen Caption Badge */}
                 <div className="absolute top-14 left-4 right-4 z-10 flex justify-center">
-                  <div className="rounded-xl bg-orange-500/90 backdrop-blur-md px-3.5 py-1.5 text-center shadow-lg shadow-orange-950/60 border border-orange-300/40 transform scale-105 animate-pulse">
+                  <div className="rounded-xl bg-orange-500/90 backdrop-blur-md px-3.5 py-1.5 text-center shadow-lg border border-orange-300/40 transform scale-105 animate-pulse">
                     <span className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-zinc-950">
                       {currentScene.onScreenText}
                     </span>
@@ -815,7 +815,7 @@ ${videoScript.scenes
                   <button
                     id="player-play-pause-button"
                     onClick={handleTogglePlay}
-                    className="flex items-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-400 px-6 py-2.5 text-sm font-extrabold text-white shadow-lg shadow-orange-500/30 transition-all cursor-pointer active:scale-95"
+                    className="flex items-center gap-2 rounded-xl bg-orange-500 hover:bg-orange-400 px-6 py-2.5 text-sm font-extrabold text-white shadow-lg transition-all cursor-pointer active:scale-95"
                   >
                     {isPlaying ? (
                       <>

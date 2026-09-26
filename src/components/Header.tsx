@@ -33,18 +33,13 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
         {/* Left: Brand / Title */}
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-orange-500 shadow-lg shadow-orange-500/20 ring-1 ring-orange-400/30">
+          <div className="bg-orange-500 flex h-10 w-10 items-center justify-center rounded-xl shadow-lg ring-1 ring-orange-400/30">
             <Flame className="h-5 w-5 text-white" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold tracking-tight text-white sm:text-base">
-                {DEFAULT_CHANNEL_BRAND} Script Agent
-              </span>
-              <span className="rounded-full bg-orange-500/10 px-2 py-0.5 text-[11px] font-medium text-orange-400 border border-orange-500/20">
-                AI Studio
-              </span>
-            </div>
+            <span className="text-sm font-semibold tracking-tight text-white sm:text-base">
+              {DEFAULT_CHANNEL_BRAND} Script Agent
+            </span>
             <p className="text-xs text-zinc-400 hidden sm:block">
               Custom Story Input → Deep Research → Blueprint → Detailed Script & Narration
             </p>
@@ -63,7 +58,7 @@ export const Header: React.FC<HeaderProps> = ({
                 onClick={() => onSelectStep(step.id)}
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
                   isActive
-                    ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/30'
+                    ? 'bg-orange-500 text-white shadow-sm'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
                 }`}
               >
@@ -80,7 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="header-google-workspace-export-button"
               onClick={onOpenGoogleExport}
-              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-emerald-500/10 hover:from-blue-500/20 hover:to-emerald-500/20 border border-blue-500/30 px-3 py-1.5 text-xs font-semibold text-blue-300 transition-all cursor-pointer shadow-sm shadow-blue-500/10"
+              className="bg-zinc-900 hover:bg-zinc-800 flex items-center gap-1.5 rounded-xl border border-blue-500/30 px-3 py-1.5 text-xs font-semibold text-blue-300 transition-all cursor-pointer shadow-sm"
               title="Export detailed script to Google Docs or Google Sheets"
             >
               <FileText className="h-3.5 w-3.5 text-blue-400" />
@@ -93,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onOpenIpModal}
             className={`flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-medium transition-all border ${
               activeIp
-                ? 'bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-orange-500/30 text-orange-300 hover:border-orange-500/50'
+                ? 'bg-orange-500/10 border-orange-500/30 text-orange-300 hover:border-orange-500/50'
                 : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
             }`}
           >

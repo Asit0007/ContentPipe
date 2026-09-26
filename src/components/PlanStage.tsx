@@ -267,7 +267,7 @@ export const PlanStage: React.FC<PlanStageProps> = ({
         <button
           id="proceed-to-script-button"
           onClick={onProceedToScript}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-600/30 hover:from-orange-500 hover:to-amber-400 transition-all cursor-pointer"
+          className="bg-orange-500 hover:bg-orange-600 flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold text-white shadow-lg transition-all cursor-pointer"
         >
           <Sparkles className="h-4 w-4" />
           <span>Convert Blueprint to Scene-by-Scene Script</span>

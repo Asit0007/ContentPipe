@@ -1,1 +1,121 @@
 @import "tailwindcss";
+
+/*
+ * Persona palette (2026-09-26) — the AI Personal Brand Playbook's dark tokens, as shipped in
+ * Blogs/assets/css/tokens.css. Rather than rename ~1,300 class names, the Tailwind scales the UI already
+ * uses are redefined here, so this block is the only place the palette lives:
+ *   zinc            -> warm neutrals (ground #141310, surface #1e1c18, rule #332f28, ink #ece9e2)
+ *   orange, amber   -> ember, the one accent. 500 is ember #c84b11 (white text on it passes AA, 4.8:1);
+ *                      400 is the dark-mode ember #e0602a, for accent text on dark.
+ *   emerald, green  -> signal, positive / verified only
+ *   cyan, sky, blue, indigo -> wire: retired as colours ("retire the blue and purple"), so they read as neutrals
+ *   rose, red       -> a warm error red; the Playbook has none, but a tool needs failures to look like failures
+ * No gradients and no glows (Playbook: "Never a gradient"). Image scrims over video are the one exception.
+ */
+@theme {
+  --font-sans: 'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-serif: 'DM Serif Display', Georgia, 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --color-white: #faf9f6;
+  --color-black: #100f0c;
+
+  --color-zinc-50: #faf9f6;
+  --color-zinc-100: #f2f0ea;
+  --color-zinc-200: #ece9e2;
+  --color-zinc-300: #d4d0c6;
+  --color-zinc-400: #b8b3a8;
+  --color-zinc-500: #8b8578;
+  --color-zinc-600: #6f6a5e;
+  --color-zinc-700: #4a453d;
+  --color-zinc-800: #332f28;
+  --color-zinc-900: #1e1c18;
+  --color-zinc-950: #141310;
+
+  --color-orange-50: #fcf1eb;
+  --color-orange-100: #f7ddd0;
+  --color-orange-200: #f0bfa6;
+  --color-orange-300: #ea9670;
+  --color-orange-400: #e0602a;
+  --color-orange-500: #c84b11;
+  --color-orange-600: #a83e0e;
+  --color-orange-700: #86320c;
+  --color-orange-800: #62260c;
+  --color-orange-900: #45200f;
+  --color-orange-950: #2d1a12;
+
+  --color-emerald-50: #eef8f3;
+  --color-emerald-100: #d8ede3;
+  --color-emerald-200: #b3dfc9;
+  --color-emerald-300: #7fcfaa;
+  --color-emerald-400: #3fae82;
+  --color-emerald-500: #2f9870;
+  --color-emerald-600: #1a6b4a;
+  --color-emerald-700: #155a3e;
+  --color-emerald-800: #124631;
+  --color-emerald-900: #17332a;
+  --color-emerald-950: #0d2019;
+
+  --color-rose-50: #fdf1ef;
+  --color-rose-100: #f9dcd7;
+  --color-rose-200: #f2bdb4;
+  --color-rose-300: #ea9a8e;
+  --color-rose-400: #e06a5a;
+  --color-rose-500: #c9473a;
+  --color-rose-600: #a8382d;
+  --color-rose-700: #862d25;
+  --color-rose-800: #62231d;
+  --color-rose-900: #431a16;
+  --color-rose-950: #2a1210;
+}
+
+/* Aliases: one ember, one signal, one error, one neutral — however a component spells them. */
+@theme {
+  --color-amber-50: var(--color-orange-50);
+  --color-amber-100: var(--color-orange-100);
+  --color-amber-200: var(--color-orange-200);
+  --color-amber-300: var(--color-orange-300);
+  --color-amber-400: var(--color-orange-400);
+  --color-amber-500: var(--color-orange-500);
+  --color-amber-600: var(--color-orange-600);
+  --color-amber-700: var(--color-orange-700);
+  --color-amber-800: var(--color-orange-800);
+  --color-amber-900: var(--color-orange-900);
+  --color-amber-950: var(--color-orange-950);
+
+  --color-green-300: var(--color-emerald-300);
+  --color-green-400: var(--color-emerald-400);
+  --color-green-500: var(--color-emerald-500);
+  --color-green-600: var(--color-emerald-600);
+
+  --color-red-300: var(--color-rose-300);
+  --color-red-400: var(--color-rose-400);
+  --color-red-500: var(--color-rose-500);
+  --color-red-600: var(--color-rose-600);
+  --color-red-900: var(--color-rose-900);
+  --color-red-950: var(--color-rose-950);
+
+  --color-cyan-50: var(--color-zinc-50);
+  --color-cyan-100: var(--color-zinc-100);
+  --color-cyan-200: var(--color-zinc-200);
+  --color-cyan-300: var(--color-zinc-300);
+  --color-cyan-400: var(--color-zinc-400);
+  --color-cyan-500: #8a8578;
+  --color-cyan-600: var(--color-zinc-600);
+  --color-cyan-700: var(--color-zinc-700);
+  --color-cyan-800: var(--color-zinc-800);
+  --color-cyan-900: var(--color-zinc-900);
+  --color-cyan-950: var(--color-zinc-950);
+
+  --color-sky-200: var(--color-cyan-200);
+  --color-sky-300: var(--color-cyan-300);
+  --color-sky-400: var(--color-cyan-400);
+  --color-sky-500: var(--color-cyan-500);
+  --color-blue-300: var(--color-cyan-300);
+  --color-blue-400: var(--color-cyan-400);
+  --color-blue-500: var(--color-cyan-500);
+  --color-blue-600: var(--color-cyan-600);
+  --color-indigo-400: var(--color-cyan-400);
+  --color-indigo-500: var(--color-cyan-500);
+  --color-indigo-600: var(--color-cyan-600);
+}

@@ -49,7 +49,7 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
       {/* Topic Title & Hook Card */}
-      <div className="rounded-2xl border border-orange-500/30 bg-gradient-to-br from-zinc-900 via-zinc-900 to-orange-950/20 p-6 sm:p-8 shadow-xl relative overflow-hidden">
+      <div className="bg-zinc-900 rounded-2xl border border-orange-500/30 p-6 sm:p-8 shadow-xl relative overflow-hidden">
         <div className="flex items-center justify-between gap-4 mb-3">
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-orange-500/10 border border-orange-500/20 px-3 py-1 text-xs font-semibold text-orange-400">
@@ -70,7 +70,7 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
           </button>
         </div>
 
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white leading-tight">
+        <h1 className="font-serif text-3xl sm:text-4xl font-normal tracking-tight text-white leading-tight">
           {researchData.topicTitle}
         </h1>
 
@@ -264,7 +264,7 @@ export const ResearchStage: React.FC<ResearchStageProps> = ({
         <button
           id="proceed-to-plan-button"
           onClick={() => onProceedToPlan(researchData.infotainmentAngles?.[selectedAngleIndex]?.title, preset)}
-          className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-600/30 hover:from-orange-500 hover:to-amber-400 transition-all cursor-pointer"
+          className="bg-orange-500 hover:bg-orange-600 flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-semibold text-white shadow-lg transition-all cursor-pointer"
         >
           <Sparkles className="h-4 w-4" />
           <span>Generate Video Production Blueprint</span>
