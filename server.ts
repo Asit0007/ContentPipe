@@ -24,7 +24,8 @@ import {
 } from './server/scriptPipeline';
 import { isStrict, sendStrictFailure, orFallback } from './server/strict';
 import { reduceModelErrors, UpstreamUnavailableError, classifyGeminiError } from './server/quota';
-import { analyzeScript } from './server/timeline';
+import { analyzeScript, buildTimeline, placeMidrolls } from './server/timeline';
+import { applySoundDirection } from './server/soundPipeline';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
 import { extractUrls, fetchSources, buildSourceContext, sourceId } from './server/sourceFetcher';
@@ -639,9 +640,10 @@ app.post('/api/script', async (req, res) => {
         targetPlatform: videoPlan.format === '16:9' ? 'YouTube Long-form (16:9)' : 'Shorts/Reels/TikTok (9:16)',
         aspectRatio: videoPlan.format === '16:9' ? '16:9' : '9:16',
         tonePacing: videoPlan.tone || 'Witty Tech & Sarcastic',
-        // Documentary tone opens cold on the hook (the spec bans logo intros / "welcome back"
-        // openers) and closes calmly; every other tone keeps the original creator-style lines.
-        signatureIntro: isDocumentary ? '' : `Welcome back to ${channelBrandName || DEFAULT_CHANNEL_BRAND}...`,
+        // Every tone opens cold on the hook: the spec bans logo intros and "welcome back" openers, and the audit
+        // (timeline.ts intro-line-present) warned about this very line while the code kept adding it for every
+        // non-documentary script. "Welcome back" is also wrong for most viewers of a new channel.
+        signatureIntro: '',
         signatureOutro: isDocumentary
           ? 'Sources are linked in the description.'
           : `Drop your hot take in the comments and subscribe to ${channelBrandName || DEFAULT_CHANNEL_BRAND}.`,
@@ -679,7 +681,8 @@ app.post('/api/script', async (req, res) => {
           // slideshow of AI stills score as sourced footage. An unstated visual is not evidence.
           visualType: s.visualType || 'cyberpunk',
           onScreenText: s.onScreenText || '',
-          soundEffect: s.soundEffect || 'Subtle electronic pulse',
+          // Written by the sound pass after this (server/soundPipeline.ts); no effect is a valid choice, not a gap to fill.
+          soundEffect: s.soundEffect || '',
           retentionNote: s.retentionNote || 'Pacing interrupt and narrative momentum',
           wordCount: words,
           infographic: s.infographic || undefined,
@@ -698,6 +701,14 @@ app.post('/api/script', async (req, res) => {
     script.characterBible = productionBible.characterBible;
     script.styleGuide = productionBible.styleGuide;
     script = await applyVisualDirection(ai, script, researchData, opts);
+
+    // --- Pass 3: sound & edit -----------------------------------------------
+    // Music plan, sound effects, silences and transitions (server/soundPipeline.ts). Durations are settled by now, so
+    // the mid-roll positions it plans around are the ones analyzeScript will report below.
+    if (!usedFallback) {
+      const midrollAfterScenes = placeMidrolls(script.scenes, buildTimeline(script.scenes)).markers.map((m) => m.afterSceneNumber);
+      script = await applySoundDirection(ai, script, opts, { midrollAfterScenes, channelBrandName });
+    }
 
     if (usedFallback) degraded.push('Canned fallback script: AI generation was unavailable, so this is placeholder content, not a real draft.');
     script.generation = buildGenerationSummary(script, { runId: runKey, resumed: journal.resumed, requestedDurationSec, degraded });

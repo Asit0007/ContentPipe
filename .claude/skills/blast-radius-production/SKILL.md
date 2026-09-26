@@ -39,6 +39,7 @@ Edit `tools.json` when a tool's limits or credits change (they drift monthly). `
 1. Save every file under the exact name in the Timeline table, into `clips/`, `stills/` or `graphics/`.
 2. Resolve: sort the bin by name, *Create New Timeline Using Selected Clips*, then follow the pack's assembly steps.
 3. Narration: `/api/tts` per scene, or ContentRender's voices (Kokoro `af_heart` narrator, Gemini `Charon` analyst) once built.
+4. Music, sound effects and cuts: follow the exported brief's **Sound & edit** section (from the sound pass, 2026-09-26). It gives the music cue sheet with library search terms, the few scenes that get a sound effect and the word it lands on, the silences, every non-cut transition with its reason, and the J/L-cuts. Everything else is a straight cut. Fill in its licence log as you download tracks. Scripts made before 2026-09-26 have no such section.
 
 ## Known limits
 

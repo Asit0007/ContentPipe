@@ -120,7 +120,7 @@ Listen to all of it once. Re-generate any scene that mispronounces a name or pro
 3. Sort the picture bin by name → select all → *Create New Timeline Using Selected Clips*, or drag onto V1 against the narration.
 4. Ken Burns rows: set each still's length to its narration, enable *Dynamic Zoom* (Inspector). Alternate push-in and pull-out.
 5. Graphics: Text+ titles over a dark plate for terminal / headline / diagram scenes, using `onScreenText` and the infographic spec from the exported brief.
-6. Music: CC0 only (e.g. Pixabay Music, YouTube Audio Library). Log track, URL and licence in `ep01/licences.md`. Duck it under narration (−18 to −22 dB).
+6. Music: CC0 only (e.g. Pixabay Music, YouTube Audio Library). Log track, URL and licence in `ep01/licences.md`. Duck it under narration (−18 to −22 dB). Once the sound & edit pass (section 4, item 0) is built, the brief's **Sound & edit** section gives the cue sheet: where each track starts and stops, where silence goes, which scene gets a sound effect and on which word, and each transition.
 7. Captions: import the `.srt` from the assembler if you rendered one. Resolve's automatic *Create Subtitles from Audio* is a Studio (paid) feature, so on the free edition upload captions to YouTube instead (its auto-captions are free; correct names by hand).
 8. Deliver: H.264 1080p, audio normalised to −14 LUFS (*Normalize Audio Levels*).
 
@@ -154,6 +154,127 @@ Create `~/BlastRadius/ep01/log.md` and note: hours per stage, stills made vs kep
 ## 4. What to build next (after video #1, in this order)
 
 Each item removes by-hand work that video #1 proves is real. Numbers from `log.md` can reorder this list.
+
+0. **Sound & edit pass + writing fixes — built 2026-09-26** (plan in 4.0 below; details in CLAUDE.md "Sound & edit
+   pass"). Live check on a 2-minute OnePlus script, same research and plan, before → after:
+   - **Sound effects:** 10/10 scenes, stacked → 3/10, one sound each, each tied to a word.
+   - **Transition names:** 9 → 1 non-cut (a dip-to-black with a reason, after 0.8 s of silence, in a music gap before
+     the cover-up reveal).
+   - **Music:** none → 2 cues under 82 % of the runtime.
+   - **Opening:** the "Welcome back" intro is gone.
+   - **"CVE":** 1 on-screen mention → 0.
+   - **Cost:** 7 → 9 calls.
+
+   One run, 10 scenes, weakest-available models (Gemma 4 31B wrote both sound calls). Still to watch on a full 585 s
+   run: chunking at 10 scenes, ambience (the model left it empty everywhere), J/L-cuts (none used), and hook wording (it
+   said "massive", a size claim).
+
+### 4.0 Sound & edit pass + writing fixes (plan, 2026-09-26)
+
+**Why.** The latest real script (OnePlus, 25 Sep, 51 scenes) showed what ContentPipe does for sound and editing today:
+
+- **Music: nothing.** No field, no prompt, no export line; only step 6 of the Resolve list above.
+- **Sound effects: one free-text `soundEffect` per scene**, required in the narrative pass with a single example line.
+  Every scene stacked 2–3 effects, most with "sub-bass": a wall of noise, no silence, nothing tied to a word, nothing
+  you can search a library for.
+- **Transitions: free-text `motion.transitionOut`** with no rules: "Cut / cut / Hard Cut / Smart Cut / Impact Cut", no
+  reason behind any choice, nothing tying picture cuts to sound (J/L-cuts).
+- **Writing:** `server.ts:644` hardcodes "Welcome back to Blast Radius..." for every non-documentary script while the
+  audit (`timeline.ts:389`) warns about that exact line, and "welcome back" is wrong on a 0-subscriber channel. "No
+  patch. No CVE." appears in 14 scenes: jargon a non-technical viewer can't follow, and the audit mislabels it as "a CVE
+  id or CVSS score".
+
+**Owner's decisions.** A **director's cue sheet** in the script and brief. You build it by hand in Resolve;
+`assemble.ts` does not change. **Audio libraries** as sources: YouTube Audio Library and Pixabay search terms, plus a
+licence log. No AI music, because Suno's and MusicGen's free output is non-commercial. Scope is **audio + edit + writing
+fixes**, not a full story-structure overhaul.
+
+**How: a fourth pass, "Sound & edit", built like art direction.** It uses a small flat schema, runs in chunks, passes a
+summary of earlier chunks forward, and then code **verifies or forces** what matters. `applyVisualDirection` is the
+template.
+
+1. **Score plan: one call per script** (new `server/soundPipeline.ts`, `generateScorePlan`).
+   - **Input, computed in code first:** acts (runs of equal `actPhase`, reusing `timeline.ts` chapter grouping),
+     mid-roll boundaries, tone, and the analyst scenes.
+   - **Output `musicCues[]`:** `startScene/endScene`, `role` (cold-open | tension | explainer | reveal | aftermath |
+     resolve), `mood`, `tempoBpm`, `instruments`, `intensity` 1–3, `entry` (fade-in | hard-in | sting), `exit`
+     (fade-out | button | cut-to-silence), and `searchTerms` (up to 4).
+   - **Code rules:** clamp and sort the ranges and drop overlaps. **Gaps are intentional silence** and are never
+     filled. A cue that spans a mid-roll is split there with a fade-out. Timecodes come from `durationEst`, and
+     `retimeFromAudio` recomputes them.
+2. **Per-scene sound & edit, in chunks of 10** (`generateSoundChunk`). The schema has no nested arrays, because the
+   size limits in CLAUDE.md are driven by nesting.
+   - **Fields:** `sfxCue` ("" = none), `sfxOnWord`, `sfxSearchTerms`, `ambience`, `silenceBeforeSec` (0–1.5),
+     `transitionIn`, `transitionReason`, and `audioBridge` (none | j-cut | l-cut).
+   - **Transitions are a closed list, with each meaning written into the prompt:**
+     - `cut` is the default.
+     - `smash-cut` is a sudden contrast.
+     - `match-cut` is a visual rhyme.
+     - `dissolve` is time passing.
+     - `fade-to-black` ends a chapter or leads into a mid-roll.
+     - `dip-to-black` is a beat of weight.
+     - `whip` is for energy, infotainment only.
+   - **Prompt rules, each with its reason and short examples:**
+     - Most scenes get **no** sound effect.
+     - A scene gets at most one sound, never a stack, and it lands on a specific word.
+     - Put 0.5–1 s of silence before the biggest reveals.
+     - Any transition other than `cut` needs a story reason.
+   - **Context:** `buildPriorSoundContext`, which mirrors `buildPriorVisualContext`. It passes the sound effects used
+     so far against the budget, and the last 6 transitions.
+   - **Code rules (`applySoundDirection`):**
+     - Map loose names onto the list ("Hard Cut" → `cut`).
+     - Set the previous scene's `motion.transitionOut` from the next scene's `transitionIn`, so there is one source
+       of truth.
+     - Force a fade or dip at mid-rolls and at chapter ends.
+     - Clear `sfxOnWord` if the word isn't in the narration (use `normalizeForAnchorMatch`).
+     - The legacy `soundEffect` becomes `sfxCue` or "". Its `server.ts` fallback changes from "Subtle electronic
+       pulse" to "", because no sound is a valid choice.
+3. **The narrative pass drops its sound job, and the writing fixes land.**
+   - Remove `soundEffect` from the narrative prompt and schema. The schema gets *smaller*, which is the safe direction.
+   - Add a **PLAIN WORDS** block: explain every technical term the first time it appears, in everyday words. Never
+     say "CVE"; say "no official public warning was issued".
+   - The cyber examples live in a new `shared/topicProfile.ts` field, and `topicProfile.test.ts`'s pinned object is
+     updated on purpose for that field only.
+   - `signatureIntro` becomes '' for every tone, so every video opens on the hook. The UI-only fallbacks keep theirs.
+   - The `severity-rating-shown` message now tells the bare word "CVE" apart from an id or score.
+4. **New audits (warn):**
+   - `sfx-overused`: more than ~35% of scenes have a cue, or a cue joins sounds with "+".
+   - `music-wall-to-wall`: music covers more than 90% of the runtime, with no silence gap.
+   - `transition-showy`: more than 25% of transitions aren't `cut`.
+   - `midroll-without-fade`.
+5. **Wiring:**
+   - **`/api/script` order:** art direction → score plan → sound chunks → CVE scrub and audit.
+   - **Scene rebuild list:** add every new field to `server.ts`'s rebuild list, or it silently vanishes.
+   - **Resume and failures:** `runJournal` checkpoints `scorePlan` and `soundChunks`. A failed pass shows in
+     `generation.degraded`, and strict mode still rethrows retryable failures.
+   - **Types and schemas:** `src/types.ts` and `server/schemas.ts` change together (`SceneSound`, `MusicCue[]`).
+   - **Brief export:** a new **Sound & edit** section with:
+     - a music cue sheet (timecodes, mood, BPM, instruments, entry/exit, YouTube Audio Library and Pixabay search
+       terms)
+     - a sound-effect table (timecode, sound, on-word, search terms)
+     - transitions with their reasons
+     - mix notes: −14 LUFS final, music −18 to −22 dB under the narration, sound effects under the voice
+     - a licence-log template
+   - **UI:** a transition chip and a music-cue chip in `ScriptEditor`.
+   - **Skills and docs:** `blast-radius-production` reads the cue sheet. Update ContentPipe's CLAUDE.md and README.
+
+**Cost.** One score call plus one sound call per 10 scenes is **about 6 more calls** for a 51-scene script (~25 → ~31).
+Chunk size 10 is a starting value: verify it live, and drop to 6 if the schema is refused.
+
+**Verification.**
+1. `npm run lint` and `npm test`. New tests go in `server/soundPipeline.test.ts` (fake `generateJson`, as in
+   `scriptPipeline.test.ts`). They cover:
+   - transition mapping, forced mid-roll fades and the `transitionOut` sync
+   - `sfxOnWord` checks
+   - cue clamping, overlaps and mid-roll splits, with silence gaps kept
+   - resuming sound chunks from the journal
+   - the new audits, and the updated topic-profile pin
+2. `npm run test:e2e`: route the two new prompts in the stub, and add a "SOUND" contract test, like "TWO VOICES", that
+   fails if a field falls out of the rebuild list.
+3. **Live, cheap run first:** OnePlus research with `targetDurationSec: 120` (~12 scenes). Check that the schema is
+   accepted, SFX density, transitions, and the cue sheet in the brief. If quota allows, run the full 585 s and compare
+   with the 25 Sep brief: the intro gone, no "CVE" in narration, sound effects on fewer than ~35% of scenes.
+4. Restart `npm run dev` after server changes, because `tsx` doesn't reload.
 
 1. **Clip-aware scene lengths in ContentPipe.** Ask the art pass for a `clipLengthSec` from {5, 8, 10, 15, 30} per AI-clip scene, and have the narrative pass size narration to it. Today scene lengths are arbitrary and `shotlist.py` pads them with holds.
 2. **Narration batch script.** One command: script JSON → one WAV per scene, checkpointed so a 429 resumes the next day (same pattern as `.runs/`). Directed TTS prompt instead of the hard-coded "punchy infotainment" one.

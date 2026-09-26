@@ -32,6 +32,123 @@ function table(headers: string[], rows: string[][]): string {
   ].join('\n');
 }
 
+function musicLabel(cues: any, sceneNumber: number): string {
+  if (!Array.isArray(cues) || cues.length === 0) return '—';
+  const c = cues.find((x: any) => sceneNumber >= x.startScene && sceneNumber <= x.endScene);
+  return c ? `${c.cueId}: ${c.role}, ${c.mood}` : 'none (deliberate silence)';
+}
+
+/**
+ * The editor's audio and cut sheet (server/soundPipeline.ts): what to put on the music and effects tracks in
+ * DaVinci Resolve, from free libraries, and where to cut. Times come from the timeline, so a re-timed script is right.
+ */
+function renderSoundAndEdit(out: string[], s: any, scenes: any[], startSecs: number[], endSec: (i: number) => number) {
+  const cues: any[] = Array.isArray(s.musicCues) ? s.musicCues : [];
+  const directed = scenes.some((sc) => sc.sound);
+  if (!cues.length && !directed) return;
+  const idx = (n: number) => scenes.findIndex((sc) => sc.sceneNumber === n);
+  const total = scenes.length ? endSec(scenes.length - 1) : 0;
+
+  out.push('## Sound & edit');
+  out.push('');
+  out.push('_For the edit in DaVinci Resolve. Music and effects come from free libraries: the YouTube Audio Library (YouTube Studio → Audio Library; cleared for monetised YouTube, and some tracks require an attribution line in the description) and Pixabay ([music](https://pixabay.com/music/), [sound effects](https://pixabay.com/sound-effects/); free for commercial use, but some tracks still draw Content ID claims, so keep the track\'s licence page). Log every track below before you publish._');
+  out.push('');
+
+  if (cues.length) {
+    const musicSec = cues.reduce((n, c) => {
+      const a = idx(c.startScene), b = idx(c.endScene);
+      return a >= 0 && b >= 0 ? n + endSec(b) - startSecs[a] : n;
+    }, 0);
+    out.push(`### Music cue sheet`);
+    out.push('');
+    out.push(`${cues.length} cue(s) under ${total ? Math.round((musicSec / total) * 100) : 0}% of the runtime. **Stretches no cue covers are silence on purpose**: narration alone.`);
+    out.push('');
+    out.push(
+      table(
+        ['Cue', 'In', 'Out', 'Scenes', 'Role', 'Mood', 'Tempo', 'Instruments', 'Level', 'Enters / leaves', 'Search for'],
+        cues.map((c) => {
+          const a = idx(c.startScene), b = idx(c.endScene);
+          return [
+            c.cueId,
+            a >= 0 ? formatTimestamp(startSecs[a]) : '—',
+            b >= 0 ? formatTimestamp(endSec(b)) : '—',
+            c.startScene === c.endScene ? String(c.startScene) : `${c.startScene}-${c.endScene}`,
+            c.role,
+            c.mood || '—',
+            c.tempoBpm ? `${c.tempoBpm} bpm` : '—',
+            c.instruments || '—',
+            ['', 'low', 'medium', 'high'][c.intensity] || '—',
+            `${c.entry} / ${c.exit}`,
+            (c.searchTerms || []).map((t: string) => `"${t}"`).join(', ') || '—',
+          ];
+        })
+      )
+    );
+    out.push('');
+  }
+
+  const fx = scenes.map((sc, i) => ({ sc, i })).filter(({ sc }) => sc.sound?.sfxCue || sc.sound?.ambience || sc.sound?.silenceBeforeSec);
+  if (fx.length) {
+    out.push('### Sound effects, ambience and silences');
+    out.push('');
+    out.push(
+      table(
+        ['At', 'Scene', 'Sound effect', 'On the word', 'Search for', 'Ambience', 'Silence before'],
+        fx.map(({ sc, i }) => [
+          formatTimestamp(startSecs[i]),
+          String(sc.sceneNumber),
+          sc.sound.sfxCue || '—',
+          sc.sound.sfxOnWord ? `"${sc.sound.sfxOnWord}"` : '—',
+          (sc.sound.sfxSearchTerms || []).map((t: string) => `"${t}"`).join(', ') || '—',
+          sc.sound.ambience || '—',
+          sc.sound.silenceBeforeSec ? `${sc.sound.silenceBeforeSec}s` : '—',
+        ])
+      )
+    );
+    out.push('');
+  }
+
+  // A scene's audioBridge describes the cut AFTER it, so the cut into scene i reads the bridge of scene i-1.
+  const bridgeInto = (i: number) => (i > 0 ? scenes[i - 1]?.sound?.audioBridge : undefined) || 'none';
+  const cuts = scenes.map((sc, i) => ({ sc, i })).filter(({ sc, i }) => i > 0 && sc.sound && (sc.sound.transitionIn !== 'cut' || bridgeInto(i) !== 'none'));
+  if (directed) {
+    out.push('### Transitions');
+    out.push('');
+    out.push(cuts.length ? 'Every other scene change is a straight cut.' : 'Every scene change is a straight cut.');
+    out.push('');
+    if (cuts.length) {
+      out.push(
+        table(
+          ['At', 'Into scene', 'Transition', 'Why', 'Sound across the cut'],
+          cuts.map(({ sc, i }) => [
+            formatTimestamp(startSecs[i]),
+            String(sc.sceneNumber),
+            sc.sound.transitionIn,
+            sc.sound.transitionReason || '—',
+            bridgeInto(i) === 'j-cut'
+              ? `J-cut: scene ${sc.sceneNumber}'s sound starts under scene ${scenes[i - 1].sceneNumber}`
+              : bridgeInto(i) === 'l-cut'
+              ? `L-cut: scene ${scenes[i - 1].sceneNumber}'s sound runs on into this one`
+              : '—',
+          ])
+        )
+      );
+      out.push('');
+    }
+  }
+
+  out.push('### Mix');
+  out.push('');
+  out.push('- Narration is the loudest thing in every scene. Music sits 18-22 dB under it while someone speaks (duck it; Resolve: Fairlight → Dynamics on the music track, sidechained to the voice, or keyframe it).');
+  out.push('- Sound effects sit under the voice too: felt, not competing. Ambience lower still.');
+  out.push('- Final loudness −14 LUFS integrated (Resolve: Deliver → Audio → Normalize Audio Levels, YouTube).');
+  out.push('');
+  out.push('### Licence log');
+  out.push('');
+  out.push(table(['Used for', 'Track / sound', 'Source URL', 'Licence', 'Date downloaded'], [...cues.map((c) => [c.cueId, '', '', '', '']), ['sound effects', '', '', '', '']]));
+  out.push('');
+}
+
 export function renderScriptMarkdown(payload: {
   script: any;
   research?: any;
@@ -334,12 +451,14 @@ export function renderScriptMarkdown(payload: {
   // ---- Shot list ----
   // Start times come from the script's own timeline when present, else accumulate durations.
   let acc = 0;
-  const startTimes: string[] = scenes.map((sc, i) => {
+  const startSecs: number[] = scenes.map((sc, i) => {
     const fromTimeline = s.timeline?.[i]?.startSec;
     const t = typeof fromTimeline === 'number' ? fromTimeline : acc;
     acc += Number(sc.durationEst) || 0;
-    return formatTimestamp(t);
+    return t;
   });
+  const endSec = (i: number) => (typeof s.timeline?.[i]?.endSec === 'number' ? s.timeline[i].endSec : startSecs[i] + (Number(scenes[i]?.durationEst) || 0));
+  const startTimes = startSecs.map(formatTimestamp);
   if (scenes.length) {
     out.push('## Shot list');
     out.push('');
@@ -361,6 +480,8 @@ export function renderScriptMarkdown(payload: {
     out.push('');
   }
 
+  renderSoundAndEdit(out, s, scenes, startSecs, endSec);
+
   // ---- Per-scene detail ----
   out.push('---');
   out.push('');
@@ -376,7 +497,9 @@ export function renderScriptMarkdown(payload: {
       ['Voice', sc.speaker === 'analyst' ? 'Analyst (second voice)' : sc.speaker === 'narrator' ? 'Narrator' : '—'],
       ['Visual type', sc.visualType || '—'],
       ['On-screen text', sc.onScreenText || '—'],
-      ['Sound', sc.soundEffect || '—'],
+      ['Music', musicLabel(s.musicCues, sc.sceneNumber)],
+      ['Sound effect', sc.sound ? (sc.sound.sfxCue ? `${sc.sound.sfxCue}${sc.sound.sfxOnWord ? ` (on "${sc.sound.sfxOnWord}")` : ''}` : 'none') : sc.soundEffect || '—'],
+      ...(sc.sound ? [['Cut into this scene', `${sc.sound.transitionIn}${sc.sound.transitionReason ? ` (${sc.sound.transitionReason})` : ''}`]] : []),
       ['Citations', (sc.citations || []).join(', ') || '—'],
     ];
     out.push(table(['Field', 'Value'], head));

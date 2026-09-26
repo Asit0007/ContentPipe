@@ -1,6 +1,7 @@
 import type { Speaker } from '../shared/speakers';
 
 import type { ModelCall } from '../shared/modelUsage';
+import type { MusicCue, SceneSound } from '../shared/sound';
 export type { ModelCall, ModelAttempt } from '../shared/modelUsage';
 
 export type AspectRatio = '16:9' | '9:16' | '1:1';
@@ -263,7 +264,10 @@ export interface VideoScriptScene {
   visualType: 'headline' | 'terminal' | 'meme' | 'cyberpunk' | 'diagram' | 'character';
   cinematography?: string;
   onScreenText: string;
+  /** One sound effect or "" — written by the sound pass (the single cue from `sound.sfxCue`); older scripts carry free text. */
   soundEffect: string;
+  /** Sound & edit direction (server/soundPipeline.ts). Absent on older scripts and where that pass failed. */
+  sound?: SceneSound;
   retentionNote?: string;
   wordCount?: number;
   infographic?: SceneInfographic;
@@ -398,6 +402,8 @@ export interface VideoScript {
   signatureOutro: string;
   /** Cast defined once; scenes reference these by id for visual consistency. */
   characterBible?: CharacterProfile[];
+  /** Music plan from the sound pass; scenes no cue covers are deliberate silence. Times come from `timeline`. */
+  musicCues?: MusicCue[];
   /** Look applied across every scene. */
   styleGuide?: StyleGuide;
   scenes: VideoScriptScene[];

@@ -529,6 +529,8 @@ FACTUAL DISCIPLINE: every figure, date, version number and quoted comment in the
 
 ${profile.disclosureDiscipline}
 
+${profile.plainWords}
+
 CLAIMS THE DOSSIER CANNOT BACK: how big it was and what it did are claims too, not just figures. Say only what "keyFacts" state. The dossier's "researchGaps" lists what the sources never established — typically how many people or systems were affected, whether it was actually abused, and what it cost. Where a gap covers it, narrate what is known instead (what it made possible, what it exposed, for how long) and phrase it as what was possible, not what happened: "this made it possible to read private records", not "private records were taken". Leave a gap unfilled: no size (a number, or "millions", "countless", "the sheer scale") and no consequence the dossier does not report (a breach, a theft, a panic, every user affected). A gap that reports sources disagreeing means the point is unsettled, so say that or leave it out. This holds for every scene, the analyst's included, and for onScreenText and the infographic, because whatever is said or shown on camera is a claim the channel makes.
 
 SCENE-TO-SCENE LOGIC: each scene must connect to the next by a stated causal or curiosity link — this fact causes that consequence, this question is what the next scene answers, this action creates the constraint the next scene has to resolve — never just the next fact in a list. If a scene doesn't cause, answer, or complicate what comes right after it, rewrite it so it does.
@@ -559,9 +561,8 @@ For EACH scene, you MUST craft:
 7. "visualPrompt": An exquisitely detailed single-string image prompt. Cinematic, atmospheric, stylish. This is the flat fallback prompt, used only if art direction fails for this scene — once art direction succeeds it is overwritten with the concatenation of visual.character + visual.background + visual.scene + visual.styleAnchor below, so write this as your own best single-string guess at that same thing.
 8. "visualType": ${isDocTone ? profile.visualTypeGuidanceDocumentary : profile.visualTypeGuidanceInfotainment}
 9. "onScreenText": 3 to 5 high-impact kinetic typography words for the viewer's eye.
-10. "soundEffect": Specific audio/SFX cue (e.g. "[SFX: Deep sub-bass riser + rapid keyboard clatter]").
-11. "retentionNote": Psychological reason why this beat prevents viewer dropoff.
-12. "infographic": A structured infographic object ${profile.infographicPurposeClause}:
+10. "retentionNote": Psychological reason why this beat prevents viewer dropoff.
+11. "infographic": A structured infographic object ${profile.infographicPurposeClause}:
     {
       "type": "architecture" | "threat_scorecard" | "terminal_payload" | "benchmark_chart" | "sentiment_gauge",
       "title": "Clear uppercase headline for the diagram or scorecard",

@@ -67,7 +67,7 @@ Telegram / news input
   /api/plan ─────── narrative beats, hook strategy, pacing, target duration
         │
         ▼
-  /api/script ───── three passes, scenes generated in duration-sized chunks
+  /api/script ───── four passes (bible, narrative, art, sound & edit), scenes in duration-sized chunks
         │            (see below)
         │
         ▼
@@ -147,7 +147,7 @@ Every prompt in this repo used to hardcode a single topic: an "elite investigati
 - **Cybersecurity-specific quality rules stay cybersecurity-specific on purpose.** `server/timeline.ts`'s CVE/CVSS "don't rate it, show it" audit and the `terminal`/`diagram`/`headline` evidence-mix check are untouched — they're harmless no-ops outside a tech/security story, and generalizing them further is a separate, unscoped effort.
 - **Not covered:** `server/fallbackGenerators.ts` (the canned-content path used only when every LLM provider is down) is still cybersecurity-flavored regardless of `topicDomain` — a non-default topic under total provider outage gets the cyber fallback, flagged `isQuotaFallback` as always.
 
-### Script generation runs in three passes
+### Script generation runs in four passes
 
 Not one call, deliberately.
 
@@ -156,6 +156,7 @@ Not one call, deliberately.
 | 1. Production bible | `characterBible`, `styleGuide` | `productionBibleSchema` |
 | 2. Narrative | scenes: narration, cinematography, infographics | `buildScriptScenesSchema(min, max)` |
 | 3. Art direction | per scene: `visual`, `motion`, `citations` | `buildVisualDirectionSchema(count)` |
+| 4. Sound & edit | `musicCues` (one call), then per scene: `sound` (effect, ambience, silence, transition, J/L-cut) | `buildScorePlanSchema`, `buildSoundDirectionSchema(count)` |
 
 **Why split:** on a single combined schema, models return `finishReason: STOP` while silently omitting required fields. Observed with `gemini-3.6-flash`: `characterBible`, `styleGuide`, `visual` and `motion` all absent despite being listed in `required`. The same fields come back reliably when each pass gets a small, focused schema. If you merge these passes back together, expect fields to start disappearing.
 
@@ -409,7 +410,7 @@ renders/                      Assembled videos and captions (gitignored)
 
 **A provider is configured but never answers.** Look for `[LLM Chain] <provider>/<model> -> ...` warnings in the server log. `zero` or HTTP 401/402/403 means a bad key or no balance, and that provider is then skipped for 30 minutes — fix it and restart. HTTP 404, or a 400 saying the model doesn't exist, means a stale model id: that model is skipped for 30 minutes, `npm run llm:check` lists the live ones, and `<ID>_MODELS` overrides the default. HTTP 413 means the request is too large for that model's limit (Groq's free tier counts the output cap against tokens-per-minute) — lower `<ID>_MAX_TOKENS`.
 
-**A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in three passes](#script-generation-runs-in-three-passes).
+**A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in four passes](#script-generation-runs-in-four-passes).
 
 **`EADDRINUSE: 0.0.0.0:3000`.** Something else owns the port — Grafana is a common culprit. Use `PORT=3100 npm run dev`.
 

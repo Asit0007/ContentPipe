@@ -1,4 +1,5 @@
 import { Type } from '@google/genai';
+import { AUDIO_BRIDGES, MUSIC_ENTRIES, MUSIC_EXITS, MUSIC_ROLES, TRANSITIONS } from '../shared/sound';
 
 /**
  * Response schemas for the Gemini structured-output API.
@@ -362,7 +363,8 @@ const scriptSceneItemSchema = {
     },
     cinematography: { type: Type.STRING },
     onScreenText: { type: Type.STRING },
-    soundEffect: { type: Type.STRING },
+    // soundEffect is no longer asked of the narrative pass: the sound pass (server/soundPipeline.ts) sees a whole
+    // chunk and the music plan, and writes it there. Dropping it also makes this fragile schema smaller.
     retentionNote: { type: Type.STRING },
     wordCount: { type: Type.INTEGER },
     visual: sceneVisualSchema,
@@ -378,7 +380,6 @@ const scriptSceneItemSchema = {
     'visualPrompt',
     'visualType',
     'onScreenText',
-    'soundEffect',
   ],
   propertyOrdering: [
     'sceneNumber',
@@ -393,7 +394,6 @@ const scriptSceneItemSchema = {
     'citations',
     'visualType',
     'onScreenText',
-    'soundEffect',
     'retentionNote',
     'wordCount',
     'infographic',
@@ -473,6 +473,71 @@ export function buildVisualDirectionSchema(sceneCount: number) {
           },
           required: ['sceneNumber', 'visual', 'motion', 'citations', 'charactersInFrame', 'locationId'],
           propertyOrdering: ['sceneNumber', 'visual', 'motion', 'citations', 'charactersInFrame', 'locationId'],
+        },
+      },
+    },
+    required: ['scenes'],
+  };
+}
+
+/**
+ * Sound pass, part 1: the music plan for the whole script (server/soundPipeline.ts). Flat on purpose — the size
+ * failure modes in CLAUDE.md come from nesting, and a string array is the deepest thing here.
+ */
+export function buildScorePlanSchema(maxCues: number) {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      musicCues: {
+        type: Type.ARRAY,
+        minItems: 1,
+        maxItems: Math.max(1, maxCues),
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            cueId: { type: Type.STRING },
+            startScene: { type: Type.INTEGER },
+            endScene: { type: Type.INTEGER },
+            role: { type: Type.STRING, enum: [...MUSIC_ROLES] },
+            mood: { type: Type.STRING },
+            tempoBpm: { type: Type.INTEGER },
+            instruments: { type: Type.STRING },
+            intensity: { type: Type.INTEGER },
+            entry: { type: Type.STRING, enum: [...MUSIC_ENTRIES] },
+            exit: { type: Type.STRING, enum: [...MUSIC_EXITS] },
+            searchTerms: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ['cueId', 'startScene', 'endScene', 'role', 'mood', 'instruments', 'intensity', 'entry', 'exit', 'searchTerms'],
+        },
+      },
+    },
+    required: ['musicCues'],
+  };
+}
+
+/** Sound pass, part 2: per-scene sound effects, silence and transitions, one chunk of scenes at a time. Flat, like the plan. */
+export function buildSoundDirectionSchema(sceneCount: number) {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      scenes: {
+        type: Type.ARRAY,
+        minItems: sceneCount,
+        maxItems: sceneCount,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            sceneNumber: { type: Type.INTEGER },
+            sfxCue: { type: Type.STRING },
+            sfxOnWord: { type: Type.STRING },
+            sfxSearchTerms: { type: Type.ARRAY, items: { type: Type.STRING } },
+            ambience: { type: Type.STRING },
+            silenceBeforeSec: { type: Type.NUMBER },
+            transitionIn: { type: Type.STRING, enum: [...TRANSITIONS] },
+            transitionReason: { type: Type.STRING },
+            audioBridge: { type: Type.STRING, enum: [...AUDIO_BRIDGES] },
+          },
+          required: ['sceneNumber', 'sfxCue', 'sfxOnWord', 'sfxSearchTerms', 'ambience', 'silenceBeforeSec', 'transitionIn', 'transitionReason', 'audioBridge'],
         },
       },
     },

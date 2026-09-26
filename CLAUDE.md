@@ -23,7 +23,7 @@ Single Express app (`server.ts`) that also serves the Vite/React front end in mi
 ```
 /api/research  → fetches source URLs, extracts text, builds a cited dossier
 /api/plan      → narrative beats
-/api/script    → three passes: production bible → narrative → art direction (checkpointed, resumable)
+/api/script    → four passes: production bible → narrative → art direction → sound & edit (checkpointed, resumable)
 /api/publish-package → titles, thumbnails, description, tags (model writes copy; the checkable parts are deterministic)
 /api/tts       → narration audio
 /api/generate-image → scene stills (Gemini -> Pollinations -> SVG placeholder, see below)
@@ -40,7 +40,8 @@ Where things live (`server.ts` is routes and wiring only — the logic moved out
 | `server/gemini.ts` | Gemini client, `TEXT_MODELS` chain, `generateGeminiJson` (quota-aware: cooldowns, one bounded retry pass) — now the chain's last tier |
 | `server/quota.ts` | classifies Gemini errors; typed `QuotaExhaustedError` / `UpstreamUnavailableError`; `summarizeQuotaFailures` reduces failures across providers |
 | `server/strict.ts` | the strict-mode contract (`X-ContentPipe-Strict`) and `orFallback` |
-| `server/scriptPipeline.ts` | the three script passes, chunk sizes, `buildGenerationSummary` |
+| `server/scriptPipeline.ts` | the first three script passes, chunk sizes, `buildGenerationSummary` |
+| `server/soundPipeline.ts`, `shared/sound.ts` | the fourth pass: music plan, sound effects, silences, transitions, and the closed transition list — see "Sound & edit pass" below |
 | `server/runJournal.ts` | on-disk checkpoints in `.runs/` |
 | `server/timeline.ts` | deterministic timeline, chapters, mid-roll placement, retention/compliance audit |
 | `server/publishPackage.ts` | titles / thumbnails / description / tags and their linters |
@@ -297,6 +298,40 @@ The owner's stated bar (2026-09-22) is that character, background, cut and style
 **Live-verified 2026-09-24** (forced through the real Gemini API, `LLM_PROVIDER_ORDER=gemini`, 12 synthetic scenes across 2 art-direction chunks on `gemini-3.1-flash-lite`, the other two `TEXT_MODELS` momentarily 503): no schema error at `maxItems:6` with the two new fields. The model genuinely reused all 3 established `locationId`s in chunk 2 without needing the code-level override to correct anything, shot types/camera moves showed real variety scene to scene, and every `charactersInFrame` claim already carried its anchor before enforcement ran. One live sample on the weakest model — a size worth re-checking on a stronger provider before leaning on it, same caveat as "Two voices" above.
 
 Tests: `server/scriptPipeline.test.ts` — recurring-background force-match across 3 chunks, anchor force-splice (and no duplication when already present), an unknown `charactersInFrame` id skipped without throwing, `priorVisualContext` empty on chunk 1 and populated from chunk 2 on, the documentary shot-tally hint gated on tone, a journaled chunk still informing the next chunk's context after resume, and canonical values resolving by scene number rather than response order.
+
+## Sound & edit pass (2026-09-26)
+
+A fourth pass after art direction (`server/soundPipeline.ts`, wired in `/api/script`) writes what a sound designer and an editor decide: the music plan, sound effects, silences and transitions. It's **direction for a person editing in DaVinci Resolve with free library audio. Nothing renders sound**, and `server/assemble.ts` is unchanged (owner's decision: cue sheet, not auto-mix).
+
+Why: the narrative pass used to write one `soundEffect` per scene as item 10 of 12. A live 10-scene run (2026-09-26, baseline in the commit) stacked 2-3 effects on **every** scene ("record scratch + glass shattering + sub-bass"). The art pass's free-text `transitionOut` produced nine names in ten scenes ("glitch-cut", "Shatter transition"...), with no reason behind any of them. There was no music at all.
+
+- **Music plan: one call per script** (`generateScorePlan`, flat `buildScorePlanSchema`). The model gets acts, scene gists, mid-rolls and tone, and returns `musicCues[]` (scene range, role, mood, BPM, instruments, intensity 1-3, entry/exit, library search terms).
+  - `normalizeScorePlan` clamps and sorts the ranges and trims overlaps. **Uncovered scenes are deliberate silence and are never filled.** A cue that spans a mid-roll is split there with a fade-out.
+  - Cues hold scene numbers, not times: the brief derives times from `script.timeline`, so `retimeFromAudio` keeps them right.
+- **Per-scene sound & edit, in chunks of `SOUND_SCENES_PER_CHUNK` (10)** (`buildSoundDirectionSchema`, flat). Fields: `sfxCue`, `sfxOnWord`, `sfxSearchTerms`, `ambience`, `silenceBeforeSec`, `transitionIn` (enum from `shared/sound.ts`), `transitionReason` and `audioBridge` (none | j-cut | l-cut).
+  - The prompt explains every transition's meaning, and that most scenes get no effect (about 1 in 4, with the running count passed forward).
+  - It avoids AI-video sound clichés, and names both libraries (YouTube Audio Library, Pixabay).
+  - Chunk size 10 is a starting value: **re-verify live before raising it.**
+- **Enforced in code (`applySoundDirection` / `toSceneSound`), not just asked:**
+  - Stacked effects are cut to one (`cleanSfxCue`), and `sfxOnWord` is dropped if the word isn't in the narration.
+  - Transitions are mapped onto the closed list (`normalizeTransition`: "Hard Cut" → `cut`). `whip` becomes `cut` in documentary tone.
+  - Scene 1 is forced to `cut`, and the scene after a mid-roll is forced to `fade-to-black`.
+  - **`motion.transitionOut` is set from the next scene's `transitionIn`** (one source of truth), and the last scene fades out.
+  - The legacy `soundEffect` becomes the single cue or `""`. Its default in `server.ts` is now `""`, not "Subtle electronic pulse".
+- **The narrative pass no longer writes `soundEffect`** (removed from the prompt and from `scriptSceneItemSchema`, which makes that fragile schema smaller). Older scripts still carry it.
+- **Audits** (`timeline.ts` `auditSound`, run from `analyzeScript` because it needs the mid-roll markers):
+  - `sfx-overused`: more than 35 % of scenes have an effect, or any effect is stacked.
+  - `music-wall-to-wall`: music under more than 90 % of the runtime.
+  - `transition-showy`: more than 25 % non-cut, not counting the forced ones.
+  - `midroll-without-fade`: only once a music plan exists.
+- **Journal:** `scorePlan` and `soundChunks` are checkpointed, and the progress object gains `soundChunksDone`. A failed chunk degrades as `generation.degraded`; strict mode rethrows retryable failures, like the other passes.
+- **Brief:** a "Sound & edit" section with the music cue sheet, the effects/ambience/silence table, the non-cut transitions with reasons and J/L-cuts, mix levels and a licence log. Each scene's table shows its music, effect and cut.
+- **Cost:** 1 + ceil(scenes/10) calls, so about 6 more on a 9-minute script.
+
+**Writing fixes shipped with it:**
+- `signatureIntro` is `''` for every tone. It used to be "Welcome back to Blast Radius..." for non-documentary scripts, while `intro-line-present` warned about that exact line.
+- A `plainWords` rule in `shared/topicProfile.ts` now goes into the narrative prompt: technical terms get explained, and the word "CVE" is never used. A live script said "No patch. No CVE." in 14 scenes.
+- The bare word is audited as `cve-jargon`, separately from real ids and scores (`severity-rating-shown`).
 
 ## Retention audit and publish package
 

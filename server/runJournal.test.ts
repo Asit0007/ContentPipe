@@ -32,7 +32,7 @@ test('finished chunks survive a "crash" (reopen) and are reported as resumed', a
   assert.deepEqual(b.getBible()?.styleGuide, { artDirection: 'noir' });
   assert.equal(b.getNarrativeChunk(0)?.length, 3);
   assert.equal(b.getNarrativeChunk(2), undefined);
-  assert.deepEqual(b.progress(), { hasProductionBible: true, narrativeChunksDone: 2, artChunksDone: 0, scenesSoFar: 4 });
+  assert.deepEqual(b.progress(), { hasProductionBible: true, narrativeChunksDone: 2, artChunksDone: 0, soundChunksDone: 0, scenesSoFar: 4 });
 });
 
 test('a DELIVERED run never resumes: "regenerate" starts fresh and the old payload is gone', async () => {

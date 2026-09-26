@@ -707,6 +707,25 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                           </span>
                         </>
                       )}
+                      {scene.sound && scene.sound.transitionIn !== 'cut' && (
+                        <>
+                          <span>•</span>
+                          <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-300 font-mono text-[10px]" title={scene.sound.transitionReason}>
+                            {scene.sound.transitionIn} in
+                          </span>
+                        </>
+                      )}
+                      {videoScript.musicCues && videoScript.musicCues.length > 0 && (() => {
+                        const cue = videoScript.musicCues.find((c) => scene.sceneNumber >= c.startScene && scene.sceneNumber <= c.endScene);
+                        return (
+                          <>
+                            <span>•</span>
+                            <span className="text-zinc-400" title={cue ? `${cue.mood}; ${cue.instruments}` : 'No music under this scene, on purpose'}>
+                              {cue ? `music ${cue.cueId} (${cue.role})` : 'no music'}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>

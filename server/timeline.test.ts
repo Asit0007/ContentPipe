@@ -399,9 +399,26 @@ test('audit: a CVE id or CVSS score spoken or shown is flagged — the audience 
     ],
   });
   const flagged = find(c, 'severity-rating-shown');
-  assert.deepEqual(flagged.sceneNumbers, [1, 3, 4]);
+  assert.deepEqual(flagged.sceneNumbers, [1, 3]);
   assert.equal(flagged.severity, 'warn');
+  // "Known CVEs" is the word, not a rating: jargon, reported on its own with different advice.
+  assert.deepEqual(find(c, 'cve-jargon').sceneNumbers, [4]);
   assert.equal(find(auditScript({ scenes: scenes(4) }), 'severity-rating-shown'), undefined);
+});
+
+// Live run 2026-09-25: "No patch. No CVE." in 14 scenes, reported as "a CVE id or CVSS score" — wrong, and wrong advice.
+test('audit: the bare word CVE is jargon (cve-jargon), not a rating; a scene with an id is reported only as a rating', () => {
+  const c = auditScript({
+    scenes: [
+      scene(1, { narration: 'September 17th came and went. No patch. No CVE. No reply.' }),
+      scene(2, { infographic: { type: 'threat_scorecard', title: 'STATUS', metrics: [{ label: 'CVE Registered', value: 'No' }] } }),
+      scene(3, { narration: 'It became CVE-2024-3094, the CVE everyone remembers.' }),
+      scene(4, { narration: 'A plain scene about the fix.' }),
+    ],
+  });
+  assert.deepEqual(find(c, 'cve-jargon').sceneNumbers, [1, 2]);
+  assert.deepEqual(find(c, 'severity-rating-shown').sceneNumbers, [3]);
+  assert.match(find(c, 'cve-jargon').message, /no official public warning/);
 });
 
 // Live run: one "split-screen terminal | void" background behind 7 of 10 scenes, and the audit had nothing to say.

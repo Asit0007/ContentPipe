@@ -183,7 +183,7 @@ test('happy path: bible + 2 narrative chunks + 1 art chunk, journal fully popula
   const script = await runAll(ai, { journal, degraded });
   assert.deepEqual(log, ['bible', 'narr@1', 'narr@4', 'art@1']);
   assert.equal(script.scenes.length, 5);
-  assert.deepEqual(journal.progress(), { hasProductionBible: true, narrativeChunksDone: 2, artChunksDone: 1, scenesSoFar: 5 });
+  assert.deepEqual(journal.progress(), { hasProductionBible: true, narrativeChunksDone: 2, artChunksDone: 1, soundChunksDone: 0, scenesSoFar: 5 });
   const g = buildGenerationSummary(script, { runId: 'happy', requestedDurationSec: 60, degraded });
   assert.equal(g.complete, true);
   assert.equal(g.producedScenes, 5);
@@ -194,7 +194,7 @@ test('STRICT: a daily-quota hit mid-script throws (no truncated script), and the
   const journal = await RunJournal.open('cut', 'h', { dir });
   const { ai } = fakeAi([{ kind: 'narr', at: 4, err: perDay }]);
   await assert.rejects(runAll(ai, { strict: true, journal, degraded: [] }), (e: any) => e instanceof QuotaExhaustedError && e.kind === 'per_day');
-  assert.deepEqual(journal.progress(), { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, scenesSoFar: 3 });
+  assert.deepEqual(journal.progress(), { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, soundChunksDone: 0, scenesSoFar: 3 });
 });
 
 test('RESUME after the quota reset re-spends ONLY the unfinished calls — no bible, no finished chunk', async () => {

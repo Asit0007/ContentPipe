@@ -59,6 +59,8 @@ export interface TopicProfile {
   visualTypeGuidanceInfotainment: string;
   infographicPurposeClause: string;
   infographicBadgeExample: string;
+  /** Jargon rule for the narrative pass (2026-09-26): a live script said "No patch. No CVE." in 14 scenes. */
+  plainWords: string;
 
   // server/publishPackage.ts
   publishPersona: string;
@@ -121,6 +123,8 @@ Documentary visual discipline: favour restrained, evidence-led imagery — real 
   infographicPurposeClause:
     'showing how the attack worked or what it reached — architecture steps, an impact scorecard (what an attacker could do, who was exposed, for how long), terminal commands, or benchmark metrics',
   infographicBadgeExample: 'NO LOGIN NEEDED or EXPLOIT CHAIN',
+  plainWords:
+    "PLAIN WORDS: explain every technical term the first time it appears, in words a curious non-expert already uses, then keep using the plain version: \"root access\" is \"full control of the phone\", \"privilege escalation\" is \"an app giving itself powers it was never granted\", \"patch\" is \"a fix\", \"zero-day\" is \"a flaw nobody had a fix for yet\". Never say or show the word \"CVE\", not even \"no CVE\" or a \"CVE Registered\" metric: say \"no official public warning was issued\". This applies to the narration, onScreenText and the infographic alike, because a word the viewer doesn't know is the moment they stop following.",
 
   publishPersona: 'an authoritative, investigative cybersecurity documentary channel',
   publishAudienceNote:
@@ -173,6 +177,7 @@ Documentary visual discipline: favour restrained, evidence-led imagery — real 
     infographicPurposeClause:
       'showing the key mechanism or consequence of this story — a process breakdown, an impact scorecard (who or what was affected, how many, for how long), a data visualization, or benchmark/comparison metrics',
     infographicBadgeExample: 'THE TURNING POINT or WHAT CHANGED',
+    plainWords: `PLAIN WORDS: explain every technical term of ${domainLabel} the first time it appears, in words a curious non-expert already uses, then keep using the plain version. Leave specialist codes, labels and acronyms unsaid unless the story is about them, and then explain them. This applies to the narration, onScreenText and the infographic alike, because a word the viewer doesn't know is the moment they stop following.`,
 
     publishPersona: `an authoritative, investigative documentary channel covering ${domainLabel}`,
     publishAudienceNote: `AUDIENCE: curious viewers who are not experts in ${domainLabel}. A raw statistic, id or rating means nothing to them on its own, so titles, thumbnail text and description copy translate it and convey the stakes instead: what happened, who was affected, what it meant. Tags may include the precise technical term, because some people search for it.`,

@@ -58,6 +58,13 @@ function stubAnswer(prompt: string, url = ''): { status: number; body: any } {
   } else if (prompt.includes('production designer')) {
     tag = 'bible';
     out = { characterBible: [{ id: 'a', name: 'A', role: 'analyst', appearance: 'x', wardrobe: 'w', palette: 'p', promptAnchor: 'ANCHOR' }], styleGuide: { artDirection: 'noir', colorPalette: 'c', lighting: 'l', lensAndFilm: 'f', negativePrompt: 'n' } };
+  } else if (prompt.includes('music supervisor')) {
+    tag = 'score';
+    out = { musicCues: [{ cueId: 'm1', startScene: 1, endScene: 2, role: 'cold-open', mood: 'urgent', tempoBpm: 96, instruments: 'low pulse', intensity: 2, entry: 'sting', exit: 'cut-to-silence', searchTerms: ['suspense pulse'] }] };
+  } else if (prompt.includes('sound designer and picture editor')) {
+    const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
+    tag = `sound@${nums[0]}`;
+    out = { scenes: nums.map((n) => ({ sceneNumber: n, sfxCue: n === 2 ? '[SFX: lock clunk + sub-bass]' : '', sfxOnWord: n === 2 ? 'word' : '', sfxSearchTerms: n === 2 ? ['deadbolt lock'] : [], ambience: '', silenceBeforeSec: 0, transitionIn: n === 3 ? 'dissolve' : 'Hard Cut', transitionReason: n === 3 ? 'time passes' : 'continuous', audioBridge: 'none' })) };
   } else if (prompt.includes('art director and cinematographer')) {
     const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
     tag = `art@${nums[0]}`;
@@ -161,7 +168,7 @@ test('STRICT: a daily-quota hit mid-script answers 429 + Retry-After with runId/
   assert.ok(Math.abs(Number(r.headers.get('retry-after')) - secondsToNextPacificMidnight()) <= 10 || Math.abs(Number(r.headers.get('retry-after')) - secondsToNextPacificMidnight()) >= 3500, 'Retry-After ≈ next midnight Pacific (an hour off is tolerated only on DST days)');
   assert.equal(r.body.kind, 'per_day');
   assert.equal(r.body.retryable, true);
-  assert.deepEqual(r.body.progress, { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, scenesSoFar: 3 });
+  assert.deepEqual(r.body.progress, { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, soundChunksDone: 0, scenesSoFar: 3 });
   assert.ok(r.body.runId);
   assert.equal(r.body.scenes, undefined);
   assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4']);
@@ -175,7 +182,7 @@ test('CRASH: kill -9, restart, quota reset → the identical request resumes and
   await startApp();
   const r = await post('/api/script', SCRIPT_REQ, true);
   assert.equal(r.status, 200);
-  assert.deepEqual(stub.log, ['narr@4', 'art@1'], 'bible and the first chunk must not be requested again');
+  assert.deepEqual(stub.log, ['narr@4', 'art@1', 'score', 'sound@1'], 'bible and the first chunk must not be requested again');
   assert.equal(r.body.scenes.length, 5);
   assert.ok(r.body.scenes.every((s: any) => s.visual && s.motion));
   assert.equal(r.body.generation.complete, true);
@@ -191,6 +198,8 @@ test('CRASH: kill -9, restart, quota reset → the identical request resumes and
       ['Narrative, scenes 1-3 (chunk 1/2)', true, true],
       ['Narrative, scenes 4-5 (chunk 2/2)', false, true],
       ['Art direction, scenes 1-5 (chunk 1/1)', false, true],
+      ['Music plan (score)', false, true],
+      ['Sound & edit, scenes 1-5 (chunk 1/1)', false, true],
     ]
   );
   assert.ok(usage.every((c) => c.provider === 'gemini' && c.model), 'each call names the model that answered');
@@ -201,7 +210,7 @@ test('REGENERATE after delivery starts a fresh run instead of replaying the deli
   reset();
   const r = await post('/api/script', SCRIPT_REQ, true);
   assert.equal(r.status, 200);
-  assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4', 'art@1']);
+  assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4', 'art@1', 'score', 'sound@1']);
   assert.ok(!r.body.generation.resumed);
 });
 
@@ -329,6 +338,27 @@ test('TWO VOICES: /api/script keeps the pipeline-assigned speaker on every scene
   assert.equal(r.body.scenes[0].speaker, 'narrator');
   assert.equal(r.body.scenes[16].speaker, 'narrator');
   assert.equal((r.body.qualityChecks || []).find((c: any) => c.id === 'analyst-scene-too-long'), undefined);
+});
+
+test('SOUND: /api/script carries the music plan and each scene\'s sound & edit direction, enforced, and opens without an intro line', async () => {
+  await stopApp();
+  reset();
+  await startApp();
+  const r = await post('/api/script', { ...SCRIPT_REQ, runId: 'sound-contract', fresh: true }, true);
+  assert.equal(r.status, 200);
+  const sc: any[] = r.body.scenes;
+  assert.equal(r.body.signatureIntro, '', 'every tone opens cold on the hook');
+  assert.equal(r.body.musicCues.length, 1);
+  assert.deepEqual([r.body.musicCues[0].startScene, r.body.musicCues[0].endScene], [1, 2]);
+  assert.ok(sc.every((s) => s.sound), 'every scene carries sound & edit direction in the HTTP response');
+  assert.equal(sc[1].sound.sfxCue, 'lock clunk', 'a stacked effect is cut to one sound');
+  assert.equal(sc[1].soundEffect, 'lock clunk');
+  assert.equal(sc[0].soundEffect, '', 'no effect is a valid answer, not a gap filled with a default');
+  assert.equal(sc[2].sound.transitionIn, 'dissolve');
+  assert.equal(sc[1].motion.transitionOut, 'dissolve', 'transitionOut is the next scene\'s transitionIn');
+  assert.equal(sc[3].sound.transitionIn, 'cut', '"Hard Cut" is normalised onto the closed list');
+  assert.equal(sc[sc.length - 1].motion.transitionOut, 'fade-to-black');
+  assert.equal(r.body.generation.complete, true);
 });
 
 test('CVE SCRUB: a CVE id the model wrote into narration, on-screen text or an infographic never reaches the client — it is replaced and disclosed', async () => {

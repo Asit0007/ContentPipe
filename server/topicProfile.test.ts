@@ -61,6 +61,8 @@ Documentary visual discipline: favour restrained, evidence-led imagery — real 
   infographicPurposeClause:
     'showing how the attack worked or what it reached — architecture steps, an impact scorecard (what an attacker could do, who was exposed, for how long), terminal commands, or benchmark metrics',
   infographicBadgeExample: 'NO LOGIN NEEDED or EXPLOIT CHAIN',
+  plainWords:
+    "PLAIN WORDS: explain every technical term the first time it appears, in words a curious non-expert already uses, then keep using the plain version: \"root access\" is \"full control of the phone\", \"privilege escalation\" is \"an app giving itself powers it was never granted\", \"patch\" is \"a fix\", \"zero-day\" is \"a flaw nobody had a fix for yet\". Never say or show the word \"CVE\", not even \"no CVE\" or a \"CVE Registered\" metric: say \"no official public warning was issued\". This applies to the narration, onScreenText and the infographic alike, because a word the viewer doesn't know is the moment they stop following.",
 
   publishPersona: 'an authoritative, investigative cybersecurity documentary channel',
   publishAudienceNote:

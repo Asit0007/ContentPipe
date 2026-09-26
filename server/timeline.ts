@@ -73,6 +73,13 @@ const MAX_PLACE_SHARE = 0.4;
 const MIN_SCENES_IN_ONE_PLACE = 4;
 // 0.85 of the old 540 s default target is 459 s — under MIDROLL_MIN_VIDEO_SEC, so a script the audit
 // passed as "within tolerance" could still be too short for mid-roll ads. 0.92 of the 585 s default is 538 s.
+// Sound & edit (server/soundPipeline.ts). Starting values, not measured truths: a sound effect marks a moment, so on
+// more than about a third of the scenes it has stopped marking anything; music under nearly all of the runtime leaves
+// no silence for a reveal to land in; and more than a quarter of non-cut transitions reads as showy.
+const SFX_MAX_SCENE_SHARE = 0.35;
+const MUSIC_MAX_RUNTIME_SHARE = 0.9;
+const NON_CUT_MAX_SHARE = 0.25;
+const MIN_SCENES_FOR_SHARE_CHECKS = 3;
 const DURATION_SHORTFALL_ERROR_RATIO = 0.92;
 const DURATION_OVERSHOOT_WARN_RATIO = 1.25;
 const EVIDENCE_VISUAL_TYPES = new Set(['terminal', 'diagram', 'headline']);
@@ -347,6 +354,11 @@ export const SEVERITY_RATING_RE = new RegExp(String.raw`\bCVE(?:s\b|[-${DASHES}]
  * risk", "8 out of 10 servers") is not flagged. Kept apart from SEVERITY_RATING_RE, whose title and thumbnail
  * linters say "CVE id or CVSS score".
  */
+/** "CVE" / "CVEs" as a word ("No patch. No CVE."), not the start of an id. */
+const BARE_CVE_WORD = String.raw`\bCVEs?\b(?!\s?[-${DASHES}]\s?\d)`;
+const hasBareCveWord = (t: string) => new RegExp(BARE_CVE_WORD, 'i').test(t);
+const withoutBareCveWord = (t: string) => t.replace(new RegExp(BARE_CVE_WORD, 'gi'), '');
+
 export const SEVERITY_LABEL_RE = new RegExp(
   [
     String.raw`\b(?:critical|severe)[\s-]+(?:severity|risk|vulnerabilit(?:y|ies)|flaw|bug|threat|issue)\b`,
@@ -434,10 +446,16 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
     checks.push({ id: 'analyst-scene-too-long', severity: 'warn', message: `Analyst scenes are meant to be short reactions (${MAX_ANALYST_WORDS} words at most); these read like narration in the second voice.`, sceneNumbers: longReactions });
   }
 
-  // The prompt keeps CVE ids and CVSS scores out of the video; this catches a model that ignores it.
-  const rated = scenes.flatMap((s, i) => ([String(s.narration || ''), ...onScreenTexts(s)].some((t) => SEVERITY_RATING_RE.test(t)) ? [sn(i)] : []));
+  // The prompt keeps CVE ids and CVSS scores out of the video; this catches a model that ignores it. The bare word
+  // ("No patch. No CVE.") is reported separately: it isn't a rating, it's jargon, and the fix is different words.
+  const seen = (s: any) => [String(s.narration || ''), ...onScreenTexts(s)];
+  const rated = scenes.flatMap((s, i) => (seen(s).some((t) => SEVERITY_RATING_RE.test(withoutBareCveWord(t))) ? [sn(i)] : []));
   if (rated.length) {
     checks.push({ id: 'severity-rating-shown', severity: 'warn', message: 'A CVE id or CVSS score is spoken or shown. The audience is not technical: show what the flaw let an attacker do and who it reached instead of rating it.', sceneNumbers: rated });
+  }
+  const jargon = scenes.flatMap((s, i) => (!rated.includes(sn(i)) && seen(s).some(hasBareCveWord) ? [sn(i)] : []));
+  if (jargon.length) {
+    checks.push({ id: 'cve-jargon', severity: 'warn', message: 'The word "CVE" is spoken or shown. It means nothing to a non-technical viewer: say "no official public warning was issued", or leave it out.', sceneNumbers: jargon });
   }
   // A rating in words ("CRITICAL RISK", "high severity", "9.8/10") rates the flaw instead of showing what it did.
   // Unlike a CVE id there is no clean stand-in, so it is flagged for a person to reword, not replaced in code.
@@ -521,6 +539,48 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
   return checks;
 }
 
+/** Sound & edit checks. Mid-roll fades need the placed markers, so this runs from analyzeScript, not auditScript. */
+function auditSound(scenes: any[], timeline: TimelineEntry[], musicCues: any, markers: MidrollMarker[]): QualityCheck[] {
+  const checks: QualityCheck[] = [];
+  if (scenes.length === 0) return checks;
+  const sn = (i: number) => timeline[i].sceneNumber;
+  const total = timeline[timeline.length - 1].endSec;
+
+  const withSfx = scenes.flatMap((s, i) => (String(s.soundEffect || '').trim() ? [sn(i)] : []));
+  const stacked = scenes.flatMap((s, i) => (/\s\+\s/.test(String(s.soundEffect || '')) ? [sn(i)] : []));
+  if (stacked.length || (withSfx.length >= MIN_SCENES_FOR_SHARE_CHECKS && withSfx.length / scenes.length > SFX_MAX_SCENE_SHARE)) {
+    checks.push({
+      id: 'sfx-overused',
+      severity: 'warn',
+      message: `Sound effects on ${withSfx.length} of ${scenes.length} scenes${stacked.length ? `, ${stacked.length} of them stacked ("a + b")` : ''}. An effect marks a moment; on most scenes it becomes noise under the voice. Keep one sound, on the scenes where something happens at an instant.`,
+      sceneNumbers: stacked.length ? stacked : withSfx,
+    });
+  }
+
+  if (Array.isArray(musicCues) && musicCues.length && total > 0) {
+    const covered = timeline.reduce((n, t) => n + (musicCues.some((c: any) => t.sceneNumber >= c.startScene && t.sceneNumber <= c.endScene) ? t.endSec - t.startSec : 0), 0);
+    if (covered / total > MUSIC_MAX_RUNTIME_SHARE) {
+      checks.push({ id: 'music-wall-to-wall', severity: 'warn', message: `Music plays under ${Math.round((covered / total) * 100)}% of the runtime. Leave at least one silence, ideally before or on the biggest reveal, so it lands.` });
+    }
+    for (const m of markers) {
+      const i = timeline.findIndex((t) => t.sceneNumber === m.afterSceneNumber);
+      const out = scenes[i]?.motion?.transitionOut;
+      if (i >= 0 && out !== 'fade-to-black' && out !== 'dip-to-black') {
+        checks.push({ id: 'midroll-without-fade', severity: 'warn', message: `Mid-roll ${m.index} (${m.timestamp}) comes after scene ${m.afterSceneNumber}, which cuts out with "${out || 'nothing'}". Fade to black there so the ad break falls in a pause.`, sceneNumbers: [m.afterSceneNumber] });
+      }
+    }
+  }
+
+  // Scene 1 has nothing to transition from, and a fade after a mid-roll is required, so neither counts as a choice.
+  const afterMidroll = new Set(markers.map((m) => m.afterSceneNumber + 1));
+  const chosen = scenes.flatMap((s, i) => (i > 0 && s.sound && !afterMidroll.has(sn(i)) ? [{ n: sn(i), t: s.sound.transitionIn }] : []));
+  const showy = chosen.filter((c) => c.t && c.t !== 'cut').map((c) => c.n);
+  if (showy.length >= MIN_SCENES_FOR_SHARE_CHECKS && showy.length / chosen.length > NON_CUT_MAX_SHARE) {
+    checks.push({ id: 'transition-showy', severity: 'warn', message: `${showy.length} of ${chosen.length} transitions are something other than a cut. Editors cut; a dissolve, fade or smash cut only reads as meaningful when it is rare.`, sceneNumbers: showy });
+  }
+  return checks;
+}
+
 const SEVERITY_ORDER: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
 
 export function analyzeScript(script: any, opts: { requestedDurationSec?: number; research?: any } = {}): ScriptAnalysis {
@@ -528,7 +588,7 @@ export function analyzeScript(script: any, opts: { requestedDurationSec?: number
   const timeline = buildTimeline(scenes);
   const chapters = buildChapters(scenes, timeline);
   const { markers, checks: midrollChecks } = placeMidrolls(scenes, timeline);
-  const qualityChecks = [...auditScript(script, opts), ...midrollChecks].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+  const qualityChecks = [...auditScript(script, opts), ...midrollChecks, ...auditSound(scenes, timeline, script?.musicCues, markers)].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
   return { timeline, chapters, midrollMarkers: markers, qualityChecks };
 }
 
