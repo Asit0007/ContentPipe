@@ -91,6 +91,13 @@ const H3_CANVAS: Record<string, string> = {
   '3:4': '576x768 · 3:4 fast',
 };
 
+/** LTX-2.3's "high" canvases as [height, width], from the Space's own table. */
+const LTX_CANVAS: Record<string, [number, number]> = {
+  '16:9': [1024, 1536],
+  '9:16': [1536, 1024],
+  '1:1': [1024, 1024],
+};
+
 export const VIDEO_ADAPTERS: Record<string, SpaceAdapter<VideoJob>> = {
   // MiniMax-H3 with a 6-step turbo LoRA; video plus a synchronized soundtrack. MiniMax's official Space.
   // Licence: MiniMax H3 Community License — commercial use allowed under $20M/yr revenue, and "MiniMax H3" must be
@@ -108,6 +115,22 @@ export const VIDEO_ADAPTERS: Record<string, SpaceAdapter<VideoJob>> = {
         outputIndex: 0,
         durationSec,
       };
+    },
+  },
+  // LTX-2.3 distilled (Lightricks' official Space): image + prompt -> video with its own audio. Reserves a FIXED 75 s
+  // of ZeroGPU quota per call whatever the length (`@spaces.GPU(duration=75)`), so a longer clip costs no more quota
+  // unless it overruns the 75 s. Prompt enhancement is off, like every other adapter. Canvas sizes come from the
+  // Space's own RESOLUTIONS table ("high"). Licence: LTX-2 Community License ("other"); free commercial use below a
+  // revenue threshold has NOT been read from the licence text yet.
+  'Lightricks/LTX-2-3': {
+    model: 'LTX-2.3 distilled',
+    hasAudio: true,
+    async build(job, ctx) {
+      const image = await ctx.upload(job.image, `input.${extFor(job.image.contentType)}`);
+      const durationSec = clamp(job.durationSec, 1, 10);
+      const [height, width] = LTX_CANVAS[job.aspectRatio] || LTX_CANVAS['16:9'];
+      // image, prompt, duration, enhance prompt (off), seed, randomize seed, height, width.
+      return { endpoint: '/generate_video', data: [image, job.prompt, durationSec, false, 42, true, height, width], outputIndex: 0, durationSec };
     },
   },
   // Wan 2.2 I2V A14B, Apache 2.0. Hugging Face's own ZeroGPU showcase Space (fp8, AoT-compiled, 16 fps).
