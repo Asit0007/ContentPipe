@@ -184,6 +184,36 @@ Text generation is no longer Gemini-only. `generateJson` / `generateText` (`serv
 - **Model ids drift and the defaults are best guesses** — `npm run llm:check` lists each provider's live `/models`, flags any configured id that isn't there, and makes one tiny JSON call per provider. Run it after adding a key and before trusting the chain.
 - **Privacy:** every prompt now goes to whichever provider answers. DeepSeek's API is hosted in China. Fine for public-news scripts; `JobPipe` has its own Gemini client (`src/jobpipe/llm.py`) and is not on this chain — résumé data is a separate privacy decision.
 
+## Model availability and ranking snapshot (2026-09-27)
+
+A point-in-time check, not a standing fact: free-tier limits and rankings move daily. Method: `npm run llm:check` plus one tiny JSON call to **every** model in the chain
+(`llm:check` itself only tries the first per provider), live catalog listings, and Artificial Analysis's leaderboard page (fetched through a summarising tool, so
+treat the numbers as approximate). Nothing here is a registry ranking — `ContentRender`'s registry still refuses ranks without a source it read itself.
+
+| Model (provider) | Artificial Analysis Intelligence Index | Right now |
+|---|---|---|
+| `gemini-3.8-flash` (Gemini) — **not in the chain** | 41 (high) — the highest of the free-tier models | **available** (4 s) |
+| `gemini-3.7-flash` (Gemini) — first in the chain | not on the current table (superseded) | **503 overloaded** — not a quota message |
+| `gemini-3.6-flash`, `gemini-3.1-flash-lite` (Gemini) | not on the current table | available |
+| `qwen/qwen3.8-27b` (Groq) | 34 (xhigh) / 28 (medium) | available (0.1 s) |
+| `qwen/qwen3.8-27b:free` (OpenRouter) | same model | 429 per-minute (upstream ModelRun), retry ~60 s |
+| `nemotron-3-ultra`, `gemma4:31b`, `nemotron-3-super` (Ollama Cloud) | 23 / 19 / 13 | available |
+| `nvidia/nemotron-3.5-lightning:free` (OpenRouter) | — | available (11 s) |
+| `openai/gpt-oss-120b` (Groq) | 12 (high) | available |
+| `mistral-small-latest`, `mistral-medium-latest` (Mistral) | Small 4: 11 | 429 per-minute |
+| `z-ai/glm-5.2:free` (OpenRouter) — **in the default chain** | GLM-5.2 no longer listed (GLM-5.3 is 45) | **id not live** — dead entry in `server/llm/providers.ts:99`, README and `.env.example`; the chain cools and skips it |
+| `glm-5.3` (45), `kimi-k3` (44), `glm-5.3-flash` (42), `deepseek-v4.1-flash` (39), `deepseek-v4-pro:0813` (36), `minimax-m3` (29), `mistral-large-3:675b` (Ollama Cloud) | as shown | **HTTP 402 "not included in your free usage"** — paid credits only; the free Ollama plan covers only the models above |
+| DeepSeek, Grok (4.6: 44, 4.7: 46), Cerebras | — | no key |
+
+Reading it: **no model was daily-quota-exhausted at the time**; what looked "exhausted" was one overloaded top model (503) and two per-minute limits. A single call cannot show how much of a
+~20-requests/day free Gemini quota is left — it only shows the next call is not refused. The chain's *order* is not intelligence order any more: `gemini-3.8-flash` (41) is available and
+above everything the free tiers otherwise offer, and is not in it. **Suggested `LLM_MODEL_ORDER`:** `gemini:gemini-3.8-flash`, `groq:qwen/qwen3.8-27b`, `gemini:gemini-3.6-flash`,
+`ollama:nemotron-3-ultra`, then the rest; drop `z-ai/glm-5.2:free`. Not applied (it lives in each machine's `.env`).
+
+**Scale caveat.** Artificial Analysis re-scales its index between versions: the same week an article put Gemini 3.8 Flash at 59 and the leaderboard table at 41. Compare rows only within one
+source and date. **Voices:** in the Artificial Analysis Speech Arena (via a 2026-05-30 article) Gemini 3.1 Flash TTS was #1; Kokoro-82M (Apache-2.0) ~1058 ELO; the top open-weight model,
+Fish Audio S2 Pro (~1123), has a research licence that needs a paid one for commercial use. ElevenLabs' own help centre: the free plan has **no commercial use** and requires attribution; paid plans carry a commercial licence.
+
 ## Model provenance: which model wrote what (2026-09-25)
 
 Every page of the UI has an **"AI models on this page"** panel (`src/components/ModelsPanel.tsx`) with two parts: the models the page is configured to try, in order (`GET /api/models`, built by `server/modelLineup.ts` from the same `buildTiers` the chain uses, so it can't drift), and the model that actually produced each part of what's on screen.
@@ -305,7 +335,7 @@ Every scene carries an optional `speaker`: `narrator` or `analyst`. ContentRende
 - **An analyst scene inherits the previous scene's `actPhase`.** Chapters are built from consecutive equal labels, so a label of its own would split the chapter it interrupts.
 - **Audit:** `analyst-scene-too-long` warns above 30 words (the prompt asks for 12-25). Invented figures in a reaction are already caught by the dossier check, which covers every scene's narration whoever speaks it.
 - **Live check, 2026-09-21** (17 scenes, two analyst scenes, every chunk written by `gemini-3.1-flash-lite` because nothing stronger was reachable): the mechanics work. The prompt's first version produced alarm words ("terrifying", "chilling") and a claim bigger than the dossier; the revised wording produced one measured, practical reaction, and one that read like narration (33 words) beside a narrator scene that spoke as the analyst. That is a sample of two on the weakest model — the voice quality is **not** established. Re-check with a stronger provider, and treat a run's analyst scenes as something to read, not trust.
-- **Not done:** the canned fallback script has no analyst (the renderer refuses canned content anyway); the UI does not show `speaker`; `/api/tts` still reads everything with one voice.
+- **Not done:** the canned fallback script has no analyst (the renderer refuses canned content anyway); the UI does not show `speaker`; `/api/tts` reads with one fixed prompt unless the caller sends `direction` (2026-09-26: an Audio Profile / Scene / Director's Notes block, `server/ttsPrompt.ts`, capped at 4000 chars) — ContentRender sends the analyst's directed prompt that way.
 
 ## Visual consistency: what's enforced, what isn't
 

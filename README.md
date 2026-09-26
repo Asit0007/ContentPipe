@@ -103,7 +103,7 @@ Telegram / news input
 
   /api/publish-package ─ titles, thumbnails, description, tags (on demand, after the script)
 
-  /api/tts, /api/generate-image ── narration audio and scene stills, per scene
+  /api/tts, /api/generate-image ── narration audio and scene stills, per scene (`/api/tts` takes an optional `direction`, a directed-read prompt)
   /api/generate-video ── animate a scene still into a short clip (Hugging Face), saved to renders/clips/
   server/assemble.ts ──────────── stills + narration -> MP4 + .en.srt (a module, not an endpoint yet)
 ```
