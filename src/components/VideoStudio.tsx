@@ -705,7 +705,7 @@ ${videoScript.scenes
                     ) : currentScene.imageProviderLabel ? (
                       <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-zinc-900/70 border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300 backdrop-blur-sm">
                         🖼️ {currentScene.imageProviderLabel}
-                        {currentScene.imageModel && currentScene.imageProvider === 'gemini' ? ` · ${modelInfo(currentScene.imageModel)?.name || currentScene.imageModel}` : ''}
+                        {currentScene.imageModel && currentScene.imageProvider !== 'pollinations' ? ` · ${modelInfo(currentScene.imageModel)?.name || currentScene.imageModel}` : ''}
                       </span>
                     ) : null}
                   </>

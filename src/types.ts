@@ -6,7 +6,7 @@ export type { ModelCall, ModelAttempt } from '../shared/modelUsage';
 
 export type AspectRatio = '16:9' | '9:16' | '1:1';
 export type ImageResolution = '1K' | '2K' | '4K';
-export type ImageProviderId = 'gemini' | 'pollinations' | 'placeholder';
+export type ImageProviderId = 'hf' | 'gemini' | 'pollinations' | 'placeholder';
 export type VoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
 export type WorkflowStep = 'telegram' | 'research' | 'plan' | 'script' | 'studio' | 'ip_branding';
 
@@ -285,6 +285,14 @@ export interface VideoScriptScene {
   isImageLoading?: boolean;
   audioError?: string;
   imageError?: string;
+  /** An AI clip animated from generatedImageUrl (POST /api/generate-video), served from /clips/. */
+  generatedVideoUrl?: string;
+  /** The Space that made it (VIDEO_PROVIDER_ORDER). */
+  videoModel?: string;
+  videoHasAudio?: boolean;
+  videoDurationSec?: number;
+  isVideoLoading?: boolean;
+  videoError?: string;
 }
 
 /** Mirrors ScriptGeneration in server/scriptPipeline.ts — change both together. */

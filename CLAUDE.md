@@ -10,7 +10,7 @@ Read `README.md` first for setup and the pipeline overview. This file covers wha
 
 A news story plus its source links go in; a production-ready video brief comes out — researched dossier, narrative plan, scene-by-scene script with layered image prompts, motion direction and citations, exported as Markdown to `exports/`.
 
-The owner's stated goal: *feed in a news item and a link to its sources, have the app research it, and produce scripts for the images (character, background, scene) and for animating those images into video.* For a long time the output stopped at **prompts and direction, not rendered video**, by decision. On 2026-09-21 the owner asked for rendering: `server/assemble.ts` now turns scene stills + narration into an MP4 (Ken Burns-style zoom, sidecar captions). **Image-to-video animation is still prompts only** (`motion`, `motionPrompt`) — don't build that, or an endpoint/CyberPipe stage around the assembler, unless asked.
+The owner's stated goal: *feed in a news item and a link to its sources, have the app research it, and produce scripts for the images (character, background, scene) and for animating those images into video.* For a long time the output stopped at **prompts and direction, not rendered video**, by decision. On 2026-09-21 the owner asked for rendering: `server/assemble.ts` now turns scene stills + narration into an MP4 (Ken Burns-style zoom, sidecar captions). On 2026-09-26 the owner asked for image-to-video too: `/api/generate-video` animates a scene still through Hugging Face Spaces (see "Images and video: Hugging Face Spaces"). Still not built: a CyberPipe stage for it, or an endpoint around the assembler — don't, unless asked.
 
 The automated caller is **CyberPipe** (`../CyberPipe`, its own repo): a Python job orchestrator that calls `/api/research`, `/api/plan`, `/api/script` in strict mode and adds durable jobs, scheduled retries and a Telegram approval. It reimplements none of the generation, and this repo has no notion of jobs — keep it that way; see the table in `README.md` ("Who calls it").
 
@@ -26,7 +26,8 @@ Single Express app (`server.ts`) that also serves the Vite/React front end in mi
 /api/script    → four passes: production bible → narrative → art direction → sound & edit (checkpointed, resumable)
 /api/publish-package → titles, thumbnails, description, tags (model writes copy; the checkable parts are deterministic)
 /api/tts       → narration audio
-/api/generate-image → scene stills (Gemini -> Pollinations -> SVG placeholder, see below)
+/api/generate-image → scene stills (Hugging Face Spaces in IMAGE_PROVIDER_ORDER, then an SVG placeholder for the UI only)
+/api/generate-video → scene still + motionPrompt → short clip (Spaces in VIDEO_PROVIDER_ORDER), saved to renders/clips/, served at /clips/
 /api/export/markdown → writes the brief to exports/
 /api/chat, /api/ip-names, /api/notebooklm-* → side features
 ```
@@ -46,6 +47,8 @@ Where things live (`server.ts` is routes and wiring only — the logic moved out
 | `server/timeline.ts` | deterministic timeline, chapters, mid-roll placement, retention/compliance audit |
 | `server/publishPackage.ts` | titles / thumbnails / description / tags and their linters |
 | `server/sourceFetcher.ts`, `hnThread.ts`, `netGuard.ts`, `htmlText.ts` | fetching, the HN thread rung, the SSRF guard |
+| `server/mediaOrder.ts`, `server/hfSpace.ts`, `server/spaceAdapters.ts` | image/video provider order and Space cooldowns; the Gradio HTTP client (upload, two-step call, event stream, error classification); how each Space is called. See "Images and video" below |
+| `server/imageProviders.ts`, `server/videoProviders.ts` | the two media chains; `shared/nanoBananaPrompt.ts` builds the paste-by-hand Nano Banana Pro prompt |
 | `shared/topicProfile.ts`, `shared/tone.ts` | resolve the topic domain (cybersecurity default vs. any other subject) and the documentary/infotainment tone axis — see "Conventions" below |
 
 ---
@@ -92,7 +95,7 @@ A second, harder failure mode on the same root cause: it's not just about field 
 | Gemini image generation | **`limit: 0`** — no quota exists at all |
 | Google Search grounding | **429 immediately** |
 
-A 429 saying `limit: 0` is not something to retry or work around on the Gemini side; it needs billing. Don't add backoff for it. But image generation itself is no longer blocked end-to-end — `server/imageProviders.ts` falls through to Pollinations (free, no key) before the SVG placeholder. Grounding stays genuinely unaddressed and is not planned even with billing: fetching real URLs and disclosing exactly what was read (see the rescue ladder below) already beats grounding's opaque citations, for free.
+A 429 saying `limit: 0` is not something to retry or work around on the Gemini side; it needs billing. Don't add backoff for it. Nano Banana Pro (`gemini-3-pro-image`) was re-probed 2026-09-26: still `limit: 0`. Images now come from Hugging Face Spaces instead (see "Images and video"); Gemini and Pollinations are opt-in entries in `IMAGE_PROVIDER_ORDER`. Grounding stays genuinely unaddressed and is not planned even with billing: fetching real URLs and disclosing exactly what was read (see the rescue ladder below) already beats grounding's opaque citations, for free.
 
 ### Reading a Gemini 429 (captured live 2026-09-19 — fixtures in `server/__fixtures__/`)
 
@@ -133,7 +136,7 @@ When output looks generic or off-topic, check `isQuotaFallback` before debugging
 
 **The UI palette is the persona palette, defined once in `src/index.css` (2026-09-26).** Its `@theme` block redefines the Tailwind scales the components already use — zinc → warm neutrals, orange/amber → ember (`orange-500` = `#c84b11`, so white text on a button passes AA; `orange-400` = `#e0602a` for accent text), emerald → signal, cyan/sky/blue/indigo → neutral "wire", rose/red → a warm error red. Keep writing ordinary Tailwind classes; don't add hex values or new colour families in components. **No gradients, glow orbs or coloured shadows** (the Playbook's rule, see `../Blogs/BRAND.md`); the two black image scrims over video (`VideoStudio`, `ScriptEditor`) are the only gradients left, for caption legibility. Fonts are DM Sans / DM Serif Display (stage headlines, `font-serif font-normal` — it has one weight) / JetBrains Mono.
 
-**`npm run dev` does not reload the server.** `tsx server.ts` has no watch mode, while Vite hot-reloads the UI, so after pulling a commit that adds a route the page can call a route the running server doesn't have and get `index.html` back (this is how "Could not load the model list … `<!doctype`" happened, 2026-09-26). Restart after server changes. Vite's watcher ignores `scripts/` (the ~12k-file TTS bake-off env held the idle server at 80-97 % CPU), `.runs/`, `renders/`, `exports/`, `dist/`, `e2e/`.
+**`npm run dev` does not reload the server.** `tsx server.ts` has no watch mode, while Vite hot-reloads the UI, so after pulling a commit that adds a route the page can call a route the running server doesn't have and get `index.html` back (this is how "Could not load the model list … `<!doctype`" happened, 2026-09-26). Restart after server changes. Vite's HMR websocket is bound to `127.0.0.1` (`vite.config.ts`; it listened on every interface, `*:24678`, until 2026-09-26). Vite's watcher ignores `scripts/` (the ~12k-file TTS bake-off env held the idle server at 80-97 % CPU), `.runs/`, `renders/`, `exports/`, `dist/`, `e2e/`.
 
 **The default channel brand lives in `shared/brand.ts` (`DEFAULT_CHANNEL_BRAND`, "Blast Radius").** Server prompts, the canned fallback script, and the UI's watermark / export headers all fall back to it when no `channelBrandName` is supplied — never hard-code a show name (the old fallbacks said "The Orange Thread", i.e. another site's colour, and a video's on-screen default said "HACKER NEWS BREAKDOWN"). It is imported by both `server/` and `src/`, so keep it dependency-free. The UI starts with **no** preset IP (`activeIp = null`), and the IP-brainstorming gallery, `/api/ip-names` and the chatbot now lead with the default brand instead of another publication's.
 
@@ -192,9 +195,31 @@ Every page of the UI has an **"AI models on this page"** panel (`src/components/
 - Per-scene TTS/image calls are kept in memory per page (`src/utils/modelUsageLog.ts`), and the scene stores `imageModel` / `audioModel`.
 - Fixed along the way: chat's `via` always credited the first Gemini model in its list; its canned reply claimed a model (`gemini-local-strategist`); and the footer named Gemini 3.1 Pro and Pro Image, which this free key cannot call.
 
+## Images and video: Hugging Face Spaces (2026-09-26)
+
+The owner's call: images and image-to-video from Hugging Face, Nano Banana Pro by hand (its API has no free quota on this key). The order is `.env` config, not code, because Spaces change and "switch to the next model" should be one line:
+
+```
+IMAGE_PROVIDER_ORDER=hf:Qwen/Qwen-Image-2512,hf:HiDream-ai/HiDream-O1-Image          (the default)
+VIDEO_PROVIDER_ORDER=hf:MiniMaxAI/MiniMax-H3-Turbo-Lora,hf:zerogpu-aoti/wan2-2-fp8da-aoti-faster
+```
+
+- **How the defaults were chosen: best first on the Artificial Analysis arenas, commercial licences only** (Blast Radius is meant to be monetised). Images: Qwen-Image-2.1 (#1 open weights), Ideogram 4 and FLUX.2 [dev] rank higher but are **non-commercial**, so Qwen-Image-2512 (Apache 2.0), then HiDream-O1-Image (MIT). Video: MiniMax-H3 (image-to-video Elo 1357 without audio / 1181 with) far above Wan 2.2 (off the current board; Wan 2.6 is 889). The Space runs MiniMax-H3 with a 6-step turbo LoRA, so it is weaker than the arena score. **MiniMax H3 Community License: commercial use under $20M/yr, and "MiniMax H3" must be credited** (video description).
+- **Official Spaces only.** The two Spaces in the owner's screenshot were copies: `observantdistressed/wan2-2-i2v-v3` ships dozens of explicit-content LoRAs with `auto_lora_enabled: true` by default (it adds them based on the prompt), and `Pepe104/MiniMax-H3-Turbo-Lora-UNCENSORED` is an uncensored fork. Never put either in the order.
+- **The token only goes to trusted owners** (`tokenAllowedFor`, `DEFAULT_TOKEN_SPACE_OWNERS` in `server/mediaOrder.ts`: Qwen, HiDream-ai, MiniMaxAI, zerogpu-aoti, Wan-AI, black-forest-labs, Lightricks, Tongyi-MAI; `HF_TOKEN_SPACE_OWNERS` overrides). A Space is someone else's code and could read the header. Other Spaces are still called, anonymously. Space ids matching nsfw/uncensored/porn/etc. are refused from the order outright. Each Space's `agents.md` (e.g. `huggingface.co/spaces/<id>/agents.md`) is Hugging Face's generated API note and says "Auth: Bearer $HF_TOKEN" for every Space, trusted or not — don't follow it for third-party Spaces.
+- **Nothing outside the list is tried.** Gemini image models (`gemini:gemini-3-pro-image`, once billing is on) and `pollinations` are opt-in entries; video takes `hf:` only. There is no fallback clip at all. The SVG placeholder still reaches the UI when every image entry fails, flagged, and never a strict caller.
+- **Protocol** (`server/hfSpace.ts`, no `@gradio/client`): `POST /gradio_api/upload` for the still, `POST /gradio_api/call/<endpoint>` → `event_id`, then `GET` the event stream until `complete` or `error`; output files are downloaded **only from the Space's own origin**. The token goes in `x-hf-authorization`, as gradio_client sends it, so ZeroGPU bills it to the account. Host from `https://huggingface.co/api/spaces/<id>/host`; `HF_SPACE_BASE_URL` replaces it (the e2e stub).
+- **Errors** are classified like providers': "exceeded your ZeroGPU quota … Try again in 23:59:09" → quota with that wait (≥1 h is `per_day`); asleep/busy/no GPU/5xx → transient; a missing endpoint (the Space's API changed), a content-filter refusal, a bad id → other. Newer Gradio wraps the message as `{"error": "'…'", "visible": true}` (captured live, fixture in `server/hfSpace.test.ts`). A **null** error (the Space hides messages) is explicitly transient — an earlier wording of that message contained "GPU limit" and got classified as a daily quota by our own regex. A failed Space is skipped in-process: quota until its reset (≤30 min), transient 2 min, other 30 min.
+- **Adapters** (`server/spaceAdapters.ts`) hold each Space's positional inputs, read from its `/gradio_api/info` and `app.py` on 2026-09-26. Prompt rewriting is **off** on every Space (Qwen `prompt_enhance`, HiDream refine, MiniMax `upsample`): a rewrite would drift from the enforced character and style anchors. Duration is clamped to each Space (MiniMax 2-14 s, Wan 1-5 s) and the response reports the clamped value. A Space with no adapter goes through `genericAdapter`, which reads its API and fills parameters by name, and refuses (rather than guesses) a parameter with no default it can't name.
+- **GPU budget** (HF docs, checked 2026-09-26): unauthenticated 2 min/day, free account 5, PRO 40 (resets 24 h after first use). MiniMax runs on the `xlarge` size (2× quota): one 4 s clip **reserved 146 s**, so ~2 clips/day on a free token. HiDream's Space runs on CPU and forwards to HiDream's own GPUs, so it spends no quota (its hosted-service terms are not checked; the weights are MIT).
+- **Live, 2026-09-26.** Without a token: HiDream 60 s → 2560×1440 PNG; Wan 2.2 49 s → 4.06 s 832×480 16 fps clip; Qwen hidden error; MiniMax quota refusal. **With the token (fine-grained, `repo.content.read` only), through the real endpoints:** Qwen-Image-2512 52 s → 1664×928 **WebP** (so `imageSize` reads PNG, WebP and JPEG headers), prompt followed element by element; MiniMax-H3 63 s → 4.46 s 1152×640 24 fps H.264 + AAC soundtrack (mean −22.9 dB), subject and room stable. **Owner's verdict: picture good, audio not good** — clip audio is to be muted in the edit (the sound pass's cue sheet is the soundtrack); don't build anything on MiniMax's audio. The Space re-fit the canvas to the still's shape (asked 960×544).
+- **Security (audited 2026-09-26 with gitleaks, redacted):** history and tree clean (hits are the decorative `eyJhbGciOiJS…` fragment in `fallbackGenerators.ts` and the public, restricted Firebase web key in git-ignored files). Every token-bearing request uses `redirect: 'manual'` and refuses 3xx: fetch strips only `Authorization` on a cross-site redirect, so `x-hf-authorization` would have followed one.
+- **UI:** each scene has "Nano Banana Pro prompt" (copies `nanoBananaProPrompt`: character anchor first, style anchor last, no negatives and no "no text" — Nano Banana has no negative field and "no X" tends to add X) and, once it has a real still, "Animate clip" (sends `motion.motionPrompt` and `motion.durationSec`). Clips are written to `renders/clips/` and served from `/clips/`, because GPU minutes are the scarce thing. The exported brief carries the Nano Banana Pro prompt per scene.
+- **Tests:** `server/hfSpace.test.ts` (protocol against a local server, classification with the live bodies, cooldowns, adapters, generic adapter, sniffing, the Nano Banana prompt); e2e "IMAGE via a Hugging Face Space" and two "VIDEO" tests against a stub Space that answers ok / quota / asleep.
+
 ## Failure contract for API clients (strict mode)
 
-Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/tts` and `/api/generate-image`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:
+Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `/api/publish-package`, `/api/tts`, `/api/generate-image` and `/api/generate-video`. Without it you get the UI contract (always 200, fallback content flagged `isQuotaFallback`). CyberPipe sends it. With it there is **never** fallback content:
 
 | Status | Meaning | Body |
 |---|---|---|
@@ -205,7 +230,7 @@ Send `X-ContentPipe-Strict: 1` on `/api/research`, `/api/plan`, `/api/script`, `
 
 Strict mode rethrows *retryable* failures instead of absorbing them into a shorter or flatter script; non-retryable ones (a rejected schema, unparseable output) still degrade — and say so in `generation.degraded`. Every `/api/script` response carries `generation` (`complete`, requested vs produced scenes/duration, `degraded[]`), so a partial script is self-describing in both modes.
 
-**Media endpoints under strict.** `/api/tts` degrades to a synthesized tone and `/api/generate-image` to an SVG placeholder for the UI; a render would publish either as if it were real, so strict callers never get them. TTS classifies every model's error together (`reduceModelErrors` in `server/quota.ts`, the same reduction `generateGeminiJson` applies to text: a daily quota is not masked by the other model's 404) and answers 429/503/502. Images: **Pollinations is a real provider and is still returned** (labelled `provider: 'pollinations'`); only the placeholder is refused, as `503 upstream_unavailable` with each provider's error in the message. `POLLINATIONS_BASE_URL` overrides the host so the e2e test needs no network.
+**Media endpoints under strict.** `/api/tts` degrades to a synthesized tone and `/api/generate-image` to an SVG placeholder for the UI; a render would publish either as if it were real, so strict callers never get them. TTS classifies every model's error together (`reduceModelErrors` in `server/quota.ts`, the same reduction `generateGeminiJson` applies to text: a daily quota is not masked by the other model's 404) and answers 429/503/502. Images: every listed provider's image is real and returned, labelled (`provider`, `model`); only the placeholder is refused, as 429 (every entry out of quota) or 503 (busy/asleep), with each provider's error in the message. Video has no fallback in either mode: the UI gets a 502 with the reasons. `POLLINATIONS_BASE_URL` overrides the host so the e2e test needs no network.
 
 ## Run journal (`.runs/`, gitignored)
 
@@ -360,7 +385,7 @@ Blast Radius's audience is anyone curious about a hacking story, including peopl
 ```bash
 npm run lint       # tsc --noEmit — the baseline is zero errors (tests are type-checked too)
 npm test           # unit tests (server/*.test.ts, node:test via tsx) — fast, no network, no quota
-npm run test:e2e   # the real server against a stub Gemini (and stub Pollinations): 429/503/kill -9/resume/409/SSRF, strict TTS + image (~1 min)
+npm run test:e2e   # the real server against a stub Gemini, Pollinations and Hugging Face Space: 429/503/kill -9/resume/409/SSRF, strict TTS + image + video (~1 min)
 npm run llm:check  # LIVE: every configured provider's key, model ids and one tiny JSON call (spends a fraction of a cent)
 ```
 

@@ -10,7 +10,7 @@ import { useSessionModelCalls } from '../utils/modelUsageLog';
  * skips a busy or rate-limited model — so both are shown, and a result's rows are the ones to trust.
  */
 
-type Capability = 'text' | 'speech' | 'image' | 'podcastSpeech';
+type Capability = 'text' | 'speech' | 'image' | 'video' | 'podcastSpeech';
 
 const PAGE_LINEUPS: Record<string, Array<{ cap: Capability; label: string; usedFor: string }>> = {
   telegram: [{ cap: 'text', label: 'Text models', usedFor: 'Pressing Research reads your source links (no AI), then one text model writes the cited dossier.' }],
@@ -20,6 +20,7 @@ const PAGE_LINEUPS: Record<string, Array<{ cap: Capability; label: string; usedF
     { cap: 'text', label: 'Text models', usedFor: 'Production bible, the narrative in chunks of 3 scenes, art direction in chunks of 6, and the publish package.' },
     { cap: 'speech', label: 'Narration (text-to-speech)', usedFor: 'Voice a scene with the Audio button.' },
     { cap: 'image', label: 'Scene images', usedFor: 'Draw a scene still with the Image button.' },
+    { cap: 'video', label: 'Scene clips (image to video)', usedFor: 'Animate a scene still with the Animate clip button.' },
   ],
   studio: [
     { cap: 'speech', label: 'Narration (text-to-speech)', usedFor: 'Voice every scene (Generate all).' },
@@ -117,7 +118,7 @@ const CallRow: React.FC<{ call: ModelCall }> = ({ call }) => {
             <code className="text-zinc-500 break-all">{call.model}</code>
           </>
         ) : (
-          <span className="text-rose-300">No model answered{call.kind === 'image' ? ' — a placeholder was used' : call.kind === 'speech' ? ' — a synthesized tone was used' : ' — canned or partial content'}.</span>
+          <span className="text-rose-300">No model answered{call.kind === 'image' ? ' — a placeholder was used' : call.kind === 'video' ? ' — no clip was made' : call.kind === 'speech' ? ' — a synthesized tone was used' : ' — canned or partial content'}.</span>
         )}
       </div>
       <div className="mt-0.5 text-[11px] text-zinc-500">

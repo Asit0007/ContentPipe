@@ -34,6 +34,7 @@ import { measureCoverage } from './server/researchCoverage';
 import { reachGapFor } from './server/reachGap';
 import { scrubCveIds } from './server/severityScrub';
 import { generateSceneImage } from './server/imageProviders';
+import { generateSceneVideo, VideoInputError, clipsDir } from './server/videoProviders';
 import { writeScriptMarkdown, EXPORTS_DIR } from './server/markdownExporter';
 import { DEFAULT_CHANNEL_BRAND } from './shared/brand';
 import { isDocumentaryTone } from './shared/tone';
@@ -867,11 +868,11 @@ app.post('/api/generate-image', async (req, res) => {
 
   try {
     const ai = getAIClient();
-    const result = await generateSceneImage(ai, { prompt, aspectRatio: targetAspectRatio, imageSize: targetSize });
-    // Pollinations is a real provider and comes back labelled; the SVG placeholder is not artwork.
+    const { strictError, ...result } = await generateSceneImage(ai, { prompt, aspectRatio: targetAspectRatio, imageSize: targetSize });
+    // Every listed provider's image is real and labelled; the SVG placeholder is not artwork, so strict never gets it.
     if (strict && result.isPlaceholder) {
       const why = result.attempts.map((a) => `${a.provider}: ${a.error}`).join('; ');
-      return sendStrictFailure(res, new UpstreamUnavailableError(30, `No image provider returned an image (${why})`));
+      return sendStrictFailure(res, strictError || new UpstreamUnavailableError(30, `No image provider returned an image (${why})`));
     }
     res.json({ ...result, imageSize: targetSize, aspectRatio: targetAspectRatio, modelUsage: res.locals.modelUsage });
   } catch (error: any) {
@@ -887,6 +888,31 @@ app.post('/api/generate-image', async (req, res) => {
       imageSize: targetSize,
       aspectRatio: targetAspectRatio,
     });
+  }
+});
+
+// 5a. Image-to-video: animate a scene still with the Hugging Face Spaces in VIDEO_PROVIDER_ORDER.
+// No fallback clip exists, so both contracts fail the same way; the UI shows the error, strict gets 429/503/502.
+app.use('/clips', express.static(clipsDir(), { fallthrough: false, index: false }));
+app.post('/api/generate-video', async (req, res) => {
+  const { imageUrl, prompt, durationSec = 5, aspectRatio = '16:9' } = req.body || {};
+  if (typeof imageUrl !== 'string' || !imageUrl || typeof prompt !== 'string' || !prompt.trim()) {
+    return res.status(400).json({ error: 'imageUrl (a data: URL of the scene still) and prompt (the motion) are required' });
+  }
+  const validAspectRatios = ['16:9', '9:16', '1:1', '4:3', '3:4'];
+  try {
+    const result = await generateSceneVideo({
+      imageUrl,
+      prompt: prompt.trim().slice(0, 2000),
+      durationSec: Math.min(14, Math.max(1, Number(durationSec) || 5)),
+      aspectRatio: validAspectRatios.includes(aspectRatio) ? aspectRatio : '16:9',
+    });
+    console.log(`[Video Agent] ${result.model} -> ${result.videoUrl} (${Math.round(result.bytes / 1024)} KB)`);
+    res.json({ ...result, modelUsage: res.locals.modelUsage });
+  } catch (error: any) {
+    if (error instanceof VideoInputError) return res.status(400).json({ error: error.message });
+    if (isStrict(req)) return sendStrictFailure(res, error);
+    res.status(502).json({ error: error?.message || 'No video provider returned a clip', modelUsage: res.locals.modelUsage });
   }
 });
 

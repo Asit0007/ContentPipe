@@ -18,7 +18,7 @@ export interface ModelAttempt {
 /** One logical model call — e.g. "Narrative scenes 4-6" — and every model tried for it, in order. */
 export interface ModelCall {
   task: string;
-  kind: 'json' | 'text' | 'speech' | 'image';
+  kind: 'json' | 'text' | 'speech' | 'image' | 'video';
   ok: boolean;
   /** The model that answered (absent if none did). */
   provider?: string;

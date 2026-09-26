@@ -142,7 +142,19 @@ test('the lineup lists exactly the models the chain will try, in order, with det
   assert.equal(l.text[0].info?.name, 'Gemini 3.7 Flash');
   assert.equal(l.text[1].info?.intelligence, 34);
   assert.match(l.textOrderSource, /LLM_MODEL_ORDER/);
-  assert.ok(l.speech.length > 0 && l.image.some((e) => e.provider === 'pollinations'));
+  assert.ok(l.speech.length > 0);
+  // Images and video default to Hugging Face Spaces only, in the owner's order; nothing unlisted is tried.
+  assert.deepEqual(l.image.map((e) => `${e.provider}:${e.model}`).slice(0, 2), ['hf:Qwen/Qwen-Image-2512', 'hf:HiDream-ai/HiDream-O1-Image']);
+  assert.ok(!l.image.some((e) => e.provider === 'pollinations' || e.provider === 'gemini'));
+  assert.deepEqual(l.video.map((e) => e.model), ['MiniMaxAI/MiniMax-H3-Turbo-Lora', 'zerogpu-aoti/wan2-2-fp8da-aoti-faster']);
+  assert.equal(l.video[0].info?.name, 'MiniMax-H3 Turbo LoRA');
+});
+
+test('IMAGE_PROVIDER_ORDER / VIDEO_PROVIDER_ORDER replace the defaults, in the order given', () => {
+  const l = describeModelLineup({ GEMINI_API_KEY: 'g', IMAGE_PROVIDER_ORDER: 'gemini:gemini-3-pro-image, hf:Some/Space, pollinations', VIDEO_PROVIDER_ORDER: 'hf:zerogpu-aoti/wan2-2-fp8da-aoti-faster' });
+  assert.deepEqual(l.image.map((e) => e.provider), ['gemini', 'hf', 'pollinations', 'placeholder']);
+  assert.equal(l.image[0].info?.name, 'Nano Banana Pro (Gemini 3 Pro Image)');
+  assert.deepEqual(l.video.map((e) => e.model), ['zerogpu-aoti/wan2-2-fp8da-aoti-faster']);
 });
 
 test('with no other provider key the lineup is Gemini alone and says so', () => {

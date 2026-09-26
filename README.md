@@ -2,12 +2,37 @@
 
 Turns a news story and its source links into a production-ready video brief: researched dossier, narrative plan, scene-by-scene script, layered image prompts, motion direction and source citations — exported as Markdown.
 
-Text generation runs through a **multi-provider LLM chain** — DeepSeek first, then Grok, the free-tier providers, and Gemini last (see [Model configuration](#model-configuration)). Narration audio uses Gemini TTS and scene images use Gemini → Pollinations. Node + Express serving a Vite/React front end from one process.
+Text generation runs through a **multi-provider LLM chain** — DeepSeek first, then Grok, the free-tier providers, and Gemini last (see [Model configuration](#model-configuration)). Narration audio uses Gemini TTS. Scene images and image-to-video clips come from Hugging Face Spaces in an order set in `.env` (Qwen-Image-2512 → HiDream-O1-Image; MiniMax-H3 → Wan 2.2), and every scene also gets a Nano Banana Pro prompt to paste into the Gemini app by hand. Node + Express serving a Vite/React front end from one process.
 
 > Related, outside this repo: a separate set of Claude Skills for openly-AI influencer characters
 > reuses this repo's consistency lessons: a verbatim character anchor that is checked rather than just
 > requested, a style anchor held identical, canonical recurring locations, and a figures-must-be-sourced
 > audit. Different content, same rules; nothing from them is used here.
+
+---
+
+## Where it stands (2026-09-26)
+
+The goal: *feed in a news item and links to its sources, have the app research it, write the script, and produce the images (character, background, scene) and the animation of those images into video.*
+
+| Step | State |
+|---|---|
+| Research from real sources, cited, with honest gaps | **Done** |
+| Plan and scene-by-scene script, written for a non-technical viewer | **Done** |
+| Layered image prompts with enforced character/style/place consistency | **Done** |
+| Motion direction and a paste-ready image-to-video prompt per scene | **Done** |
+| Sound & edit cue sheet (music, restrained SFX, silences, transitions) | **Done** (for a human editor) |
+| Titles, thumbnails, description, tags, chapters | **Done** |
+| Scene stills generated in the app | **Done**: Hugging Face (Qwen-Image-2512, HiDream-O1-Image), live-verified; Nano Banana Pro by hand via a copy button |
+| Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day |
+| Narration | Works, **one voice**; the two-voice (narrator + analyst) read is not wired into TTS |
+| Stills + narration → one MP4 with captions | **Module only** (`server/assemble.ts`, `npm run render:fixture`); no endpoint or button, and it uses stills, not the AI clips |
+| Batch generation of every scene's assets, checkpointed | **Not built** |
+| Burned-in captions / on-screen text | **Not built** (this ffmpeg lacks `drawtext`) |
+| Automated end to end via CyberPipe | Stages 1-3 only (research, plan, script) |
+| A published Blast Radius video | **Not yet** |
+
+**Known quality issue:** MiniMax-H3's own soundtrack on clips is poor (owner's verdict on the first live clip, 2026-09-26). Mute clip audio in the edit and use the sound pass's cue sheet (YouTube Audio Library / Pixabay) and the narration instead. The picture is good.
 
 ---
 
@@ -42,6 +67,9 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `APP_URL` | No | Self-referential links. |
 | `PORT` | No | Defaults to 3000. |
 | `CONTENTPIPE_RENDERS_DIR` | No | Where `server/assemble.ts` writes MP4s and captions. Defaults to `./renders` (gitignored). |
+| `HF_TOKEN` | For images/video | Free Hugging Face read token. ZeroGPU Spaces bill GPU time to it (free: 5 min/day). Without it you get the 2-minute anonymous allowance. |
+| `IMAGE_PROVIDER_ORDER` / `VIDEO_PROVIDER_ORDER` | No | Which Spaces (and, for images, `gemini:<model>` / `pollinations`) to try, best first. Defaults in `server/mediaOrder.ts`. Switch to another Space by editing this line. |
+| `HF_SPACE_BASE_URL` | No | Replaces every Space's host; exists so the e2e test can stand in for Hugging Face. |
 | `POLLINATIONS_BASE_URL` | No | Overrides the image fallback host. Exists so the end-to-end test can stand in for Pollinations instead of reaching the network. |
 | `HOST` | No | Interface to bind. Defaults to `127.0.0.1` (this machine only) — the endpoints are unauthenticated and spend your provider quota and money. `HOST=0.0.0.0` to expose it, only behind something that authenticates callers. |
 | `VITE_FIREBASE_*` | Only for Google Docs export | Client-side Firebase Auth config. See [Google Workspace export](#google-workspace-export-optional). |
@@ -76,6 +104,7 @@ Telegram / news input
   /api/publish-package ─ titles, thumbnails, description, tags (on demand, after the script)
 
   /api/tts, /api/generate-image ── narration audio and scene stills, per scene
+  /api/generate-video ── animate a scene still into a short clip (Hugging Face), saved to renders/clips/
   server/assemble.ts ──────────── stills + narration -> MP4 + .en.srt (a module, not an endpoint yet)
 ```
 
@@ -265,7 +294,7 @@ How it behaves:
 - **Errors keep the strict-mode contract.** Each failure is classified (no balance → never retry; 429 → per-minute or per-day, reading `Retry-After` and bodies like "try again in 7m12s"; 5xx and timeouts → transient; bad key or bad request → real error). If every provider fails, quota dominates and reports the **earliest** retry across all of them, so strict callers still get `429` / `503` / `502` + `Retry-After`.
 - **Cooldowns** are in-process: a provider that answered 401/402/403 is skipped for 30 minutes (restart after fixing a key); a model id the provider doesn't have (404, or a 400 saying so) for 30 minutes; a model that answered 413 "request too large" for 10 minutes; a 429 for its `Retry-After` (the skip is capped at 30 minutes, but a request that finds it cooling still reports the provider's real reset time); a timeout or 5xx for 30 seconds.
 - **A daily limit that doesn't say when it resets** (OpenRouter's free daily cap, for one) is treated as lasting until the next 00:00 UTC, and at least an hour — not 60 seconds, which had a strict caller re-polling a spent quota every minute. OpenRouter's `X-RateLimit-Reset` is read from the error body when it is there.
-- **Not covered:** TTS, image generation and the NotebookLM service still call Gemini directly; none of these providers offer them.
+- **Not covered:** TTS and the NotebookLM service still call Gemini directly; images and video go to Hugging Face Spaces (see below). None of these text providers offer them.
 - **Privacy.** Every prompt goes to whichever provider answers. DeepSeek's API is hosted in China and Mistral's free tier trains on prompts. That is acceptable here because prompts describe public news stories; it is a different question for private data.
 
 ### Which model wrote what (the "AI models on this page" panel)
@@ -319,7 +348,7 @@ These are Gemini's limits specifically. The other providers' free tiers have the
 | **Gemini image generation** | **Blocked** | `limit: 0` on `generate_content_free_tier_requests` for every image model — not a rate limit, no quota exists. Needs billing. |
 | **Google Search grounding** | **Blocked** | 429 immediately. Needs billing, and not planned even then — see [Research is real, within limits](#research-is-real-within-limits). |
 
-`/api/generate-image` (`server/imageProviders.ts`) doesn't stop at Gemini: it falls through to [Pollinations](https://pollinations.ai), a free hosted diffusion endpoint that needs no API key, before finally falling back to a generated SVG placeholder. The response's `provider` field names which one actually produced the image (`'gemini' | 'pollinations' | 'placeholder'`), and `isPlaceholder: true` means you got a placeholder, not artwork — the UI badges this rather than presenting a placeholder as real art. Note scene prompts sent to Pollinations leave the machine to a third-party host; this is judged acceptable because prompts describe public news stories, not private data.
+**Images and video come from Hugging Face Spaces (2026-09-26).** `/api/generate-image` walks `IMAGE_PROVIDER_ORDER` (default: Qwen-Image-2512, Apache 2.0, then HiDream-O1-Image, MIT) and `/api/generate-video` walks `VIDEO_PROVIDER_ORDER` (default: MiniMax-H3 Turbo, then Wan 2.2), calling each Space's Gradio API with your `HF_TOKEN`. The order was picked from the Artificial Analysis arenas among licences that allow a monetised channel; the higher-ranked Qwen-Image-2.1, Ideogram 4 and FLUX.2 [dev] are non-commercial. Nothing outside the list is tried, so Gemini's image models (Nano Banana Pro needs billing on this key) and Pollinations are opt-in entries. A Space out of GPU quota, asleep or changed is skipped for a while and the next one is tried; a strict caller gets 429 / 503 / 502. The response's `provider` (`'hf' | 'gemini' | 'pollinations' | 'placeholder'`) and `model` (the Space id) say what drew it. For Nano Banana Pro by hand, each scene has a **Nano Banana Pro prompt** button, and the exported brief carries the same prompt. **Licence note:** MiniMax-H3 clips need a "MiniMax H3" credit in the video description. Their built-in soundtrack is poor: mute it in the edit.
 
 ---
 
@@ -341,7 +370,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 
 ```bash
 npm test         # 318 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
-npm run test:e2e # real server vs a stub Gemini + Pollinations: 429, overload, crash-resume, SSRF, strict TTS/image, two-voice speakers (~1 min)
+npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
 npm run dev      # tsx server.ts — Express + Vite middleware
@@ -378,7 +407,9 @@ server/
   hnThread.ts                 Hacker News discussion as a retrievable source (Algolia API)
   schemas.ts                  response schemas (Gemini format; converted to JSON Schema for the other providers)
   sourceFetcher.ts            URL fetching, HTML-to-text extraction, and the (hn-api) -> direct -> jina -> wayback rescue ladder
-  imageProviders.ts           Scene image chain: Gemini -> Pollinations -> SVG placeholder
+  imageProviders.ts           Scene image chain in IMAGE_PROVIDER_ORDER (HF Spaces by default) -> SVG placeholder (UI only)
+  videoProviders.ts           Image-to-video chain in VIDEO_PROVIDER_ORDER; clips saved to renders/clips/, served at /clips/
+  mediaOrder.ts, hfSpace.ts, spaceAdapters.ts   provider order + cooldowns; Gradio HTTP client; per-Space call shapes
   markdownExporter.ts         Brief rendering + file writing
   fallbackGenerators.ts       Canned output when the API is unreachable
   notebooklmService.ts        Multi-voice podcast audio

@@ -33,6 +33,7 @@ export const PROVIDER_INFO: Record<string, ProviderInfo> = {
   ollama: { label: 'Ollama Cloud', cost: 'Free usage covers only a few models' },
   mistral: { label: 'Mistral', cost: 'Free tier (trains on prompts)' },
   pollinations: { label: 'Pollinations', cost: 'Free, no API key' },
+  hf: { label: 'Hugging Face Spaces', cost: 'Free ZeroGPU minutes on your HF_TOKEN (a few per day); a Space can change or vanish' },
   placeholder: { label: 'Built-in placeholder', cost: 'Free, no model' },
 };
 
@@ -54,7 +55,15 @@ export const MODEL_INFO: Record<string, ModelInfo> = {
   // Speech
   'gemini-3.1-flash-tts-preview': { name: 'Gemini 3.1 Flash TTS (preview)', maker: 'Google', notes: 'Text-to-speech with a prebuilt voice (Puck, Charon, Kore, Fenrir or Zephyr).' },
   'gemini-2.5-flash-preview-tts': { name: 'Gemini 2.5 Flash TTS (preview)', maker: 'Google', notes: 'Fallback text-to-speech model.' },
-  // Images
+  // Images: Hugging Face Spaces (IMAGE_PROVIDER_ORDER). Ranked on the Artificial Analysis open-weights text-to-image
+  // arena, 2026-09-26, among commercially licensed models only.
+  'Qwen/Qwen-Image-2512': { name: 'Qwen-Image-2512', maker: 'Alibaba (Qwen), open weights', notes: 'Apache 2.0, commercial use allowed. Official Qwen Space on ZeroGPU, 50 steps: uses your GPU minutes. Qwen-Image-2.1 ranks higher but is non-commercial.' },
+  'HiDream-ai/HiDream-O1-Image': { name: 'HiDream-O1-Image', maker: 'HiDream.ai, open weights', notes: 'MIT licence. The Space forwards to HiDream\'s own GPUs, so it spends no ZeroGPU minutes.' },
+  // Video: Hugging Face Spaces (VIDEO_PROVIDER_ORDER), Artificial Analysis image-to-video arena, 2026-09-26.
+  'MiniMaxAI/MiniMax-H3-Turbo-Lora': { name: 'MiniMax-H3 Turbo LoRA', maker: 'MiniMax, open weights', notes: 'MiniMax-H3 scores Elo 1357 (no audio) / 1181 (with audio); this Space runs a 6-step turbo LoRA, so expect less. Clip comes with its own soundtrack, which was poor on the first live clip (owner, 2026-09-26): mute it and use the cue sheet. 2-14 s. Licence: commercial use allowed under $20M/yr revenue; credit "MiniMax H3" in the video description.' },
+  'zerogpu-aoti/wan2-2-fp8da-aoti-faster': { name: 'Wan 2.2 14B (image to video)', maker: 'Alibaba (Wan), open weights', notes: 'Apache 2.0. Hugging Face\'s own ZeroGPU Space. Silent, 16 fps, at most 5 s.' },
+  // Images: Gemini
+  'gemini-3-pro-image': { name: 'Nano Banana Pro (Gemini 3 Pro Image)', maker: 'Google', notes: 'No free-tier quota on this key ("limit: 0", re-checked 2026-09-26). Use it by hand in the Gemini app with the scene\'s Nano Banana Pro prompt, or add gemini:gemini-3-pro-image to IMAGE_PROVIDER_ORDER once billing is on.' },
   'gemini-3.1-flash-image': { name: 'Gemini 3.1 Flash Image', maker: 'Google', notes: 'No free-tier quota ("limit: 0"): skipped until billing is on.' },
   'gemini-2.5-flash-image': { name: 'Gemini 2.5 Flash Image', maker: 'Google', notes: 'No free-tier quota ("limit: 0"): skipped until billing is on.' },
   'gemini-3.1-flash-lite-image': { name: 'Gemini 3.1 Flash-Lite Image', maker: 'Google', notes: 'No free-tier quota ("limit: 0"): skipped until billing is on.' },
@@ -85,6 +94,8 @@ export interface ModelLineup {
   speech: LineupEntry[];
   voices: string[];
   image: LineupEntry[];
+  /** Image to video: scene clips. */
+  video: LineupEntry[];
   podcastSpeech: LineupEntry[];
   intelligenceSource: string;
 }

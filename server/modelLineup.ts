@@ -1,7 +1,8 @@
 import { buildTiers } from './llm/chain';
 import { modelOrder } from './llm/providers';
 import { TEXT_MODELS } from './gemini';
-import { GEMINI_IMAGE_MODELS, POLLINATIONS_MODEL_LABEL } from './imageProviders';
+import { POLLINATIONS_MODEL_LABEL } from './imageProviders';
+import { imageProviderOrder, videoProviderOrder } from './mediaOrder';
 import { NOTEBOOKLM_TTS_MODEL } from './notebooklmService';
 import { INTELLIGENCE_SOURCE, modelInfo, providerInfo, type LineupEntry, type ModelLineup } from '../shared/modelCatalog';
 
@@ -36,10 +37,10 @@ export function describeModelLineup(env: Env = process.env): ModelLineup {
     speech: lineup(TTS_MODELS.map((model) => ({ provider: 'gemini', model }))),
     voices: TTS_VOICES,
     image: lineup([
-      ...GEMINI_IMAGE_MODELS.map((model) => ({ provider: 'gemini', model })),
-      { provider: 'pollinations', model: POLLINATIONS_MODEL_LABEL },
+      ...imageProviderOrder(env).map((e) => ({ provider: e.provider, model: e.provider === 'pollinations' ? POLLINATIONS_MODEL_LABEL : e.model })),
       { provider: 'placeholder', model: 'SVG placeholder (no model; refused in strict mode)' },
     ]),
+    video: lineup(videoProviderOrder(env).map((e) => ({ provider: e.provider, model: e.model }))),
     podcastSpeech: lineup([{ provider: 'gemini', model: NOTEBOOKLM_TTS_MODEL }]),
     intelligenceSource: INTELLIGENCE_SOURCE,
   };

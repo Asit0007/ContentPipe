@@ -25,7 +25,8 @@ import {
   AlignLeft,
   Film,
   Camera,
-  MessageSquare
+  MessageSquare,
+  Clapperboard
 } from 'lucide-react';
 import { VideoScript, VideoScriptScene, ImageResolution, VoiceName, VideoPlan, ResearchData } from '../types';
 import { playAudioFromBase64, pcmBase64ToWavDataUrl, speakWithBrowserSpeech, stopAllSpeechAndAudio, playWebAudioSFX } from '../utils/audioUtils';
@@ -33,6 +34,7 @@ import { GoogleWorkspaceExportModal } from './GoogleWorkspaceExportModal';
 import { ScriptQualityPanel } from './ScriptQualityPanel';
 import { logModelCalls } from '../utils/modelUsageLog';
 import { modelInfo } from '../../shared/modelCatalog';
+import { nanoBananaProPrompt } from '../../shared/nanoBananaPrompt';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -75,6 +77,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
   // Export / Copy Feedback States
   const [copiedType, setCopiedType] = useState<'all' | 'voiceover' | null>(null);
+  const [copiedNbpScene, setCopiedNbpScene] = useState<string | null>(null);
 
   // Teleprompter State
   const [isTeleprompterPlaying, setIsTeleprompterPlaying] = useState(false);
@@ -199,6 +202,45 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
         isImageLoading: false,
         imageError: err.message || 'Image Generation Error',
       });
+    }
+  };
+
+  // Nano Banana Pro has no free API quota on this key: copy its prompt and make the still by hand in the Gemini app.
+  const handleCopyNanoBanana = (scene: VideoScriptScene) => {
+    navigator.clipboard.writeText(nanoBananaProPrompt(scene, videoScript.aspectRatio || '16:9'));
+    setCopiedNbpScene(scene.id);
+    playWebAudioSFX('pop');
+    setTimeout(() => setCopiedNbpScene(null), 2500);
+  };
+
+  // Animate the scene's still into a short clip (Hugging Face Spaces, VIDEO_PROVIDER_ORDER). Minutes, not seconds.
+  const handleGenerateVideo = async (scene: VideoScriptScene) => {
+    if (!scene.generatedImageUrl || scene.imageIsPlaceholder) return;
+    handleSceneChange(scene.id, { isVideoLoading: true, videoError: undefined });
+    try {
+      const response = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageUrl: scene.generatedImageUrl,
+          prompt: scene.motion?.motionPrompt || scene.motion?.subjectMotion || scene.title,
+          durationSec: Math.round(scene.motion?.durationSec || 5),
+          aspectRatio: videoScript.aspectRatio || '16:9',
+        }),
+      });
+      const data = await response.json();
+      logModelCalls('script', data.modelUsage);
+      if (!response.ok) throw new Error(data.error || 'Clip generation failed');
+      handleSceneChange(scene.id, {
+        generatedVideoUrl: data.videoUrl,
+        videoModel: data.model,
+        videoHasAudio: !!data.hasAudio,
+        videoDurationSec: data.durationSec,
+        isVideoLoading: false,
+      });
+      playWebAudioSFX('pop');
+    } catch (err: any) {
+      handleSceneChange(scene.id, { isVideoLoading: false, videoError: err.message || 'Clip generation failed' });
     }
   };
 
@@ -865,7 +907,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 <div className="lg:col-span-5 space-y-3">
                   <div>
                     <label htmlFor={`visual-prompt-input-${scene.id}`} className="text-xs font-bold text-zinc-300 uppercase tracking-wide block mb-1">
-                      Gemini Pro Image Prompt ({selectedResolution})
+                      Image prompt ({selectedResolution})
                     </label>
                     <textarea
                       id={`visual-prompt-input-${scene.id}`}
@@ -900,8 +942,20 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         )}
                       </button>
 
+                      <button
+                        type="button"
+                        id={`copy-nbp-btn-${scene.sceneNumber}`}
+                        disabled={!scene.visualPrompt.trim() && !scene.visual}
+                        onClick={() => handleCopyNanoBanana(scene)}
+                        title="Nano Banana Pro has no free API quota on this key. Copy its prompt and paste it into the Gemini app."
+                        className="flex items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {copiedNbpScene === scene.id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
+                        <span>{copiedNbpScene === scene.id ? 'Copied' : 'Nano Banana Pro prompt'}</span>
+                      </button>
+
                       {scene.imageError && (
-                        <span className="text-[11px] text-rose-400 flex items-center gap-1">
+                        <span className="text-[11px] text-rose-400 flex items-center gap-1" title={scene.imageError}>
                           <AlertCircle className="h-3 w-3" /> Failed
                         </span>
                       )}
@@ -921,7 +975,7 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         ) : scene.imageProviderLabel ? (
                           <span className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 rounded-full bg-zinc-900/70 border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300">
                             🖼️ {scene.imageProviderLabel}
-                            {scene.imageModel && scene.imageProvider === 'gemini' ? ` · ${modelInfo(scene.imageModel)?.name || scene.imageModel}` : ''}
+                            {scene.imageModel && scene.imageProvider !== 'pollinations' ? ` · ${modelInfo(scene.imageModel)?.name || scene.imageModel}` : ''}
                           </span>
                         ) : null}
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2.5 flex items-end justify-between">
@@ -937,6 +991,53 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                             <Download className="h-3.5 w-3.5" />
                           </a>
                         </div>
+                      </div>
+                    )}
+
+                    {scene.generatedImageUrl && !scene.imageIsPlaceholder && (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            id={`gen-video-btn-${scene.sceneNumber}`}
+                            disabled={scene.isVideoLoading}
+                            onClick={() => handleGenerateVideo(scene)}
+                            title={scene.motion?.motionPrompt || 'Animate this still'}
+                            className="flex items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50 cursor-pointer"
+                          >
+                            {scene.isVideoLoading ? (
+                              <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                <span>Animating (can take minutes)...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Clapperboard className="h-3.5 w-3.5 text-orange-400" />
+                                <span>{scene.generatedVideoUrl ? 'Re-animate clip' : 'Animate clip'}</span>
+                              </>
+                            )}
+                          </button>
+                          {scene.videoError && (
+                            <span className="text-[11px] text-rose-400 flex items-center gap-1 text-right" title={scene.videoError}>
+                              <AlertCircle className="h-3 w-3 shrink-0" /> {scene.videoError.slice(0, 90)}
+                            </span>
+                          )}
+                        </div>
+                        {scene.generatedVideoUrl && (
+                          <div className="rounded-xl overflow-hidden border border-zinc-700 bg-zinc-950">
+                            <video src={scene.generatedVideoUrl} controls playsInline className="w-full aspect-video bg-black" />
+                            <div className="flex items-center justify-between px-2.5 py-1.5 text-[10px] text-zinc-400">
+                              <span>
+                                🎬 Hugging Face · {modelInfo(scene.videoModel)?.name || scene.videoModel}
+                                {scene.videoDurationSec ? ` · ${scene.videoDurationSec}s` : ''}
+                                {scene.videoHasAudio ? ' · has AI soundtrack (mute in the edit)' : ' · silent'}
+                              </span>
+                              <a href={scene.generatedVideoUrl} download={`scene-${scene.sceneNumber}.mp4`} className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-white" title="Download clip">
+                                <Download className="h-3.5 w-3.5" />
+                              </a>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

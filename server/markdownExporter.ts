@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { formatTimestamp } from './timeline';
+import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
 
 /**
  * Renders a finished script to a production-ready Markdown brief and writes it
@@ -546,6 +547,12 @@ export function renderScriptMarkdown(payload: {
     } else if (sc.visualPrompt) {
       out.push('#### Image prompt');
       out.push(fence(sc.visualPrompt, 'text'));
+      out.push('');
+    }
+    const nbp = nanoBananaProPrompt(sc, script.aspectRatio);
+    if (nbp) {
+      out.push('**Nano Banana Pro prompt** — paste into the Gemini app (image generation), one scene at a time:');
+      out.push(fence(nbp, 'text'));
       out.push('');
     }
 

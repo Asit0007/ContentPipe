@@ -25,7 +25,51 @@ const PERDAY = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemi
 // Captured live: the free tier has no quota at all for image models (limit: 0).
 const LIMIT0 = JSON.parse(readFileSync(path.join(REPO, 'server/__fixtures__/gemini-429-limit0.json'), 'utf8'));
 
-const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, cveInScene1: false, log: [] as string[], tts: 'ok' as 'ok' | 'perday', pollinations: 'fail' as 'fail' | 'ok' };
+type SpaceMode = 'ok' | 'quota' | 'down';
+const stub = { failNarrFrom: 0, overloaded: false, delayMs: 0, cveInScene1: false, log: [] as string[], tts: 'ok' as 'ok' | 'perday', pollinations: 'fail' as 'fail' | 'ok', hf: {} as Record<string, SpaceMode>, hfSeen: [] as Array<{ space: string; what: string; auth?: string; data?: any }> };
+let rendersDir = '';
+
+// Stands in for Hugging Face Spaces (HF_SPACE_BASE_URL): Gradio's upload / call / event-stream / file routes.
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(2048)]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftypisom'), Buffer.alloc(8192)]);
+function hfStub(req: http.IncomingMessage, raw: Buffer, res: http.ServerResponse) {
+  const m = /^\/hf\/([^/]+\/[^/]+)\/gradio_api\/(.*)$/.exec(req.url || '');
+  if (!m) return void res.writeHead(404).end();
+  const [, space, rest] = m;
+  const mode: SpaceMode = stub.hf[space] || 'down';
+  const auth = req.headers['x-hf-authorization'] as string | undefined;
+  if (rest === 'info') {
+    // An API the generic adapter must read: prompt, optional image (video Spaces), duration, then a file output.
+    const video = space.includes('video');
+    const parameters = [
+      { parameter_name: 'prompt', python_type: { type: 'str' } },
+      ...(video ? [{ parameter_name: 'image', python_type: { type: 'dict(path: str | None (Path to a local file))' } }, { parameter_name: 'duration_seconds', python_type: { type: 'float' }, parameter_has_default: true, parameter_default: 3 }] : []),
+      { parameter_name: 'seed', python_type: { type: 'float' }, parameter_has_default: true, parameter_default: 42 },
+    ];
+    return void res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ named_endpoints: { '/generate': { parameters, returns: [{ python_type: { type: 'filepath' } }, { python_type: { type: 'str' } }] } } }));
+  }
+  if (rest === 'upload') {
+    stub.hfSeen.push({ space, what: 'upload', auth, data: raw.length });
+    return void res.writeHead(200, { 'Content-Type': 'application/json' }).end('["/tmp/gradio/up/first.png"]');
+  }
+  const call = /^call\/([\w-]+)(?:\/(\w+))?$/.exec(rest);
+  if (call && req.method === 'POST') {
+    stub.hfSeen.push({ space, what: `call ${call[1]}`, auth, data: JSON.parse(raw.toString() || '{}').data });
+    return void res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"event_id":"ev1"}');
+  }
+  if (call) {
+    if (mode === 'down') return void res.writeHead(503, { 'Content-Type': 'text/html' }).end('<h1>Space is sleeping</h1>');
+    if (mode === 'quota') return void res.writeHead(200, { 'Content-Type': 'text/event-stream' }).end('event: error\ndata: "You have exceeded your GPU quota (90s requested vs. 20s left). Try again in 0:10:00"\n\n');
+    const ext = space.includes('video') ? 'mp4' : 'png';
+    const url = `http://${req.headers.host}/hf/${space}/gradio_api/file=/tmp/gradio/out.${ext}`;
+    return void res.writeHead(200, { 'Content-Type': 'text/event-stream' }).end(`event: heartbeat\ndata: null\n\nevent: complete\ndata: [{"path": "/tmp/gradio/out.${ext}", "url": "${url}"}, "report"]\n\n`);
+  }
+  if (rest.startsWith('file=')) {
+    stub.hfSeen.push({ space, what: 'file', auth });
+    return void res.writeHead(200, { 'Content-Type': rest.endsWith('.mp4') ? 'video/mp4' : 'image/png' }).end(rest.endsWith('.mp4') ? MP4 : PNG);
+  }
+  res.writeHead(404).end();
+}
 let stubServer: http.Server;
 let stubPort = 0;
 let app: ChildProcess | null = null;
@@ -88,10 +132,13 @@ function stubAnswer(prompt: string, url = ''): { status: number; body: any } {
 
 before(async () => {
   runsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cp-e2e-runs-'));
+  rendersDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cp-e2e-renders-'));
   stubServer = http.createServer((req, res) => {
-    let raw = '';
-    req.on('data', (c) => (raw += c));
+    const chunks: Buffer[] = [];
+    req.on('data', (c) => chunks.push(c));
     req.on('end', async () => {
+      if (req.url?.startsWith('/hf/')) return hfStub(req, Buffer.concat(chunks), res);
+      const raw = Buffer.concat(chunks).toString();
       const body = JSON.parse(raw || '{}');
       const prompt = (body.contents || []).flatMap((c: any) => (c.parts || []).map((p: any) => p.text || '')).join('');
       if (stub.delayMs) await new Promise((r) => setTimeout(r, stub.delayMs));
@@ -115,6 +162,7 @@ after(async () => {
   await stopApp();
   stubServer.close();
   await fs.rm(runsDir, { recursive: true, force: true });
+  await fs.rm(rendersDir, { recursive: true, force: true });
 });
 
 async function startApp() {
@@ -122,7 +170,10 @@ async function startApp() {
     cwd: REPO,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', LLM_MODEL_ORDER: '', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir },
+    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', LLM_MODEL_ORDER: '', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir,
+      // Media: one stub Space, then Gemini's (limit 0) image model, then Pollinations — every rung the chain can take.
+      HF_SPACE_BASE_URL: `http://127.0.0.1:${stubPort}/hf`, HF_TOKEN: 'hf_e2e', CONTENTPIPE_RENDERS_DIR: rendersDir,
+      HF_TOKEN_SPACE_OWNERS: 'e2e', IMAGE_PROVIDER_ORDER: 'hf:e2e/image-space,gemini:gemini-3.1-flash-image,pollinations', VIDEO_PROVIDER_ORDER: 'hf:e2e/video-a,hf:e2e/video-b' },
   });
   for (let i = 0; i < 120; i++) {
     try {
@@ -151,7 +202,7 @@ const SCRIPT_REQ = {
   researchData: { topicTitle: 'T', summary: 's', retrievedSources: [] },
   channelBrandName: 'Blast Radius',
 };
-const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, cveInScene1: false, log: [], tts: 'ok', pollinations: 'fail' }, over);
+const reset = (over: Partial<typeof stub> = {}) => Object.assign(stub, { failNarrFrom: 0, overloaded: false, delayMs: 0, cveInScene1: false, log: [], tts: 'ok', pollinations: 'fail', hf: {}, hfSeen: [] }, over);
 
 /** Independent of server/quota.ts: seconds until the next 00:00 in America/Los_Angeles. */
 function secondsToNextPacificMidnight(): number {
@@ -299,7 +350,7 @@ test('STRICT TTS: healthy TTS returns real audio for both callers, unflagged', a
   }
 });
 
-test('STRICT image: no Gemini image quota and Pollinations down → 503 + Retry-After, not a placeholder; the UI path still gets the placeholder', async () => {
+test('STRICT image: Space asleep, no Gemini image quota and Pollinations down → 503 + Retry-After, not a placeholder; the UI path still gets the placeholder', async () => {
   await stopApp();
   reset({ pollinations: 'fail' });
   await startApp();
@@ -307,7 +358,7 @@ test('STRICT image: no Gemini image quota and Pollinations down → 503 + Retry-
   assert.equal(strict.status, 503);
   assert.equal(strict.headers.get('retry-after'), '30');
   assert.equal(strict.body.kind, 'upstream_unavailable');
-  assert.match(strict.body.error, /gemini: .*pollinations: /s);
+  assert.match(strict.body.error, /hf e2e\/image-space: .*gemini gemini-3\.1-flash-image: .*pollinations: /s);
   assert.equal(strict.body.imageUrl, undefined);
   const ui = await post('/api/generate-image', { prompt: 'a server room' }, false);
   assert.equal(ui.status, 200);
@@ -323,6 +374,60 @@ test('STRICT image: Pollinations up → a real, labelled image; strict does not 
   assert.equal(r.body.provider, 'pollinations');
   assert.equal(r.body.isPlaceholder, false);
   assert.match(r.body.imageUrl, /^data:image\/png;base64,/);
+});
+
+test('IMAGE via a Hugging Face Space: first in IMAGE_PROVIDER_ORDER, labelled with the Space, token sent as x-hf-authorization', async () => {
+  await stopApp();
+  reset({ hf: { 'e2e/image-space': 'ok' } });
+  await startApp();
+  const r = await post('/api/generate-image', { prompt: 'a server room', aspectRatio: '9:16' }, true);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.provider, 'hf');
+  assert.equal(r.body.model, 'e2e/image-space');
+  assert.match(r.body.imageUrl, /^data:image\/png;base64,/);
+  assert.equal(r.body.strictError, undefined, 'the internal strict error never reaches the client');
+  const call = stub.hfSeen.find((x) => x.what.startsWith('call'));
+  assert.equal(call?.auth, 'Bearer hf_e2e');
+  assert.equal(call?.data?.[0], 'a server room');
+  assert.equal(r.body.modelUsage.at(-1).model, 'e2e/image-space');
+});
+
+test('VIDEO: the still is uploaded, the first Space answers, the clip is saved and served from /clips/', async () => {
+  await stopApp();
+  reset({ hf: { 'e2e/video-a': 'ok' } });
+  await startApp();
+  const imageUrl = `data:image/png;base64,${PNG.toString('base64')}`;
+  const r = await post('/api/generate-video', { imageUrl, prompt: 'The analyst looks up. Static camera.', durationSec: 5 }, true);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.model, 'e2e/video-a');
+  assert.match(r.body.videoUrl, /^\/clips\/.+\.mp4$/);
+  assert.ok(stub.hfSeen.some((x) => x.space === 'e2e/video-a' && x.what === 'upload' && x.data > PNG.length));
+  const clip = await fetch(APP + r.body.videoUrl);
+  assert.equal(clip.status, 200);
+  assert.equal(Buffer.from(await clip.arrayBuffer()).subarray(4, 8).toString(), 'ftyp');
+  assert.equal(r.body.modelUsage.at(-1).kind, 'video');
+});
+
+test('VIDEO: the first Space out of GPU quota falls through to the next; every Space out → 429 with the quota reset', async () => {
+  await stopApp();
+  reset({ hf: { 'e2e/video-a': 'quota', 'e2e/video-b': 'ok' } });
+  await startApp();
+  const imageUrl = `data:image/png;base64,${PNG.toString('base64')}`;
+  const fell = await post('/api/generate-video', { imageUrl, prompt: 'p' }, true);
+  assert.equal(fell.status, 200);
+  assert.equal(fell.body.model, 'e2e/video-b');
+  assert.match(fell.body.attempts[0].error, /GPU quota/);
+  await stopApp();
+  reset({ hf: { 'e2e/video-a': 'quota', 'e2e/video-b': 'quota' } });
+  await startApp();
+  const out = await post('/api/generate-video', { imageUrl, prompt: 'p' }, true);
+  assert.equal(out.status, 429);
+  assert.equal(out.headers.get('retry-after'), '600');
+  const ui = await post('/api/generate-video', { imageUrl, prompt: 'p' }, false);
+  assert.equal(ui.status, 502, 'there is no fallback clip for the UI either');
+  assert.match(ui.body.error, /cooling down/);
+  const svg = await post('/api/generate-video', { imageUrl: 'data:image/svg+xml;base64,PHN2Zy8+', prompt: 'p' }, true);
+  assert.equal(svg.status, 400, 'a placeholder still is refused before any GPU is spent');
 });
 
 test('TWO VOICES: /api/script keeps the pipeline-assigned speaker on every scene (server.ts rebuilds scenes from a fixed field list)', async () => {
