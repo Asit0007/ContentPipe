@@ -42,6 +42,7 @@ import { stripCveIds } from './shared/plainTitle';
 import { withoutModelUsage, type ModelCall } from './shared/modelUsage';
 import { enterModelUsage, withModelTask, noteModelAttempt, trackModelCall } from './server/llm/usage';
 import { describeModelLineup, TTS_MODELS, TTS_VOICES } from './server/modelLineup';
+import { buildTtsPrompt } from './server/ttsPrompt';
 import { resolveTopicProfile, type TopicProfile } from './shared/topicProfile';
 import {
   generateNotebookLMAudioService,
@@ -778,7 +779,7 @@ app.post('/api/publish-package', async (req, res) => {
 // 4. Text-To-Speech (TTS): TTS_MODELS in order (server/modelLineup.ts)
 app.post('/api/tts', async (req, res) => {
   const strict = isStrict(req);
-  const { text, voice = 'Puck' } = req.body;
+  const { text, voice = 'Puck', direction } = req.body;
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'text is required for TTS' });
   }
@@ -799,7 +800,7 @@ app.post('/api/tts', async (req, res) => {
           try {
             const response = await ai.models.generateContent({
               model,
-              contents: [{ parts: [{ text: `Speak in a punchy, engaging infotainment documentary narrator voice: ${text}` }] }],
+              contents: [{ parts: [{ text: buildTtsPrompt(text, direction) }] }],
               config: {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
