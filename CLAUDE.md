@@ -203,7 +203,7 @@ treat the numbers as approximate). Nothing here is a registry ranking — `Conte
 | `mistral-small-latest`, `mistral-medium-latest` (Mistral) | Small 4: 11 | 429 per-minute |
 | `z-ai/glm-5.2:free` (OpenRouter) — **in the default chain** | GLM-5.2 no longer listed (GLM-5.3 is 45) | **id not live** — dead entry in `server/llm/providers.ts:99`, README and `.env.example`; the chain cools and skips it |
 | `glm-5.3` (45), `kimi-k3` (44), `glm-5.3-flash` (42), `deepseek-v4.1-flash` (39), `deepseek-v4-pro:0813` (36), `minimax-m3` (29), `mistral-large-3:675b` (Ollama Cloud) | as shown | **HTTP 402 "not included in your free usage"** — paid credits only; the free Ollama plan covers only the models above |
-| DeepSeek, Grok (4.6: 44, 4.7: 46), Cerebras | — | no key |
+| DeepSeek, Grok (4.6: 44, 4.7: 46) | — | no key. **Cerebras** (added later the same day): key present, models listed (`gpt-oss-120b`, `qwen-3.8-27b`), but every call returns **HTTP 402 "Payment required"** — unusable until billing is sorted. DeepSeek V4 is reachable via the new `huggingface` provider (Hugging Face-routed, paid per token after $0.10 free credit a month; needs `HF_INFERENCE_TOKEN`) |
 
 Reading it: **no model was daily-quota-exhausted at the time**; what looked "exhausted" was one overloaded top model (503) and two per-minute limits. A single call cannot show how much of a
 ~20-requests/day free Gemini quota is left — it only shows the next call is not refused. The chain's *order* is not intelligence order any more: `gemini-3.8-flash` (41) is available and
@@ -224,6 +224,32 @@ Every page of the UI has an **"AI models on this page"** panel (`src/components/
 - **Details** (maker, intelligence score, cost, live notes) live in `shared/modelCatalog.ts`. They are dated evidence; update them when you re-rank `LLM_MODEL_ORDER`. A model missing from it still shows up, just without details.
 - Per-scene TTS/image calls are kept in memory per page (`src/utils/modelUsageLog.ts`), and the scene stores `imageModel` / `audioModel`.
 - Fixed along the way: chat's `via` always credited the first Gemini model in its list; its canned reply claimed a model (`gemini-local-strategist`); and the footer named Gemini 3.1 Pro and Pro Image, which this free key cannot call.
+
+## Images off Hugging Face: Cloudflare FLUX and by-hand prompts (2026-09-27)
+
+Why: HF ZeroGPU is ~5 GPU-min a day and images and video share it; video gets it. `IMAGE_PROVIDER_ORDER` now accepts `cloudflare:flux-2-klein-4b` and `cloudflare:flux-1-schnell` (`server/cloudflareImage.ts`, wired in `server/imageProviders.ts`).
+- **Free tier:** 10,000 Neurons/day, hard stop on the Free plan (Cloudflare pricing page, 2026-09-27). Listed prices work out to roughly 45 stills/day at 1920x1088 or 75 at 1536x864 with klein-4b. **Derived, not measured.**
+- **Allowed models are a code allowlist,** not an env value: klein-9b (~1,360 Neurons an image, non-commercial weights) and flux-2-dev (non-commercial) are excluded. klein-4b is Apache 2.0 per BFL, but **Cloudflare's page states no licence**, so confirm the hosted terms before monetised use. BFL's own site terms forbid commercial exploitation of the *site*; third-party hosting is governed by Cloudflare's terms, which I could not read.
+- **schnell is square only** on Workers AI, so it refuses 16:9 and 9:16 (the chain moves on). klein takes 256-1920 px in multiples of 16; the default long edge is 1536 (`CLOUDFLARE_IMAGE_LONG_EDGE`).
+- **Errors** feed the same cooldowns as Spaces: the daily-allocation error cools until 00:00 UTC, 429 for a minute, 401/403 for 30 min with a hint about the token permission. The token goes only to `api.cloudflare.com`; redirects are refused.
+- **Wire test 2026-09-27 (dummy token, no account):** requests to both models reached `api.cloudflare.com` and came back HTTP 401 `{"result":null,"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}` in ~70-170 ms — so the URL, the `result` envelope and the 401 handling are right. No image has been generated yet.
+- **Live test 2026-09-27 (owner's account, `flux-2-klein-4b`, 16:9, through `generateSceneImage` with `IMAGE_PROVIDER_ORDER=cloudflare:flux-2-klein-4b`):** one image, first try, no fallback. Real size **1536x864** (so multiple-of-16 sizes are accepted), JPEG, 881 KB, **48 s** wall clock (one sample; may include a cold start). Quality: clear focal subject, the character anchor followed, the cracked monitor and red code drawn, cinematic grade; small on-screen text is gibberish (keep on-screen text out of prompts) and the shadows are dark and slightly grainy. The `result.image` envelope works.
+- **Still unmeasured:** the real Neuron cost per image (check the Cloudflare dashboard's Workers AI usage after a known number of images), and whether an animation from this still is clean. Try one image-to-video clip before committing a whole script to it.
+- **By-hand prompts:** every scene exports Nano Banana Pro, **FLUX** and **Midjourney** prompts (`shared/imagePrompts.ts`; script-editor buttons; markdown export). FLUX and Midjourney add a clarity clause before the style anchor (smooth gradients, even light, one clear subject) because the still becomes a video's first frame; grain and busy micro-texture flicker once animated. Nano Banana's prompt is unchanged. Midjourney pins no version and puts unwanted things in `--no`.
+
+## Kaggle notebooks for video: ruled out for Blast Radius (2026-09-27)
+
+Read in a browser (the pages are JavaScript-rendered, so `WebFetch`/`curl` see only the title): Kaggle Terms of Use (version June 22, 2025), the Acceptable Use Policy (same date) and the Notebooks documentation.
+- **Terms of Use:** "You will only use the Services for your own internal, personal, non-commercial use, and not on behalf of or for the benefit of any third party." Also one active account per person, and termination "without notice" for a breach.
+- **Acceptable Use Policy:** you may not "abuse resources offered as part of the Services", including "activity unrelated to ML data science".
+- **Reading:** clips generated on Kaggle for a monetised YouTube channel run by a company are commercial use and are not ML data science, so they breach both. **Do not build the Kaggle video flow for Blast Radius.** (Personal, non-commercial experiments are a different matter and are not what this is for.) This is my reading of the text, not legal advice.
+- **Facts for the record:** free P100 (16 GB) or 2x T4, sessions up to 12 h, 20 GB output, and "in busy times, you might be placed in a queue". The weekly GPU-hour cap (widely quoted as 30 h) is not on the docs pages I read. A P100 has no bf16 or fp8, so Wan 2.2 14B would be slow or need heavy offloading; untested.
+
+## Wan quota measurement and `WAN_STEPS` (2026-09-27)
+
+`scripts/wan-measure.ts` + `server/wanMeasure.ts` (+ `deploy/com.asitminz.wanmeasure.plist`, installed as a LaunchAgent, hourly, `RunAtLoad`). One tick: refused before any success → note it and retry next hour (a refused call costs no quota); first success → that opens the 24 h window (ZeroGPU "resets exactly 24 hours after your first GPU usage"); keep generating 4 s clips until a call fails (the wall) → record clips, wall time and expected reset; then the 4-step phase waits for that reset. State/clips/log in `renders/wan-measure/` (gitignored; needs `still.jpg` there). It unloads itself when both phases are done. `npx tsx scripts/wan-measure.ts --status` prints the summary.
+- `WAN_STEPS` (4-8, default 6) sets the Wan adapter's steps (`wanSteps()` in `server/spaceAdapters.ts`). The Space reserves `10 + steps*15*factor^1.5` s per call (`factor = frames*w*h/(81*832*624)`): 53.6 s at 6 steps, 39.1 s at 4, for a 4 s 832x480 clip; the call must fit in the remaining quota to start and is billed for time used.
+- **Run 1 (2026-09-27 02:14 IST):** one clip, 832x480, 16 fps, 65 frames, 4.06 s, 46.6 s wall, picture stable; call 2 refused with the Space's "failed without saying why". Confounded by earlier 09-26 usage of the same window, so clips/day is unmeasured. Details: `ContentRender/DESIGN.md`.
 
 ## Images and video: Hugging Face Spaces (2026-09-26)
 

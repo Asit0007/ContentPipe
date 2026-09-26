@@ -1,6 +1,7 @@
 import { SPACE_ID_RE, SpaceError, callSpace, downloadSpaceFile, spaceApiInfo, spaceHost, uploadToSpace, type SpaceFile } from './hfSpace';
 import type { ClassifiedError } from './quota';
 import type { SpaceAdapter, SpaceCall } from './spaceAdapters';
+import { isCloudflareImageModel } from './cloudflareImage';
 
 /**
  * Which providers make images and video, in order — the owner's choice, set in .env:
@@ -9,7 +10,8 @@ import type { SpaceAdapter, SpaceCall } from './spaceAdapters';
  *   VIDEO_PROVIDER_ORDER=hf:MiniMaxAI/MiniMax-H3-Turbo-Lora,hf:zerogpu-aoti/wan2-2-fp8da-aoti-faster
  *
  * Entries: `hf:<owner>/<space>` (a Hugging Face Space), and for images only `gemini:<model>` (e.g.
- * gemini-3-pro-image, Nano Banana Pro, once billing is on) and `pollinations`. Nothing outside the list is tried:
+ * gemini-3-pro-image, Nano Banana Pro, once billing is on), `cloudflare:<model>` (FLUX on Workers AI, see
+ * server/cloudflareImage.ts — keeps the shared Hugging Face GPU quota free for video) and `pollinations`. Nothing outside the list is tried:
  * the defaults are Hugging Face only, so an image never silently comes from a model nobody chose. The SVG placeholder
  * is not a provider; the UI still gets it when every entry fails, flagged, and strict callers never do.
  *
@@ -38,7 +40,11 @@ export function tokenAllowedFor(spaceId: string, env: Env = process.env): boolea
 /** Spaces whose name says what they are for. Refused outright: a brand channel's pipeline never calls them. */
 const REFUSED_SPACE_RE = /nsfw|uncensored|porn|hentai|nude|explicit|\bcum\b|18\+/i;
 
-export type MediaEntry = { provider: 'hf'; model: string } | { provider: 'gemini'; model: string } | { provider: 'pollinations'; model: string };
+export type MediaEntry =
+  | { provider: 'hf'; model: string }
+  | { provider: 'gemini'; model: string }
+  | { provider: 'cloudflare'; model: string }
+  | { provider: 'pollinations'; model: string };
 
 type Env = Record<string, string | undefined>;
 
@@ -51,6 +57,7 @@ export function parseMediaOrder(raw: string, allowed: Array<MediaEntry['provider
     const model = colon === -1 ? '' : item.slice(colon + 1).trim();
     if (provider === 'hf' && allowed.includes('hf') && SPACE_ID_RE.test(model) && !REFUSED_SPACE_RE.test(model)) entries.push({ provider: 'hf', model });
     else if (provider === 'gemini' && allowed.includes('gemini') && /^[\w.-]+$/.test(model)) entries.push({ provider: 'gemini', model });
+    else if (provider === 'cloudflare' && allowed.includes('cloudflare') && isCloudflareImageModel(model)) entries.push({ provider: 'cloudflare', model });
     else if (provider === 'pollinations' && allowed.includes('pollinations')) entries.push({ provider: 'pollinations', model: 'default' });
     else rejected.push(item);
   }
@@ -69,7 +76,7 @@ function orderFrom(env: Env, key: string, fallback: string, allowed: Array<Media
 }
 
 export function imageProviderOrder(env: Env = process.env): MediaEntry[] {
-  return orderFrom(env, 'IMAGE_PROVIDER_ORDER', DEFAULT_IMAGE_PROVIDER_ORDER, ['hf', 'gemini', 'pollinations']);
+  return orderFrom(env, 'IMAGE_PROVIDER_ORDER', DEFAULT_IMAGE_PROVIDER_ORDER, ['hf', 'gemini', 'cloudflare', 'pollinations']);
 }
 
 export function videoProviderOrder(env: Env = process.env): MediaEntry[] {

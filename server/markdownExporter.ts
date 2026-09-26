@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { formatTimestamp } from './timeline';
 import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
+import { fluxPrompt, midjourneyPrompt } from '../shared/imagePrompts';
 
 /**
  * Renders a finished script to a production-ready Markdown brief and writes it
@@ -553,6 +554,12 @@ export function renderScriptMarkdown(payload: {
     if (nbp) {
       out.push('**Nano Banana Pro prompt** — paste into the Gemini app (image generation), one scene at a time:');
       out.push(fence(nbp, 'text'));
+      out.push('');
+      out.push('**FLUX prompt** — Cloudflare Workers AI, or any FLUX app:');
+      out.push(fence(fluxPrompt(sc, script.aspectRatio), 'text'));
+      out.push('');
+      out.push('**Midjourney prompt:**');
+      out.push(fence(midjourneyPrompt(sc, script.aspectRatio), 'text'));
       out.push('');
     }
 

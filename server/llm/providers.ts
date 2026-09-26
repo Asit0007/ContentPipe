@@ -72,7 +72,10 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     baseUrl: 'https://api.cerebras.ai/v1',
     keyEnv: ['CEREBRAS_API_KEY'],
     modelsEnv: 'CEREBRAS_MODELS',
-    defaultModels: ['gpt-oss-120b', 'llama-3.3-70b'],
+    // Live model list checked 2026-09-27 with the owner's key: it names only these two (llama-3.3-70b is gone, as on
+    // Groq). NOTE: with that key both answered HTTP 402 "Payment required" on 2026-09-27, so Cerebras is not usable
+    // until its billing tab is sorted. qwen-3.8-27b is the same model Groq serves, on separate rate limits.
+    defaultModels: ['qwen-3.8-27b', 'gpt-oss-120b'],
     maxTokensParam: 'max_completion_tokens',
     maxTokens: 8000,
   },
@@ -96,7 +99,6 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     defaultModels: [
       'nvidia/nemotron-3-ultra-550b-a55b:free',
       'nvidia/nemotron-3-super-120b-a12b:free',
-      'z-ai/glm-5.2:free',
       'qwen/qwen3.8-27b:free',
       'nvidia/nemotron-3.5-lightning:free',
     ],
@@ -118,6 +120,23 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     maxTokens: 8000,
   },
   {
+    id: 'huggingface',
+    label: 'Hugging Face (routed)',
+    baseUrl: 'https://router.huggingface.co/v1',
+    // Its own token, not HF_TOKEN: HF_TOKEN is the read-only token that goes to trusted Spaces (`tokenAllowedFor`),
+    // and routed calls need a token with the "Make calls to Inference Providers" permission. Least privilege.
+    keyEnv: ['HF_INFERENCE_TOKEN'],
+    modelsEnv: 'HUGGINGFACE_MODELS',
+    // HF bills routed calls at the provider's price with no markup; a free account gets $0.10 of credit a month
+    // (huggingface.co/docs/inference-providers/pricing, 2026-09-27) and answers 402 after that unless credits are
+    // bought, which the chain treats as "no balance" and skips. `:cheapest` lets HF pick the cheapest live provider
+    // (DeepInfra listed DeepSeek-V4-Flash at $0.09/$0.18 per million tokens on 2026-09-27) to stretch the credit.
+    // Unverified on our schemas: JSON-mode support varies by provider. Run `npm run llm:check` once the token exists.
+    defaultModels: ['deepseek-ai/DeepSeek-V4-Flash:cheapest'],
+    maxTokensParam: 'max_tokens',
+    maxTokens: 8000,
+  },
+  {
     id: 'mistral',
     label: 'Mistral',
     baseUrl: 'https://api.mistral.ai/v1',
@@ -130,7 +149,7 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
 ];
 
 /** Default order: strongest first, no-training free tiers before the training one, Gemini last. */
-export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'ollama', 'mistral', 'gemini'];
+export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'ollama', 'huggingface', 'mistral', 'gemini'];
 
 export interface ResolvedProvider {
   spec: ProviderSpec;
@@ -169,7 +188,7 @@ export interface ModelOrderEntry {
  * LLM_MODEL_ORDER: one model-by-model ranking across providers, best first, for when the smartest models live on
  * different providers and a provider-level order would try a weak model on one before a strong model on another:
  *
- *   gemini:gemini-3.7-flash,groq:qwen/qwen3.8-27b,openrouter:z-ai/glm-5.2:free,gemini:gemini-3.6-flash
+ *   gemini:gemini-3.7-flash,groq:qwen/qwen3.8-27b,ollama:nemotron-3-ultra,gemini:gemini-3.6-flash
  *
  * Each entry is a provider id, then everything after the FIRST colon as the model id (ids contain slashes and
  * colons). When set it replaces LLM_PROVIDER_ORDER and the per-provider model lists: only what is named here is

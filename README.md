@@ -11,7 +11,7 @@ Text generation runs through a **multi-provider LLM chain** — DeepSeek first, 
 
 ---
 
-## Where it stands (2026-09-26)
+## Where it stands (2026-09-27)
 
 The goal: *feed in a news item and links to its sources, have the app research it, write the script, and produce the images (character, background, scene) and the animation of those images into video.*
 
@@ -23,8 +23,8 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Motion direction and a paste-ready image-to-video prompt per scene | **Done** |
 | Sound & edit cue sheet (music, restrained SFX, silences, transitions) | **Done** (for a human editor) |
 | Titles, thumbnails, description, tags, chapters | **Done** |
-| Scene stills generated in the app | **Done**: Hugging Face (Qwen-Image-2512, HiDream-O1-Image), live-verified; Nano Banana Pro by hand via a copy button |
-| Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day |
+| Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro, FLUX and Midjourney prompts by hand via copy buttons |
+| Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day; Wan 2.2 reserves ~54 s a 4 s clip at 6 steps (about 5-8 a day, **being measured**, see below) |
 | Narration | Works, **one voice**; the two-voice (narrator + analyst) read is not wired into TTS |
 | Stills + narration → one MP4 with captions | **Module only** (`server/assemble.ts`, `npm run render:fixture`); no endpoint or button, and it uses stills, not the AI clips |
 | Batch generation of every scene's assets, checkpointed | **Not built** |
@@ -58,9 +58,10 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `GEMINI_API_KEY` | **Yes, for TTS**; for text only if no other provider key is set | Narration audio and the last text tier. Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). |
 | `DEEPSEEK_API_KEY` | No | Default first provider. Pay-per-token. |
 | `XAI_API_KEY` | No | Grok (xAI), pay-per-token. `GROK_API_KEY` is accepted too. Not the same company as Groq. |
-| `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY` | No | Free tiers, rate-limited. OpenRouter uses its `:free` models. |
+| `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY` | No | Free tiers, rate-limited. OpenRouter uses its `:free` models. (Cerebras answered HTTP 402 "payment required" with the owner's key on 2026-09-27.) |
+| `HF_INFERENCE_TOKEN` | No | A fine-grained Hugging Face token with only "Make calls to Inference Providers" (not `HF_TOKEN`). Routes DeepSeek-V4-Flash through Hugging Face's router: **$0.10 of free credit a month**, then pay-as-you-go (credits must be bought; without them the chain skips it on HTTP 402). Provider id `huggingface`. |
 | `MISTRAL_API_KEY` | No | Free "Experiment" tier, which requires opting into training on your prompts. |
-| `LLM_PROVIDER_ORDER` | No | Comma-separated. Default `deepseek,xai,groq,cerebras,openrouter,mistral,gemini`. |
+| `LLM_PROVIDER_ORDER` | No | Comma-separated. Default `deepseek,xai,groq,cerebras,openrouter,ollama,huggingface,mistral,gemini`. |
 | `<ID>_MODELS`, `<ID>_MAX_TOKENS`, `<ID>_BASE_URL` | No | Per-provider overrides, `<ID>` = `DEEPSEEK`, `XAI`, `GROQ`, `CEREBRAS`, `OPENROUTER`, `MISTRAL`. Model ids drift — see `npm run llm:check`. |
 | `LLM_TIMEOUT_MS` | No | Per-request ceiling for the non-Gemini providers. Defaults to 120000. |
 | `NOTEBOOKLM_API_KEY` | No | Falls back to `GEMINI_API_KEY`. |
@@ -68,7 +69,10 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `PORT` | No | Defaults to 3000. |
 | `CONTENTPIPE_RENDERS_DIR` | No | Where `server/assemble.ts` writes MP4s and captions. Defaults to `./renders` (gitignored). |
 | `HF_TOKEN` | For images/video | Free Hugging Face read token. ZeroGPU Spaces bill GPU time to it (free: 5 min/day). Without it you get the 2-minute anonymous allowance. |
-| `IMAGE_PROVIDER_ORDER` / `VIDEO_PROVIDER_ORDER` | No | Which Spaces (and, for images, `gemini:<model>` / `pollinations`) to try, best first. Defaults in `server/mediaOrder.ts`. Switch to another Space by editing this line. |
+| `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | For `cloudflare:` images | FLUX on Cloudflare Workers AI. Account id is 32 hex characters; the token needs Workers AI access only. Free: 10,000 Neurons a day, hard stop on the Free plan. Sent only to `api.cloudflare.com`. |
+| `CLOUDFLARE_IMAGE_LONG_EDGE` | No | Longest side in px for klein-4b (512-1920, default 1536; 1920 is sharper and costs ~1.6x the Neurons). |
+| `WAN_STEPS` | No | Diffusion steps for Wan 2.2 (4-8, default 6). 4 reserves ~27% less of the free GPU quota; its quality versus 6 is not yet judged. |
+| `IMAGE_PROVIDER_ORDER` / `VIDEO_PROVIDER_ORDER` | No | Which providers to try, best first: for images `hf:<space>`, `cloudflare:flux-2-klein-4b`, `cloudflare:flux-1-schnell` (square only), `gemini:<model>` and `pollinations`; for video `hf:<space>` only. Defaults in `server/mediaOrder.ts`. Switch to another Space by editing this line. |
 | `HF_SPACE_BASE_URL` | No | Replaces every Space's host; exists so the e2e test can stand in for Hugging Face. |
 | `POLLINATIONS_BASE_URL` | No | Overrides the image fallback host. Exists so the end-to-end test can stand in for Pollinations instead of reaching the network. |
 | `HOST` | No | Interface to bind. Defaults to `127.0.0.1` (this machine only) — the endpoints are unauthenticated and spend your provider quota and money. `HOST=0.0.0.0` to expose it, only behind something that authenticates callers. |
@@ -279,11 +283,12 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 | 1 | DeepSeek | pay-per-token | `deepseek-v4-pro`, `deepseek-flash` |
 | 2 | Grok (xAI) | pay-per-token | `grok-4.6`, `grok-4.3` |
 | 3 | Groq | free tier | `qwen/qwen3.8-27b`, `openai/gpt-oss-120b` |
-| 4 | Cerebras | free tier | `gpt-oss-120b`, `llama-3.3-70b` |
-| 5 | OpenRouter | free `:free` models | `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `z-ai/glm-5.2:free`, `qwen/qwen3.8-27b:free`, `nvidia/nemotron-3.5-lightning:free` |
+| 4 | Cerebras | free tier (402 "payment required" with the owner's key, 2026-09-27) | `qwen-3.8-27b`, `gpt-oss-120b` |
+| 5 | OpenRouter | free `:free` models | `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `qwen/qwen3.8-27b:free`, `nvidia/nemotron-3.5-lightning:free` |
 | 6 | Ollama Cloud | free usage tier | `nemotron-3-ultra`, `gemma4:31b`, `nemotron-3-super`, `gpt-oss:120b` |
-| 7 | Mistral | free tier, trains on prompts | `mistral-large-latest`, `mistral-small-latest` |
-| 8 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
+| 7 | Hugging Face (routed) | $0.10 free credit a month, then pay-as-you-go; needs `HF_INFERENCE_TOKEN` | `deepseek-ai/DeepSeek-V4-Flash:cheapest` |
+| 8 | Mistral | free tier, trains on prompts | `mistral-large-latest`, `mistral-small-latest` |
+| 9 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
 
 **Those model ids are best guesses from documentation, not live calls.** Run `npm run llm:check`: it lists each provider's real `/models`, flags any configured id that isn't there, and makes one tiny JSON request per provider so a bad key, an empty balance or a rejected parameter shows up before a real run. Override with `<ID>_MODELS`.
 
@@ -337,6 +342,18 @@ Note that ListModels is not proof of access — `gemini-2.5-flash` appears in th
 
 ---
 
+## Images off Hugging Face, and the by-hand prompts (2026-09-27)
+
+Hugging Face ZeroGPU gives a free account ~5 GPU-minutes a day, shared by images and video, so video gets it and images can come from **Cloudflare Workers AI**: set `IMAGE_PROVIDER_ORDER=cloudflare:flux-2-klein-4b` plus `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Live-verified once: a 1536x864 16:9 still, first try, ~48 s. Only two commercially usable FLUX models are allowed (klein-4b, schnell); the licence on the hosted service is not stated by Cloudflare, so confirm before monetised use. Details, limits and what is unmeasured: `CLAUDE.md`.
+
+Every scene also exports three copy-paste prompts (buttons in the script editor and sections in the markdown export): **Nano Banana Pro**, **FLUX** and **Midjourney**. The FLUX and Midjourney ones (`shared/imagePrompts.ts`) add a clarity sentence before the style anchor, because a noisy or busy still flickers once animated, and Midjourney gets `--ar`, `--style raw` and a real `--no` field.
+
+### Wan free-quota measurement (running)
+
+A LaunchAgent (`deploy/com.asitminz.wanmeasure.plist`, installed as `com.asitminz.wanmeasure`) runs `scripts/wan-measure.ts` every hour. A refused call costs no quota, so it retries until Hugging Face lets a call in; that first success opens the 24 h window, and the job then generates 4 s Wan clips until the wall, at 6 steps, then repeats after the reset at 4 steps. Results: `renders/wan-measure/summary.md`; `npx tsx scripts/wan-measure.ts --status`. It unloads itself when both phases finish (or `launchctl bootout gui/$(id -u)/com.asitminz.wanmeasure`). First real clip so far: 832x480, 16 fps, 4.06 s, 46.6 s wall. The design this feeds is in `../ContentRender/DESIGN.md` (2026-09-27).
+
+---
+
 ## Known Gemini free-tier limits
 
 These are Gemini's limits specifically. The other providers' free tiers have their own rate limits, which change — check each provider's dashboard rather than trusting a number written here.
@@ -369,10 +386,11 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 318 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 367 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
+npx tsx scripts/wan-measure.ts --status   # the scheduled Wan free-quota measurement (see below)
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
 npm start        # node dist/server.cjs
@@ -408,6 +426,8 @@ server/
   schemas.ts                  response schemas (Gemini format; converted to JSON Schema for the other providers)
   sourceFetcher.ts            URL fetching, HTML-to-text extraction, and the (hn-api) -> direct -> jina -> wayback rescue ladder
   imageProviders.ts           Scene image chain in IMAGE_PROVIDER_ORDER (HF Spaces by default) -> SVG placeholder (UI only)
+  cloudflareImage.ts          FLUX on Cloudflare Workers AI (klein-4b multipart, schnell JSON), error classes, size + prompt fitting
+  wanMeasure.ts               State machine for the scheduled Wan free-quota measurement
   videoProviders.ts           Image-to-video chain in VIDEO_PROVIDER_ORDER; clips saved to renders/clips/, served at /clips/
   mediaOrder.ts, hfSpace.ts, spaceAdapters.ts   provider order + cooldowns; Gradio HTTP client; per-Space call shapes
   markdownExporter.ts         Brief rendering + file writing

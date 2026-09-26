@@ -35,6 +35,7 @@ import { ScriptQualityPanel } from './ScriptQualityPanel';
 import { logModelCalls } from '../utils/modelUsageLog';
 import { modelInfo } from '../../shared/modelCatalog';
 import { nanoBananaProPrompt } from '../../shared/nanoBananaPrompt';
+import { fluxPrompt, midjourneyPrompt } from '../../shared/imagePrompts';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -206,9 +207,12 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   };
 
   // Nano Banana Pro has no free API quota on this key: copy its prompt and make the still by hand in the Gemini app.
-  const handleCopyNanoBanana = (scene: VideoScriptScene) => {
-    navigator.clipboard.writeText(nanoBananaProPrompt(scene, videoScript.aspectRatio || '16:9'));
-    setCopiedNbpScene(scene.id);
+  // FLUX and Midjourney get the same layers plus a clarity clause, because the still becomes a video's first frame.
+  const handleCopyPrompt = (scene: VideoScriptScene, kind: 'nbp' | 'flux' | 'mj') => {
+    const ratio = videoScript.aspectRatio || '16:9';
+    const build = kind === 'flux' ? fluxPrompt : kind === 'mj' ? midjourneyPrompt : nanoBananaProPrompt;
+    navigator.clipboard.writeText(build(scene, ratio));
+    setCopiedNbpScene(`${scene.id}:${kind}`);
     playWebAudioSFX('pop');
     setTimeout(() => setCopiedNbpScene(null), 2500);
   };
@@ -946,12 +950,36 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         type="button"
                         id={`copy-nbp-btn-${scene.sceneNumber}`}
                         disabled={!scene.visualPrompt.trim() && !scene.visual}
-                        onClick={() => handleCopyNanoBanana(scene)}
+                        onClick={() => handleCopyPrompt(scene, 'nbp')}
                         title="Nano Banana Pro has no free API quota on this key. Copy its prompt and paste it into the Gemini app."
                         className="flex items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50 cursor-pointer"
                       >
-                        {copiedNbpScene === scene.id ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
-                        <span>{copiedNbpScene === scene.id ? 'Copied' : 'Nano Banana Pro prompt'}</span>
+                        {copiedNbpScene === `${scene.id}:nbp` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
+                        <span>{copiedNbpScene === `${scene.id}:nbp` ? 'Copied' : 'Nano Banana Pro prompt'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        id={`copy-flux-btn-${scene.sceneNumber}`}
+                        disabled={!scene.visualPrompt.trim() && !scene.visual}
+                        onClick={() => handleCopyPrompt(scene, 'flux')}
+                        title="Copy a FLUX prompt (Cloudflare Workers AI or any FLUX app). Written so the still animates cleanly."
+                        className="flex items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {copiedNbpScene === `${scene.id}:flux` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
+                        <span>{copiedNbpScene === `${scene.id}:flux` ? 'Copied' : 'FLUX prompt'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        id={`copy-mj-btn-${scene.sceneNumber}`}
+                        disabled={!scene.visualPrompt.trim() && !scene.visual}
+                        onClick={() => handleCopyPrompt(scene, 'mj')}
+                        title="Copy a Midjourney prompt with --ar, --style raw and --no set. Written so the still animates cleanly."
+                        className="flex items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50 cursor-pointer"
+                      >
+                        {copiedNbpScene === `${scene.id}:mj` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
+                        <span>{copiedNbpScene === `${scene.id}:mj` ? 'Copied' : 'Midjourney prompt'}</span>
                       </button>
 
                       {scene.imageError && (

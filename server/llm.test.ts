@@ -93,7 +93,23 @@ test('Ollama Cloud resolves from OLLAMA_API_KEY or from the misspelt OLAMA_API_K
     assert.equal(p.spec.baseUrl, 'https://ollama.com/v1');
     assert.deepEqual(p.models, ['nemotron-3-ultra', 'gemma4:31b', 'nemotron-3-super', 'gpt-oss:120b']);
   }
-  assert.deepEqual(providerOrder({}).slice(-3), ['ollama', 'mistral', 'gemini'], 'in the default order, ahead of Mistral and Gemini');
+  assert.deepEqual(providerOrder({}).slice(-4), ['ollama', 'huggingface', 'mistral', 'gemini'], 'in the default order, ahead of Hugging Face, Mistral and Gemini');
+});
+
+test('Cerebras defaults are the two ids its live catalog lists (checked 2026-09-27), not the retired llama-3.3-70b', () => {
+  const [p] = resolveProviders({ CEREBRAS_API_KEY: 'c' });
+  assert.equal(p.spec.id, 'cerebras');
+  assert.deepEqual(p.models, ['qwen-3.8-27b', 'gpt-oss-120b']);
+});
+
+test('Hugging Face routed inference only resolves from HF_INFERENCE_TOKEN, never from the Spaces token HF_TOKEN', () => {
+  assert.deepEqual(resolveProviders({ HF_TOKEN: 'read-only-spaces-token' }), []);
+  const [p] = resolveProviders({ HF_INFERENCE_TOKEN: 'h' });
+  assert.equal(p.spec.id, 'huggingface');
+  assert.equal(p.spec.baseUrl, 'https://router.huggingface.co/v1');
+  assert.deepEqual(p.models, ['deepseek-ai/DeepSeek-V4-Flash:cheapest']);
+  const ranked = resolveProviders({ HF_INFERENCE_TOKEN: 'h', LLM_MODEL_ORDER: 'huggingface:deepseek-ai/DeepSeek-V4.1-Flash:cheapest' });
+  assert.deepEqual(ranked[0].models, ['deepseek-ai/DeepSeek-V4.1-Flash:cheapest'], 'everything after the first colon is the model id, including the routing suffix');
 });
 
 // ---------- model-by-model order (LLM_MODEL_ORDER) ----------

@@ -119,13 +119,23 @@ export const VIDEO_ADAPTERS: Record<string, SpaceAdapter<VideoJob>> = {
       return {
         endpoint: '/generate_video',
         // image, prompt, steps, negative, duration, guidance, guidance 2, seed, randomize seed.
-        data: [image, job.prompt, 6, VIDEO_NEGATIVE, durationSec, 1, 1, 42, true],
+        data: [image, job.prompt, wanSteps(), VIDEO_NEGATIVE, durationSec, 1, 1, 42, true],
         outputIndex: 0,
         durationSec,
       };
     },
   },
 };
+
+/**
+ * Diffusion steps for Wan 2.2 (WAN_STEPS, default 6, clamped to 4-8). The Space reserves `10 + steps * ...` seconds of
+ * the free GPU quota per call, so 4 steps reserve ~27% less than 6 at 4 s (39 s vs 54 s). Its own default is 4, which
+ * its Lightning LoRA is tuned for; whether 4 looks as good as 6 is not yet judged (ContentRender DESIGN.md).
+ */
+export function wanSteps(env: Record<string, string | undefined> = process.env): number {
+  const n = Math.round(Number(env.WAN_STEPS));
+  return Number.isFinite(n) && n >= 4 && n <= 8 ? n : 6;
+}
 
 function extFor(contentType: string): string {
   if (/jpe?g/.test(contentType)) return 'jpg';

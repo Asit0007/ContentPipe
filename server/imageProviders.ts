@@ -6,18 +6,19 @@ import { noteModelAttempt, trackModelCall, withModelTask } from './llm/usage';
 import { SpaceError, reduceSpaceFailures } from './hfSpace';
 import { coolSpace, imageProviderOrder, runSpace, spaceCooldown } from './mediaOrder';
 import { badOutput, imageAdapter, sniffImage } from './spaceAdapters';
+import { cloudflareDimensions, runCloudflareImage } from './cloudflareImage';
 
 /**
  * Scene image generation, in the order the owner set (IMAGE_PROVIDER_ORDER, see server/mediaOrder.ts). The default
  * is Hugging Face Spaces only — Qwen-Image-2512, then HiDream-O1-Image — and nothing outside the list is tried.
- * Gemini image models (Nano Banana Pro is `gemini:gemini-3-pro-image`) and Pollinations are opt-in entries: Gemini's
+ * Gemini image models (Nano Banana Pro is `gemini:gemini-3-pro-image`), `cloudflare:<flux model>` and Pollinations are opt-in entries: Gemini's
  * have no free-tier quota on this key (`limit: 0`), and Pollinations does not say which model drew the picture.
  *
  * When every entry fails the UI still gets a generated SVG placeholder, flagged `isPlaceholder`; a strict caller gets
  * `strictError` instead (429 on quota, 503 on busy/asleep Spaces), never the placeholder.
  */
 
-export type ImageProviderId = 'hf' | 'gemini' | 'pollinations' | 'placeholder';
+export type ImageProviderId = 'hf' | 'gemini' | 'cloudflare' | 'pollinations' | 'placeholder';
 
 export interface ImageResult {
   imageUrl: string;
@@ -202,6 +203,28 @@ async function trySpace(spaceId: string, prompt: string, aspectRatio: string, en
   }
 }
 
+async function tryCloudflare(model: string, prompt: string, aspectRatio: string, env: Record<string, string | undefined>): Promise<ProviderResult> {
+  const key = `cloudflare:${model}`;
+  const cool = spaceCooldown(key);
+  if (cool) {
+    noteModelAttempt({ provider: 'cloudflare', model, outcome: 'skipped', detail: `cooling down after: ${cool.reason}` });
+    return { ok: false, error: `cooling down after: ${cool.reason}`, cause: new SpaceError(cool.reason, cool.classified) };
+  }
+  const t0 = Date.now();
+  try {
+    const { bytes, contentType } = await runCloudflareImage(model, prompt, aspectRatio, env);
+    const mime = sniffImage(bytes) || contentType;
+    noteModelAttempt({ provider: 'cloudflare', model, outcome: 'ok', ms: Date.now() - t0 });
+    return { ok: true, model, imageUrl: `data:${mime};base64,${bytes.toString('base64')}`, ...imageSize(bytes) };
+  } catch (err: any) {
+    const e = err instanceof SpaceError ? err : new SpaceError(String(err?.message || err), { kind: 'other' });
+    coolSpace(key, e);
+    noteModelAttempt({ provider: 'cloudflare', model, outcome: attemptOutcome(e.classified.kind), detail: e.message, ms: Date.now() - t0 });
+    console.warn(`[Image Agent] Cloudflare ${model}: ${e.message}`);
+    return { ok: false, error: e.message, cause: e };
+  }
+}
+
 async function sceneImageChain(
   ai: GoogleGenAI,
   req: { prompt: string; aspectRatio: string; imageSize: string },
@@ -229,6 +252,24 @@ async function sceneImageChain(
         };
       }
       attempts.push({ provider: 'hf', model: entry.model, error: r.error || 'Unknown error' });
+      causes.push(r.cause);
+    } else if (entry.provider === 'cloudflare') {
+      const r = await tryCloudflare(entry.model, prompt, aspectRatio, env);
+      if (r.ok && r.imageUrl) {
+        const dims = cloudflareDimensions(aspectRatio, env);
+        return {
+          imageUrl: r.imageUrl,
+          provider: 'cloudflare',
+          providerLabel: 'Cloudflare Workers AI',
+          model: entry.model,
+          isPlaceholder: false,
+          isQuotaFallback: false,
+          width: r.width || dims.width,
+          height: r.height || dims.height,
+          attempts,
+        };
+      }
+      attempts.push({ provider: 'cloudflare', model: entry.model, error: r.error || 'Unknown error' });
       causes.push(r.cause);
     } else if (entry.provider === 'gemini') {
       const gemini = await tryGemini(ai, [entry.model], prompt, aspectRatio, imageSize);

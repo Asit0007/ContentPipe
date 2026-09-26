@@ -21,9 +21,11 @@ async function main() {
   let failures = 0;
 
   for (const spec of OPENAI_COMPAT_PROVIDERS) {
-    if (!have.has(spec.id) && providerOrder().includes(spec.id)) {
-      console.log(`${dim('-')} ${spec.label.padEnd(18)} ${dim(`no key (${spec.keyEnv.join(' / ')})`)}`);
-    }
+    if (have.has(spec.id)) continue;
+    // With LLM_MODEL_ORDER set, a provider it does not name is skipped even when its key exists; say which it is.
+    const keySet = spec.keyEnv.some((k) => process.env[k]?.trim());
+    if (keySet) console.log(`${dim('-')} ${spec.label.padEnd(18)} ${dim('key set, but not named in LLM_MODEL_ORDER, so not tried')}`);
+    else if (providerOrder().includes(spec.id)) console.log(`${dim('-')} ${spec.label.padEnd(18)} ${dim(`no key (${spec.keyEnv.join(' / ')})`)}`);
   }
 
   for (const p of resolved) {
