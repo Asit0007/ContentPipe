@@ -13,7 +13,8 @@
  * Cost vs free: DeepSeek and Grok (xAI) are pay-per-token. Groq, Cerebras, OpenRouter (:free models)
  * and Mistral (Experiment tier) have permanent free tiers with rate limits. Mistral's free tier
  * requires opting into training on your prompts — fine for public-news scripts, which is why it sits
- * behind the providers that do not train on them.
+ * behind the providers that do not train on them. Requesty's strong free models train on prompts too (its
+ * "Training Permitted Models"), so it sits beside Mistral.
  */
 
 export interface ProviderSpec {
@@ -137,6 +138,24 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     maxTokens: 8000,
   },
   {
+    id: 'requesty',
+    label: 'Requesty',
+    baseUrl: 'https://router.requesty.ai/v1',
+    keyEnv: ['REQUESTY_API_KEY'],
+    modelsEnv: 'REQUESTY_MODELS',
+    // A router, not a model host: its free plan is 200 requests/day across 12 free models (terms §4.6, updated
+    // 2026-08-14; public model list at router.requesty.ai/v1/models, read 2026-09-27). What it adds here is a second
+    // free pool for models Ollama Cloud and OpenRouter already serve, both of which are capped (monthly credits; 50/day).
+    // TRAINING: the strong free models (Nemotron 3 Ultra and Super) are "Training Permitted Models" — on the free plan
+    // the model provider keeps prompts and outputs to train on, and Requesty may use them to train its routing (§5.9,
+    // §6.2(a); the API's `data_used_for_training` flag says which). Fine for public-news scripts, never for résumé data,
+    // and ordered behind the providers that do not train, like Mistral. Gemma 4 31B does not train. Most free models do
+    // not advertise JSON mode; the chain retries once without response_format when a model rejects it (chain.ts).
+    defaultModels: ['nvidia/nemotron-3-ultra-550b-a55b', 'nvidia/nemotron-3-super-120b-a12b', 'google/gemma-4-31b-it'],
+    maxTokensParam: 'max_tokens',
+    maxTokens: 8000,
+  },
+  {
     id: 'mistral',
     label: 'Mistral',
     baseUrl: 'https://api.mistral.ai/v1',
@@ -151,7 +170,7 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
 ];
 
 /** Default order: strongest first, no-training free tiers before the training one, Gemini last. */
-export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'ollama', 'huggingface', 'mistral', 'gemini'];
+export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'ollama', 'huggingface', 'requesty', 'mistral', 'gemini'];
 
 export interface ResolvedProvider {
   spec: ProviderSpec;
@@ -209,6 +228,32 @@ export function modelOrder(env: Env = process.env): ModelOrderEntry[] {
     out.push({ provider, model });
   }
   return out;
+}
+
+/**
+ * LLM_RESERVED_FOR: models only some requests may use, e.g. `gemini:gemini-3.8-flash=script` keeps the smartest Gemini
+ * model's ~20 free requests a day for /api/script instead of letting research, plan or chat spend them first.
+ * Entries are `provider:model=purpose` with purposes separated by `|` (`=script|plan`), comma-separated. The model part
+ * runs to the LAST `=`. A purpose is the /api route's name (server.ts middleware); calls outside a request have none,
+ * so they never use a reserved model. Unset: nothing is reserved.
+ */
+export function reservedModels(env: Env = process.env): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const raw of csv(env.LLM_RESERVED_FOR)) {
+    const eq = raw.lastIndexOf('=');
+    const colon = raw.indexOf(':');
+    if (eq <= 0 || colon <= 0 || colon > eq) continue;
+    const key = `${raw.slice(0, colon).trim().toLowerCase()}:${raw.slice(colon + 1, eq).trim()}`;
+    const purposes = raw.slice(eq + 1).split('|').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    if (purposes.length) out.set(key, new Set(purposes));
+  }
+  return out;
+}
+
+/** Whether a request with this purpose may call this model. Unreserved models: always. */
+export function modelAllowedFor(provider: string, model: string, purpose: string | undefined, env: Env = process.env): boolean {
+  const allowed = reservedModels(env).get(`${provider}:${model}`);
+  return !allowed || (purpose !== undefined && allowed.has(purpose.toLowerCase()));
 }
 
 /** OpenAI-compatible providers that have a key, in configured order. Gemini is handled by the chain itself. */

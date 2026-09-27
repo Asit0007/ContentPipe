@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import path from 'node:path';
 import type { ModelAttempt, ModelCall } from '../../shared/modelUsage';
 
 /**
@@ -18,6 +20,8 @@ interface Store {
   calls: ModelCall[];
   task?: string;
   current?: ModelCall;
+  /** What the request is for ("script", "research", ...): decides which reserved models it may use (LLM_RESERVED_FOR). */
+  purpose?: string;
 }
 
 const als = new AsyncLocalStorage<Store>();
@@ -29,8 +33,21 @@ export async function recordModelUsage<T>(fn: () => Promise<T>, calls: ModelCall
 }
 
 /** Runs `fn` (e.g. an Express `next`) with `calls` as the recording every model call inside it appends to. */
-export function enterModelUsage<T>(calls: ModelCall[], fn: () => T): T {
-  return als.run({ calls }, fn);
+export function enterModelUsage<T>(calls: ModelCall[], fn: () => T, purpose?: string): T {
+  return als.run({ calls, purpose }, fn);
+}
+
+/**
+ * A request's purpose from its path: the route name. Express strips the mount point, so under `app.use('/api', ...)`
+ * `req.path` is `/script`, not `/api/script`; both forms give "script".
+ */
+export function purposeForPath(p: string): string | undefined {
+  return p.replace(/^\/+/, '').replace(/^api\//, '').split('/')[0] || undefined;
+}
+
+/** The current request's purpose, or undefined outside a request (video burn, scripts, tests). */
+export function currentModelPurpose(): string | undefined {
+  return als.getStore()?.purpose;
 }
 
 /** The calls recorded so far in this request, or undefined outside a recording. */
@@ -42,7 +59,7 @@ export function currentModelCalls(): ModelCall[] | undefined {
 export function withModelTask<T>(task: string, fn: () => Promise<T>): Promise<T> {
   const store = als.getStore();
   if (!store) return fn();
-  return als.run({ calls: store.calls, task }, fn);
+  return als.run({ calls: store.calls, task, purpose: store.purpose }, fn);
 }
 
 /**
@@ -75,11 +92,65 @@ export async function trackModelCall<T>(kind: ModelCall['kind'], fn: () => Promi
   });
 }
 
-/** One model tried inside the current call. A no-op outside a recording. */
+/**
+ * Where every model call is appended, one JSON line each, for JobPipe's review dashboard ("AI models used, last 48 h",
+ * JobPipe `src/jobpipe/usage.py`, which reads this file). `MODEL_USAGE_LOG=off` disables it (npm test sets that); any
+ * other value is a path. Default `.runs/model-usage.jsonl`, beside the journals (`CONTENTPIPE_RUNS_DIR` moves both;
+ * `pruneOldRuns` only deletes `.json`, so this file survives it).
+ */
+export function usageLogPath(env: Record<string, string | undefined> = process.env): string | undefined {
+  const v = env.MODEL_USAGE_LOG?.trim();
+  if (v && /^(off|0|false|no)$/i.test(v)) return undefined;
+  if (v) return path.resolve(v);
+  const runs = env.CONTENTPIPE_RUNS_DIR ? path.resolve(env.CONTENTPIPE_RUNS_DIR) : path.resolve(process.cwd(), '.runs');
+  return path.join(runs, 'model-usage.jsonl');
+}
+
+/** Past this size the log moves to `<file>.1` (replacing the previous one): ~25k calls, weeks of use. JobPipe reads both. */
+export const USAGE_LOG_MAX_BYTES = 5 * 1024 * 1024;
+
+function rotateIfLarge(file: string): void {
+  try {
+    if (statSync(file).size >= USAGE_LOG_MAX_BYTES) renameSync(file, `${file}.1`);
+  } catch {
+    // No file yet, or a race with another process's rotation: nothing to do.
+  }
+}
+
+/** Appends one attempt. Never throws: a full disk must not fail a generation. */
+function appendUsage(attempt: ModelAttempt, store: Store | undefined): void {
+  const file = usageLogPath();
+  if (!file || attempt.outcome === 'skipped') return; // a skipped model received no request
+  const row: Record<string, unknown> = {
+    t: new Date().toISOString().slice(0, 19) + 'Z', app: 'contentpipe',
+    provider: attempt.provider, model: attempt.model, outcome: attempt.outcome,
+  };
+  if (attempt.ms !== undefined) row.ms = Math.round(attempt.ms);
+  if (attempt.detail) row.detail = attempt.detail.slice(0, 200);
+  const task = store?.current?.task ?? store?.task;
+  if (task) row.task = task;
+  if (store?.current?.kind) row.kind = store.current.kind;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    rotateIfLarge(file);
+    // Synchronous on purpose: one short line per model attempt (seconds apart, each attempt itself taking seconds),
+    // written whole, so concurrent requests and the video burn's process never interleave half-lines.
+    appendFileSync(file, JSON.stringify(row) + '\n');
+  } catch {
+    // Logging is a convenience; the call itself already happened.
+  }
+}
+
+/**
+ * One model tried inside the current call: recorded for the response's provenance panel (inside a recording only)
+ * and appended to the usage log (always, so the video burn and scripts, which run outside any request, count too).
+ */
 export function noteModelAttempt(attempt: ModelAttempt): void {
-  const current = als.getStore()?.current;
-  if (!current) return;
   // Error bodies can be whole JSON documents; the panel needs the gist, and they must never carry a request.
   if (attempt.detail) attempt.detail = attempt.detail.replace(/\s+/g, ' ').slice(0, 240);
+  const store = als.getStore();
+  appendUsage(attempt, store);
+  const current = store?.current;
+  if (!current) return;
   current.attempts.push(attempt);
 }

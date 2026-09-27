@@ -21,7 +21,7 @@ export interface ProviderInfo {
   cost: string;
 }
 
-export const INTELLIGENCE_SOURCE = 'Artificial Analysis Intelligence Index, checked 2026-09-24';
+export const INTELLIGENCE_SOURCE = 'Artificial Analysis Intelligence Index, read live 2026-09-27 (Gemini 3.7 / 3.6 / 3.5 Flash and 3.1 Flash-Lite from its 2026-09-24 table; they have left the board)';
 
 export const PROVIDER_INFO: Record<string, ProviderInfo> = {
   gemini: { label: 'Google Gemini API', cost: 'Free tier on this key (~20 text requests/day per model)' },
@@ -32,6 +32,7 @@ export const PROVIDER_INFO: Record<string, ProviderInfo> = {
   huggingface: { label: 'Hugging Face (routed)', cost: 'Free $0.10 of credit a month, then pay-as-you-go (credits must be bought)' },
   openrouter: { label: 'OpenRouter', cost: 'Free (":free" models): 50 requests/day across all of them, 20/min; often rate-limited upstream' },
   ollama: { label: 'Ollama Cloud', cost: 'Free plan: monthly starter credits, starter models only, 1 request at a time' },
+  requesty: { label: 'Requesty', cost: 'Free plan: 200 requests/day across its free models. The Nemotron models are "Training Permitted": the provider trains on prompts and outputs, and Requesty may too (its terms, 2026-08-14)' },
   mistral: { label: 'Mistral', cost: 'Free tier (trains on prompts). On this key Small, Medium and Magistral have a 0 requests/min limit; Ministral and Codestral work' },
   pollinations: { label: 'Pollinations', cost: 'Free, no API key' },
   cloudflare: { label: 'Cloudflare Workers AI', cost: 'Free: 10,000 Neurons a day, hard stop on the Free plan (about 45-75 stills a day)' },
@@ -44,6 +45,7 @@ export const MODEL_INFO: Record<string, ModelInfo> = {
   'gemini-3.8-flash': { name: 'Gemini 3.8 Flash', maker: 'Google', intelligence: 41, notes: 'Smartest free model in the chain; first since 2026-09-27. Unverified on our schemas: on 2026-09-24 it answered tiny calls but 503 "high demand" on the pipeline\'s large ones (the chain then moves on at once). Score from the 2026-09-27 table, not the 2026-09-24 one the others use.' },
   'gemini-3.7-flash': { name: 'Gemini 3.7 Flash', maker: 'Google', intelligence: 39, notes: 'Second, behind 3.8 Flash. Often answers 503 "high demand" on large requests.' },
   'gemini-3.6-flash': { name: 'Gemini 3.6 Flash', maker: 'Google', intelligence: 34 },
+  'gemini-3.5-flash': { name: 'Gemini 3.5 Flash', maker: 'Google', intelligence: 33, notes: 'Added to the order 2026-09-27. A tiny JSON call answered on one key and 503 "high demand" on the other that day; earlier it 503d on the pipeline\'s large prompts. Unverified on our schemas.' },
   'gemini-3.1-flash-lite': { name: 'Gemini 3.1 Flash-Lite', maker: 'Google', intelligence: 16, notes: 'The weakest Gemini text model. It has carried whole runs when the others were busy.' },
   'qwen/qwen3.8-27b': { name: 'Qwen 3.8 27B', maker: 'Alibaba (Qwen)', intelligence: 34, notes: 'On Groq: 1,000 output tokens/min, enough for a plan but not a script chunk.' },
   'qwen/qwen3.8-27b:free': { name: 'Qwen 3.8 27B (free)', maker: 'Alibaba (Qwen)', intelligence: 34, notes: 'Free OpenRouter route; often rate-limited.' },
@@ -55,8 +57,17 @@ export const MODEL_INFO: Record<string, ModelInfo> = {
   'deepseek-ai/DeepSeek-V4-Flash:cheapest': { name: 'DeepSeek V4 Flash (via Hugging Face)', maker: 'DeepSeek', notes: 'Routed by Hugging Face to the cheapest provider. Paid per token; the free $0.10 a month lasts roughly a dozen script calls. Unverified on our schemas.' },
   'gpt-oss-120b': { name: 'gpt-oss-120b', maker: 'OpenAI (open weights)', intelligence: 12 },
   'mistral-small-latest': { name: 'Mistral Small', maker: 'Mistral AI', intelligence: 11, notes: 'Never answers on this key: 429 with a 0 requests/min limit (2026-09-27), so it was replaced by Ministral 14B.' },
-  'ministral-14b-latest': { name: 'Ministral 14B', maker: 'Mistral AI', notes: 'Last in the chain since 2026-09-27, replacing Mistral Small (blocked on this key). 30 requests/min on the free tier; JSON mode works (4 s). Not scored here. Mistral\'s free tier trains on prompts.' },
-  'nvidia/nemotron-3.5-lightning:free': { name: 'Nemotron 3.5 Lightning (free)', maker: 'NVIDIA', intelligence: 13, notes: 'Took 57 s for a one-word reply on 2026-09-27.' },
+  'ministral-14b-latest': { name: 'Ministral 14B', maker: 'Mistral AI', intelligence: 6, notes: 'Last in the chain since 2026-09-27, replacing Mistral Small (blocked on this key). 30 requests/min on the free tier; JSON mode works (4 s). Not scored here. Mistral\'s free tier trains on prompts.' },
+  'nvidia/nemotron-3.5-lightning:free': { name: 'Nemotron 3.5 Lightning (free)', maker: 'NVIDIA', intelligence: 13, notes: 'Took 57 s for a one-word reply on 2026-09-27, then 13 s in the rerank probe.' },
+  'nvidia/nemotron-3-ultra-550b-a55b:free': { name: 'Nemotron 3 Ultra (OpenRouter, free)', maker: 'NVIDIA', intelligence: 23, notes: 'Returned malformed JSON to a tiny JSON-mode call on 2026-09-27; the repair round may rescue it. Upstream provider may train on prompts.' },
+  'nvidia/nemotron-3-super-120b-a12b:free': { name: 'Nemotron 3 Super (OpenRouter, free)', maker: 'NVIDIA', intelligence: 13 },
+  'google/gemma-4-31b-it:free': { name: 'Gemma 4 31B (OpenRouter, free)', maker: 'Google (open weights)', intelligence: 19 },
+  'nvidia/nemotron-3.5-lightning-30b-a3b': { name: 'Nemotron 3.5 Lightning (via Requesty)', maker: 'NVIDIA', intelligence: 13, notes: 'Free on Requesty, and a "Training Permitted Model".' },
+  'gpt-oss:120b': { name: 'gpt-oss-120b (Ollama Cloud)', maker: 'OpenAI (open weights)', intelligence: 12 },
+  'ministral-8b-latest': { name: 'Ministral 8B', maker: 'Mistral AI', intelligence: 5, notes: 'Last in the chain. Mistral\'s free tier trains on prompts.' },
+  'nvidia/nemotron-3-ultra-550b-a55b': { name: 'Nemotron 3 Ultra (via Requesty)', maker: 'NVIDIA', intelligence: 23, notes: 'Free on Requesty, and a "Training Permitted Model": prompts and outputs are kept for training. Answered JSON mode in 1.3-1.9 s on 2026-09-27 (once in a wrapped shape). Behind Ollama\'s copy on a tie because Ollama does not train on prompts.' },
+  'nvidia/nemotron-3-super-120b-a12b': { name: 'Nemotron 3 Super (via Requesty)', maker: 'NVIDIA', intelligence: 13, notes: 'Free on Requesty, and a "Training Permitted Model". No JSON mode advertised.' },
+  'google/gemma-4-31b-it': { name: 'Gemma 4 31B (via Requesty)', maker: 'Google (open weights)', intelligence: 19, notes: 'Free on Requesty, not used for training. No JSON mode advertised.' },
   // Images: Cloudflare Workers AI (IMAGE_PROVIDER_ORDER=cloudflare:<model>), added 2026-09-27 to keep the Hugging Face GPU quota for video.
   'flux-2-klein-4b': { name: 'FLUX.2 [klein] 4B', maker: 'Black Forest Labs', notes: 'On Workers AI: multipart, 256-1920 px, 4 fixed steps. Weights are Apache 2.0, but Cloudflare states no licence: confirm before monetised use.' },
   'flux-1-schnell': { name: 'FLUX.1 [schnell]', maker: 'Black Forest Labs', notes: 'On Workers AI: square only, up to 8 steps. Apache 2.0 weights.' },

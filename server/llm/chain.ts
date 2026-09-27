@@ -8,10 +8,10 @@ import {
   UpstreamUnavailableError,
   type ClassifiedError,
 } from '../quota';
-import { modelOrder, providerOrder, resolveProviders, type ResolvedProvider } from './providers';
+import { modelAllowedFor, modelOrder, providerOrder, resolveProviders, type ResolvedProvider } from './providers';
 import { toJsonSchema, validateAgainstSchema } from './schema';
 import { attemptOutcome } from '../gemini';
-import { noteModelAttempt, trackModelCall } from './usage';
+import { currentModelPurpose, noteModelAttempt, trackModelCall } from './usage';
 
 /**
  * Multi-provider text generation. Walks the configured providers best-first (DeepSeek -> Grok ->
@@ -171,7 +171,24 @@ const cooldowns = new Map<string, { until: number; retryAt?: number; c: Provider
 
 export function resetLlmCooldowns(): void {
   cooldowns.clear();
+  noJsonMode.clear();
 }
+
+/**
+ * provider:model pairs that rejected `response_format`, asked for plain text (the system prompt still demands one JSON
+ * object, and the answer is validated locally either way). Most of Requesty's free models do not advertise JSON mode
+ * (`supports_output_json_object: false`, 2026-09-27), and a host that rejects the parameter would otherwise cost a
+ * failed call and a 30-minute bench for a model that can answer. In-process, like the cooldowns.
+ */
+const noJsonMode = new Set<string>();
+/**
+ * The parameter named AND called unsupported, in either order. Merely mentioning `response_format` is not enough: a
+ * context-length or validation 400 can quote the request back, and misreading one used to turn JSON mode off for that
+ * model for the life of the process and spend a second counted request.
+ */
+const JSON_PARAM = String.raw`(?:response_format|json_object|json[\s_-]?mode|structured[\s_-]?outputs?)`;
+const UNSUPPORTED = String.raw`(?:not\s+(?:be\s+)?supported|unsupported|not\s+available|not\s+allowed|does\s+not\s+support|doesn't\s+support|is\s+not\s+enabled)`;
+const JSON_MODE_REJECTED = new RegExp(`${JSON_PARAM}[^\n]{0,80}?${UNSUPPORTED}|${UNSUPPORTED}[^\n]{0,80}?${JSON_PARAM}`, 'i');
 
 const isAuthStatus = (s?: number) => s === 401 || s === 402 || s === 403;
 
@@ -279,6 +296,8 @@ export async function callChat(
   opts: LlmOptions = {}
 ): Promise<ChatResult> {
   const doFetch = opts.fetch ?? fetch;
+  const jsonModeKey = `${p.spec.id}:${model}`;
+  const jsonMode = json && !noJsonMode.has(jsonModeKey);
   const res = await doFetch(`${p.spec.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -290,12 +309,17 @@ export async function callChat(
       model,
       messages,
       [p.spec.maxTokensParam]: p.maxTokens,
-      ...(json ? { response_format: { type: 'json_object' } } : {}),
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
     }),
     signal: AbortSignal.timeout(requestTimeoutMs(opts)),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
+    if (jsonMode && (res.status === 400 || res.status === 422) && JSON_MODE_REJECTED.test(body)) {
+      noJsonMode.add(jsonModeKey);
+      console.warn(`[LLM Chain] ${jsonModeKey} rejected JSON mode; asking without response_format from now on`);
+      return callChat(p, model, messages, json, opts);
+    }
     throw new ProviderHttpError(p.spec.id, res.status, body, retryAfterHeader(res), zeroRateLimit(res));
   }
   const data: any = await res.json();
@@ -459,6 +483,31 @@ export function describeChain(env: Env = process.env): string {
     .join(' -> ');
 }
 
+/**
+ * The Gemini models of a tier this request may use (LLM_RESERVED_FOR), noting each reserved one as skipped so the
+ * provenance panel says why the smartest model did not answer a research or plan call.
+ */
+function geminiModelsFor(models: string[], env: Env): string[] {
+  const purpose = currentModelPurpose();
+  return models.filter((m) => {
+    if (modelAllowedFor('gemini', m, purpose, env)) return true;
+    noteModelAttempt({ provider: 'gemini', model: m, outcome: 'skipped', detail: `reserved for other requests (LLM_RESERVED_FOR); this one is ${purpose ?? 'not an /api request'}` });
+    return false;
+  });
+}
+
+/** Every configured model is reserved for other routes: a configuration problem, said as one (not "no tiers"). */
+function allReservedError(): Error {
+  return new Error(`Every configured model is reserved for other requests (LLM_RESERVED_FOR); this one is ${currentModelPurpose() ?? 'not an /api request'}. Add an unreserved model to LLM_MODEL_ORDER.`);
+}
+
+function reservedElsewhere(p: ResolvedProvider, model: string, env: Env): boolean {
+  const purpose = currentModelPurpose();
+  if (modelAllowedFor(p.spec.id, model, purpose, env)) return false;
+  noteModelAttempt({ provider: p.spec.id, model, outcome: 'skipped', detail: `reserved for other requests (LLM_RESERVED_FOR); this one is ${purpose ?? 'not an /api request'}` });
+  return true;
+}
+
 /** The gist of a provider failure for the provenance panel: status and kind, or the message for a request bug. */
 function providerDetail(c: ClassifiedError, err: unknown): string {
   const retry = c.retryAfterSec ? `, retry in ${c.retryAfterSec}s` : '';
@@ -495,14 +544,18 @@ async function chainJson<T>(
   opts: LlmOptions & { sleep?: (ms: number) => Promise<unknown>; now?: () => number }
 ): Promise<T> {
   const now = opts.now ?? Date.now;
-  const tiers = buildTiers(opts.env ?? process.env);
-  // Only Gemini configured: byte-for-byte the pre-chain behaviour.
+  const env = opts.env ?? process.env;
+  const tiers = buildTiers(env);
+  // Only Gemini configured: byte-for-byte the pre-chain behaviour (reserved models aside).
   if (tiers.length === 1 && tiers[0].kind === 'gemini') {
-    return generateGeminiJson<T>(ai, prompt, systemInstruction, tiers[0].models ?? geminiModels, responseSchema, opts);
+    const allowed = geminiModelsFor(tiers[0].models ?? geminiModels, env);
+    if (!allowed.length) throw allReservedError();
+    return generateGeminiJson<T>(ai, prompt, systemInstruction, allowed, responseSchema, opts);
   }
 
   const failures: ClassifiedError[] = [];
   let firstOther: unknown;
+  let anyAllowed = false;
   const requestChars = prompt.length + systemInstruction.length;
   const record = (err: unknown, c: ClassifiedError) => {
     failures.push(c);
@@ -511,11 +564,14 @@ async function chainJson<T>(
 
   for (const tier of tiers) {
     if (tier.kind === 'gemini') {
+      const models = geminiModelsFor(tier.models ?? geminiModels, env);
+      if (!models.length) continue;
+      anyAllowed = true;
       try {
         // In a model-ordered chain a Gemini tier that is not the last hands over at once when busy; only a Gemini
         // tier at the very end, the last resort, keeps its one bounded wait-and-retry (generateGeminiJson).
         const failOver = tier.models !== undefined && tier !== tiers[tiers.length - 1];
-        return await generateGeminiJson<T>(ai, prompt, systemInstruction, tier.models ?? geminiModels, responseSchema, failOver ? { ...opts, retryPass: false } : opts);
+        return await generateGeminiJson<T>(ai, prompt, systemInstruction, models, responseSchema, failOver ? { ...opts, retryPass: false } : opts);
       } catch (err) {
         console.warn('[LLM Chain] gemini tier failed:', (err as any)?.message || err);
         record(err, classifyProviderError(err, now()));
@@ -524,6 +580,8 @@ async function chainJson<T>(
     }
     const p = tier.provider;
     for (const model of p.models) {
+      if (reservedElsewhere(p, model, env)) continue;
+      anyAllowed = true;
       const cd = activeCooldown(p.spec.id, model, now(), requestChars);
       if (cd) {
         const { why, ...c } = cd;
@@ -546,6 +604,7 @@ async function chainJson<T>(
       }
     }
   }
+  if (!anyAllowed) throw allReservedError();
   throw reduceFailures(failures, firstOther);
 }
 
@@ -583,10 +642,13 @@ async function chainText(
   const now = opts.now ?? Date.now;
   let lastErr: unknown;
   const requestChars = systemInstruction.length + contents.reduce((n: number, c: any) => n + (c?.parts ?? []).reduce((m: number, p: any) => m + String(p?.text ?? '').length, 0), 0);
-  for (const tier of buildTiers(opts.env ?? process.env)) {
+  const env = opts.env ?? process.env;
+  for (const tier of buildTiers(env)) {
     if (tier.kind === 'gemini') {
+      const models = geminiModelsFor(tier.models ?? geminiModels, env);
+      if (!models.length) continue;
       try {
-        const r = await generateGeminiText(ai, contents, systemInstruction, tier.models ?? geminiModels);
+        const r = await generateGeminiText(ai, contents, systemInstruction, models, { env });
         return { text: r.text, via: `gemini/${r.model}` };
       } catch (err) {
         lastErr = err;
@@ -595,6 +657,7 @@ async function chainText(
     }
     const p = tier.provider;
     for (const model of p.models) {
+      if (reservedElsewhere(p, model, env)) continue;
       const cd = activeCooldown(p.spec.id, model, now(), requestChars);
       if (cd) {
         noteModelAttempt({ provider: p.spec.id, model, outcome: 'skipped', detail: `cooling down after: ${cd.why}` });

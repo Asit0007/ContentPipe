@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { Modality } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import {
   generateFallbackResearch,
@@ -14,7 +13,7 @@ import {
   generateFallbackNotebookLMPodcast,
 } from './server/fallbackGenerators';
 import { researchSchema, planSchema, KEY_FACT_TARGET_WITH_SOURCES } from './server/schemas';
-import { getAIClient, TEXT_MODELS, attemptOutcome } from './server/gemini';
+import { getAIClient, TEXT_MODELS } from './server/gemini';
 import { generateJson, generateText, describeChain } from './server/llm/chain';
 import {
   generateProductionBible,
@@ -23,7 +22,7 @@ import {
   buildGenerationSummary,
 } from './server/scriptPipeline';
 import { isStrict, sendStrictFailure, orFallback } from './server/strict';
-import { reduceModelErrors, UpstreamUnavailableError, classifyGeminiError } from './server/quota';
+import { UpstreamUnavailableError } from './server/quota';
 import { analyzeScript, buildTimeline, placeMidrolls } from './server/timeline';
 import { applySoundDirection } from './server/soundPipeline';
 import { buildPublishPackage } from './server/publishPackage';
@@ -40,9 +39,9 @@ import { DEFAULT_CHANNEL_BRAND } from './shared/brand';
 import { isDocumentaryTone } from './shared/tone';
 import { stripCveIds } from './shared/plainTitle';
 import { withoutModelUsage, type ModelCall } from './shared/modelUsage';
-import { enterModelUsage, withModelTask, noteModelAttempt, trackModelCall } from './server/llm/usage';
-import { describeModelLineup, TTS_MODELS, TTS_VOICES } from './server/modelLineup';
-import { buildTtsPrompt } from './server/ttsPrompt';
+import { enterModelUsage, purposeForPath, withModelTask, trackModelCall } from './server/llm/usage';
+import { describeModelLineup, TTS_VOICES } from './server/modelLineup';
+import { synthesizeSpeech, TTS_MODEL_ID } from './server/tts';
 import { resolveTopicProfile, type TopicProfile } from './shared/topicProfile';
 import {
   generateNotebookLMAudioService,
@@ -69,7 +68,9 @@ app.use('/api', (req, res, next) => {
   }
   const calls: ModelCall[] = [];
   res.locals.modelUsage = calls;
-  enterModelUsage(calls, next);
+  // The route's name is the request's purpose ("/api/script" -> "script"), which decides who may use a model reserved
+  // in LLM_RESERVED_FOR (server/llm/providers.ts), e.g. Gemini 3.8 Flash for script writing only.
+  enterModelUsage(calls, next, purposeForPath(req.path));
 });
 
 // Health check endpoint
@@ -779,61 +780,29 @@ app.post('/api/publish-package', async (req, res) => {
 // 4. Text-To-Speech (TTS): TTS_MODELS in order (server/modelLineup.ts)
 app.post('/api/tts', async (req, res) => {
   const strict = isStrict(req);
-  const { text, voice = 'Puck', direction } = req.body;
+  const { text, voice = 'Puck', direction, model } = req.body;
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'text is required for TTS' });
+  }
+  // Optional: pin one engine (server/tts.ts). A typo must not silently fall back to the default order.
+  if (model !== undefined && (typeof model !== 'string' || !TTS_MODEL_ID.test(model))) {
+    return res.status(400).json({ error: 'model must be a Gemini TTS model id, e.g. gemini-3.1-flash-tts-preview' });
   }
 
   const selectedVoice = TTS_VOICES.includes(voice) ? voice : 'Puck';
 
   try {
     const ai = getAIClient();
-    let base64Audio: string | null = null;
-    let ttsModel: string | undefined;
-    const modelErrors: unknown[] = [];
-
     // One recorded call per clip, every TTS model tried for it listed in order.
-    await withModelTask(`Narration audio (voice ${selectedVoice})`, () =>
-      trackModelCall('speech', async () => {
-        for (const model of TTS_MODELS) {
-          const t0 = Date.now();
-          try {
-            const response = await ai.models.generateContent({
-              model,
-              contents: [{ parts: [{ text: buildTtsPrompt(text, direction) }] }],
-              config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                  voiceConfig: {
-                    prebuiltVoiceConfig: { voiceName: selectedVoice },
-                  },
-                },
-              },
-            });
-            const candidateAudio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-            if (candidateAudio) {
-              base64Audio = candidateAudio;
-              ttsModel = model;
-              noteModelAttempt({ provider: 'gemini', model, outcome: 'ok', ms: Date.now() - t0 });
-              return;
-            }
-            noteModelAttempt({ provider: 'gemini', model, outcome: 'invalid_output', detail: 'no audio in the response', ms: Date.now() - t0 });
-          } catch (ttsErr: any) {
-            modelErrors.push(ttsErr);
-            const c = classifyGeminiError(ttsErr);
-            noteModelAttempt({ provider: 'gemini', model, outcome: attemptOutcome(c.kind), detail: `${c.status ? `HTTP ${c.status} ` : ''}${c.kind.replace('_', '-')}`, ms: Date.now() - t0 });
-            console.warn(`[TTS Agent] Model ${model} notice:`, ttsErr?.message || ttsErr);
-          }
-        }
-        throw reduceModelErrors(modelErrors, 'No audio returned by models');
-      })
+    const spoken = await withModelTask(`Narration audio (voice ${selectedVoice})`, () =>
+      trackModelCall('speech', () => synthesizeSpeech(ai, { text, voice: selectedVoice, direction, model }))
     );
 
     res.json({
-      audioBase64: base64Audio,
+      audioBase64: spoken.audioBase64,
       voice: selectedVoice,
       sampleRate: 24000,
-      model: ttsModel,
+      model: spoken.model,
       modelUsage: res.locals.modelUsage,
     });
   } catch (error: any) {

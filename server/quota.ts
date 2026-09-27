@@ -188,9 +188,18 @@ export function summarizeQuotaFailures(failures: ClassifiedError[]): QuotaExhaus
  */
 export function reduceModelErrors(errors: unknown[], emptyMessage: string): unknown {
   const classified = errors.map((e) => ({ e, c: classifyGeminiError(e) }));
-  const retryable = classified.filter((x) => x.c.kind !== 'other').map((x) => x.c);
+  return reduceClassifiedFailures(
+    classified.map((x) => x.c),
+    classified.find((x) => x.c.kind === 'other')?.e,
+    emptyMessage
+  );
+}
+
+/** reduceModelErrors for failures already classified, e.g. models skipped while cooling down (no error object). */
+export function reduceClassifiedFailures(failures: ClassifiedError[], firstOther: unknown, emptyMessage: string): unknown {
+  const retryable = failures.filter((f) => f.kind !== 'other');
   if (retryable.length === 0) {
-    return classified.find((x) => x.c.kind === 'other')?.e ?? new Error(emptyMessage);
+    return firstOther ?? new Error(emptyMessage);
   }
   if (retryable.every((f) => isQuotaKind(f.kind))) return summarizeQuotaFailures(retryable);
   const perMinute = retryable.filter((f) => f.kind === 'per_minute').map((f) => f.retryAfterSec ?? DEFAULT_PER_MINUTE_RETRY_SEC);

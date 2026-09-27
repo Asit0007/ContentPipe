@@ -170,7 +170,7 @@ async function startApp() {
     cwd: REPO,
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', LLM_MODEL_ORDER: '', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir,
+    env: { ...process.env, PORT: String(APP_PORT), GEMINI_API_KEY: 'stub-key', LLM_PROVIDER_ORDER: 'gemini', LLM_MODEL_ORDER: '', GEMINI_RPM_PACING: 'off', GOOGLE_GEMINI_BASE_URL: `http://127.0.0.1:${stubPort}`, POLLINATIONS_BASE_URL: `http://127.0.0.1:${stubPort}`, CONTENTPIPE_RUNS_DIR: runsDir,
       // Media: one stub Space, then Gemini's (limit 0) image model, then Pollinations — every rung the chain can take.
       HF_SPACE_BASE_URL: `http://127.0.0.1:${stubPort}/hf`, HF_TOKEN: 'hf_e2e', CONTENTPIPE_RENDERS_DIR: rendersDir,
       HF_TOKEN_SPACE_OWNERS: 'e2e', IMAGE_PROVIDER_ORDER: 'hf:e2e/image-space,gemini:gemini-3.1-flash-image,pollinations', VIDEO_PROVIDER_ORDER: 'hf:e2e/video-a,hf:e2e/video-b' },

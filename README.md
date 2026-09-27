@@ -11,7 +11,7 @@ Text generation runs through a **multi-provider LLM chain** — DeepSeek first, 
 
 ---
 
-## Where it stands (2026-09-27)
+## Where it stands (2026-09-27, evening)
 
 The goal: *feed in a news item and links to its sources, have the app research it, write the script, and produce the images (character, background, scene) and the animation of those images into video.*
 
@@ -25,11 +25,11 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Titles, thumbnails, description, tags, chapters | **Done** |
 | Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro, FLUX and Midjourney prompts by hand via copy buttons |
 | Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day; Wan 2.2 reserves ~54 s a 4 s clip at 6 steps (about 5-8 a day, **being measured**, see below) |
-| Narration | Works, **one voice**; the two-voice (narrator + analyst) read is not wired into TTS |
+| Narration | **Two voices via ContentRender**: narrator Kokoro `af_heart` (local), analyst Gemini TTS `Charon` through `/api/tts` with the engine pinned; the browser UI still reads one voice |
 | Stills + narration → one MP4 with captions | **Module only** (`server/assemble.ts`, `npm run render:fixture`); no endpoint or button, and it uses stills, not the AI clips |
 | Batch generation of every scene's assets, checkpointed | **Not built** |
 | Burned-in captions / on-screen text | **Not built** (this ffmpeg lacks `drawtext`) |
-| Automated end to end via CyberPipe | Stages 1-3 only (research, plan, script) |
+| Automated end to end via CyberPipe | **Built, not yet run on a real story**: research → plan → script (this server) → images → clips + narration → Resolve bundle (ContentRender), with Telegram gates |
 | A published Blast Radius video | **Not yet** |
 
 **Known quality issue:** MiniMax-H3's own soundtrack on clips is poor (owner's verdict on the first live clip, 2026-09-26). Mute clip audio in the edit and use the sound pass's cue sheet (YouTube Audio Library / Pixabay) and the narration instead. The picture is good.
@@ -60,10 +60,16 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `XAI_API_KEY` | No | Grok (xAI), pay-per-token. `GROK_API_KEY` is accepted too. Not the same company as Groq. |
 | `GROQ_API_KEY`, `CEREBRAS_API_KEY`, `OPENROUTER_API_KEY` | No | Free tiers, rate-limited. OpenRouter uses its `:free` models. (Cerebras answered HTTP 402 "payment required" with the owner's key on 2026-09-27.) |
 | `HF_INFERENCE_TOKEN` | No | A fine-grained Hugging Face token with only "Make calls to Inference Providers" (not `HF_TOKEN`). Routes DeepSeek-V4-Flash through Hugging Face's router: **$0.10 of free credit a month**, then pay-as-you-go (credits must be bought; without them the chain skips it on HTTP 402). Provider id `huggingface`. |
+| `REQUESTY_API_KEY` | No | Requesty router, free plan: 200 requests/day across its free models. Its strong free models (Nemotron 3 Ultra/Super) are "Training Permitted": prompts and outputs are kept for training. Public-news prompts only. Provider id `requesty`. |
 | `MISTRAL_API_KEY` | No | Free "Experiment" tier, which requires opting into training on your prompts. |
-| `LLM_PROVIDER_ORDER` | No | Comma-separated. Default `deepseek,xai,groq,cerebras,openrouter,ollama,huggingface,mistral,gemini`. |
+| `LLM_PROVIDER_ORDER` | No | Comma-separated. Default `deepseek,xai,groq,cerebras,openrouter,ollama,huggingface,requesty,mistral,gemini`. |
 | `<ID>_MODELS`, `<ID>_MAX_TOKENS`, `<ID>_BASE_URL` | No | Per-provider overrides, `<ID>` = `DEEPSEEK`, `XAI`, `GROQ`, `CEREBRAS`, `OPENROUTER`, `MISTRAL`. Model ids drift — see `npm run llm:check`. |
 | `LLM_TIMEOUT_MS` | No | Per-request ceiling for the non-Gemini providers. Defaults to 120000. |
+| `LLM_RESERVED_FOR` | No | Models only some routes may use: `provider:model=purpose`, purposes being route names (`script`, `plan`, ...), `|` for several, comma-separated. E.g. `gemini:gemini-3.8-flash=script` keeps the smartest free Gemini model's ~20 requests/day for script writing. |
+| `GEMINI_TIMEOUT_MS` | No | Per-request ceiling for Gemini text calls. Falls back to `LLM_TIMEOUT_MS`, then 180000. A timed-out model is skipped for 10 min. |
+| `TTS_TOTAL_BUDGET_MS` | No | Deadline for one whole `/api/tts` request, pacing and every model tried included. Defaults to 170000 (under ContentRender's 180 s client timeout). |
+| `TTS_TIMEOUT_MS` | No | Per-request ceiling for Gemini TTS. Defaults to 90000 (under ContentRender's 120 s client timeout). |
+| `GEMINI_RPM_PACING` | No | `off` stops pacing Gemini calls to the free tier's per-minute limits (Flash 5, Flash-Lite 15, TTS 3, Gemma 30). Turn it off once billing is on. |
 | `NOTEBOOKLM_API_KEY` | No | Falls back to `GEMINI_API_KEY`. |
 | `APP_URL` | No | Self-referential links. |
 | `PORT` | No | Defaults to 3000. |
@@ -107,7 +113,7 @@ Telegram / news input
 
   /api/publish-package ─ titles, thumbnails, description, tags (on demand, after the script)
 
-  /api/tts, /api/generate-image ── narration audio and scene stills, per scene (`/api/tts` takes an optional `direction`, a directed-read prompt)
+  /api/tts, /api/generate-image ── narration audio and scene stills, per scene (`/api/tts` takes an optional `direction`, a directed-read prompt, and an optional `model` that pins one TTS engine)
   /api/generate-video ── animate a scene still into a short clip (Hugging Face), saved to renders/clips/
   server/assemble.ts ──────────── stills + narration -> MP4 + .en.srt (a module, not an endpoint yet)
 ```
@@ -123,6 +129,48 @@ Two callers, same endpoints. **The browser UI** walks the stages interactively a
 | Runs as | one HTTP server on `localhost:3000` | two long-running processes (scheduler, Telegram poller) under launchd |
 | State | `.runs/` chunk journals, `exports/`, `renders/` | `pipeline.db`: job status, stage outputs, notifications |
 | Retries | seconds, inside one request (provider chain, cooldowns, one bounded wait) | minutes to days, across requests (`Retry-After`, backoff, 7-day cap) |
+
+### How the calls are divided
+
+Who calls what, when, and which models answer. Counts are for a 9-minute script (~51 scenes). A third caller,
+**[ContentRender](https://github.com/Asit0007/ContentRender)** (a command line CyberPipe runs), uses the media routes.
+
+```
+CyberPipe  (scheduler.py, a 60 s loop; one job = one story; every call strict)
+├── research ────────────► POST /api/research ──► text chain, purpose "research"             1 call (+ source fetches, no model)
+├── plan ────────────────► POST /api/plan ──────► text chain, purpose "plan"                 1 call
+├── script ──────────────► POST /api/script ────► text chain, purpose "script"               ~34 calls, checkpointed in .runs/
+│                                                   production bible 1 · narrative 3 scenes/call (17)
+│                                                   · art direction 6 scenes/call (9) · score plan 1 · sound 10 scenes/call (6)
+│   └── Telegram gate: approve / regenerate
+├── images ──► ContentRender step ──► POST /api/generate-image ──► IMAGE_PROVIDER_ORDER (Cloudflare FLUX.2 klein 4B)   1 per scene
+│   └── Telegram gate (/regen <job> <scenes>)
+├── narration ─► ContentRender step
+│   ├── AI clips ──────► POST /api/generate-video ──► VIDEO_PROVIDER_ORDER (HF Spaces: MiniMax-H3, then Wan 2.2)  up to 6 slots;
+│   │                                                                                             a failure becomes Ken Burns
+│   ├── narrator ──────► Kokoro af_heart, local (no API)                                    ~43 scenes
+│   └── analyst ───────► POST /api/tts {model pinned} ──► Gemini 3.1 Flash TTS, voice Charon  ~8 scenes (every 6th, never the last)
+│   └── Telegram gate
+└── bundle ──► ContentRender: FCPXML, captions, rough cut (ffmpeg, local, no model)
+    └── Telegram gate ──► COMPLETED (open the bundle in DaVinci Resolve)
+
+Browser UI (npm run dev, 127.0.0.1:3000): the same routes one at a time, plus /api/publish-package (titles, thumbnails,
+  tags: 1-2 calls), /api/chat, /api/ip-names and /api/notebooklm-* — all text chain, purpose = the route's name.
+Video burn (launchd, hourly): scripts/video-burn.ts calls the video providers in-process (no HTTP), spending each
+  free Hugging Face GPU window: account pool MiniMax-H3 -> LTX-2.3 -> Wan 2.2; anonymous pool: two staff Wan Spaces.
+
+Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intelligence first:
+  skip models reserved for other routes (LLM_RESERVED_FOR: gemini-3.8-flash is for "script")
+  -> skip models cooling down (quota until reset; 503 30 s doubling to 10 min; timeout 10 min; 404/402 30 min)
+  -> wait for a per-minute slot (Gemini Flash 5, Flash-Lite 15, TTS 3; server/rateLimit.ts)
+  -> one request -> schema check, one repair round -> next model on failure
+  -> every request appended to .runs/model-usage.jsonl (read by JobPipe's review dashboard)
+```
+
+**Where the free quota goes.** The script is by far the biggest spender (about 34 of the ~37 text calls a video makes), which is why
+the smartest free model, Gemini 3.8 Flash (20 requests a day), is reserved for it; research and plan use the rest of the chain.
+Images draw on Cloudflare's 10,000 free Neurons a day, clips on the Hugging Face GPU allowance (shared with the video burn), and the
+analyst voice on Gemini TTS's 10 requests a day per engine.
 
 ### Research is real, within limits
 
@@ -287,8 +335,9 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 | 5 | OpenRouter | free `:free` models | `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `qwen/qwen3.8-27b:free`, `nvidia/nemotron-3.5-lightning:free` |
 | 6 | Ollama Cloud | free usage tier | `nemotron-3-ultra`, `gemma4:31b`, `nemotron-3-super`, `gpt-oss:120b` |
 | 7 | Hugging Face (routed) | $0.10 free credit a month, then pay-as-you-go; needs `HF_INFERENCE_TOKEN` | `deepseek-ai/DeepSeek-V4-Flash:cheapest` |
-| 8 | Mistral | free tier, trains on prompts | `ministral-14b-latest`, `ministral-8b-latest` |
-| 9 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
+| 8 | Requesty | free plan, 200 requests/day; the Nemotron models train on prompts ("Training Permitted Models") | `nvidia/nemotron-3-ultra-550b-a55b`, `nvidia/nemotron-3-super-120b-a12b`, `google/gemma-4-31b-it` |
+| 9 | Mistral | free tier, trains on prompts | `ministral-14b-latest`, `ministral-8b-latest` |
+| 10 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
 
 **Those model ids are best guesses from documentation, not live calls.** Run `npm run llm:check`: it lists each provider's real `/models`, flags any configured id that isn't there, and makes one tiny JSON request per provider so a bad key, an empty balance or a rejected parameter shows up before a real run. Override with `<ID>_MODELS`.
 
@@ -386,7 +435,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 373 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 418 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
@@ -407,9 +456,13 @@ server/
   llm/chain.ts                the provider chain: generateJson / generateText, error classification, cooldowns
   llm/providers.ts            provider registry, default model ids, env resolution
   llm/schema.ts               Gemini schema -> JSON Schema, and the local validator
-  llm/usage.ts                per-request record of which model answered each call (modelUsage)
+  llm/usage.ts                per-request record of which model answered each call (modelUsage), the request's purpose,
+                              and the append-only .runs/model-usage.jsonl log
   modelLineup.ts              GET /api/models: the configured models per kind of generation, in order
-  gemini.ts                   Gemini client, TEXT_MODELS chain, quota-aware generateGeminiJson (the chain's last tier)
+  gemini.ts                   Gemini client, TEXT_MODELS chain, quota-aware generateGeminiJson; cooldowns for 503 /
+                              timeout / 404 and a per-call deadline
+  rateLimit.ts                per-model per-minute pacing for Gemini (Flash 5, Flash-Lite 15, TTS 3)
+  tts.ts                      /api/tts: Gemini TTS with cooldowns, pacing and an optional pinned engine
   quota.ts                    classifies Gemini errors (per-minute / per-day / limit: 0 / overload) and reduces failures across providers
   strict.ts                   strict-mode status mapping (X-ContentPipe-Strict)
   assemble.ts                 scene stills + narration -> MP4 via local ffmpeg; refuses placeholders and fallback audio

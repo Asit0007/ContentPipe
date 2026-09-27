@@ -211,7 +211,9 @@ export function parseGradioEvents(body: string): unknown[] {
   if (lastError) fail(lastError);
   // A null error means the Space hides its messages (show_error off). The cause is unknowable — on ZeroGPU often the
   // GPU allowance, sometimes a crash — so it is classified explicitly as transient rather than by this wording.
-  throw new SpaceError('The Space failed without saying why (it hides its errors; with no HF_TOKEN this is usually the anonymous GPU allowance)', {
+  // The hint used to say "with no HF_TOKEN", and it was printed for calls that DID send the token (the video burn's
+  // account pool, 54 times on 2026-09-27), which reads like a missing-token bug. This parser does not know which it was.
+  throw new SpaceError('The Space failed without saying why (it hides its errors; on ZeroGPU that is usually the GPU allowance of whoever called it, the account if a token was sent, else the anonymous one)', {
     kind: 'transient',
     retryAfterSec: 60,
   });

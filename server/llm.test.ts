@@ -93,7 +93,7 @@ test('Ollama Cloud resolves from OLLAMA_API_KEY or from the misspelt OLAMA_API_K
     assert.equal(p.spec.baseUrl, 'https://ollama.com/v1');
     assert.deepEqual(p.models, ['nemotron-3-ultra', 'gemma4:31b', 'nemotron-3-super', 'gpt-oss:120b']);
   }
-  assert.deepEqual(providerOrder({}).slice(-4), ['ollama', 'huggingface', 'mistral', 'gemini'], 'in the default order, ahead of Hugging Face, Mistral and Gemini');
+  assert.deepEqual(providerOrder({}).slice(-5), ['ollama', 'huggingface', 'requesty', 'mistral', 'gemini'], 'in the default order, ahead of Hugging Face, Requesty, Mistral and Gemini');
 });
 
 test('Cerebras defaults are the two ids its live catalog lists (checked 2026-09-27), not the retired llama-3.3-70b', () => {
@@ -110,6 +110,16 @@ test('Hugging Face routed inference only resolves from HF_INFERENCE_TOKEN, never
   assert.deepEqual(p.models, ['deepseek-ai/DeepSeek-V4-Flash:cheapest']);
   const ranked = resolveProviders({ HF_INFERENCE_TOKEN: 'h', LLM_MODEL_ORDER: 'huggingface:deepseek-ai/DeepSeek-V4.1-Flash:cheapest' });
   assert.deepEqual(ranked[0].models, ['deepseek-ai/DeepSeek-V4.1-Flash:cheapest'], 'everything after the first colon is the model id, including the routing suffix');
+});
+
+test('Requesty resolves from REQUESTY_API_KEY, non-training Gemma last in its list, and sits beside Mistral (both train)', () => {
+  const [p] = resolveProviders({ REQUESTY_API_KEY: 'r' });
+  assert.equal(p.spec.id, 'requesty');
+  assert.equal(p.spec.baseUrl, 'https://router.requesty.ai/v1');
+  assert.deepEqual(p.models, ['nvidia/nemotron-3-ultra-550b-a55b', 'nvidia/nemotron-3-super-120b-a12b', 'google/gemma-4-31b-it']);
+  const order = providerOrder({});
+  assert.equal(order.indexOf('requesty'), order.indexOf('mistral') - 1);
+  assert.ok(order.indexOf('requesty') > order.indexOf('ollama'), 'behind the free tiers that do not train on prompts');
 });
 
 // ---------- model-by-model order (LLM_MODEL_ORDER) ----------
@@ -284,6 +294,29 @@ const env = { DEEPSEEK_API_KEY: 'ds-key', XAI_API_KEY: 'xai-key', GROQ_API_KEY: 
 const simple = { type: Type.OBJECT, properties: { answer: { type: Type.STRING } }, required: ['answer'] };
 const run = (ai: any, f: typeof fetch, e: Record<string, string> = env) =>
   generateJson<any>(ai, 'the prompt', 'the system', ['gm1'], simple, { fetch: f, env: e, sleep: async () => {}, now: () => 1_000_000 });
+
+const REQ = 'router.requesty.ai';
+const reqEnv = { REQUESTY_API_KEY: 'r-key', REQUESTY_MODELS: 'google/gemma-4-31b-it', GEMINI_API_KEY: 'g-key' };
+
+test('a model that rejects JSON mode is asked again without response_format, and from then on never with it', async () => {
+  const rejected = { status: 400, body: '{"error":{"message":"response_format json_object is not supported for this model"}}' };
+  const { f, calls } = fakeFetch({ [REQ]: [rejected, { content: '{"answer":"plain"}' }, { content: '{"answer":"again"}' }] });
+  assert.deepEqual(await run(noGemini, f, reqEnv), { answer: 'plain' });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].body.response_format, { type: 'json_object' });
+  assert.equal('response_format' in calls[1].body, false);
+  assert.match(calls[1].body.messages[0].content, /ONE JSON object/, 'the system prompt still asks for JSON');
+
+  assert.deepEqual(await run(noGemini, f, reqEnv), { answer: 'again' });
+  assert.equal(calls.length, 3, 'no wasted rejected call on the next request');
+  assert.equal('response_format' in calls[2].body, false);
+});
+
+test('a 400 about something else is not mistaken for a JSON-mode refusal', async () => {
+  const { f, calls } = fakeFetch({ [REQ]: [{ status: 400, body: '{"error":{"message":"messages: too many"}}' }] });
+  await assert.rejects(run(noGemini, f, { REQUESTY_API_KEY: 'r-key', REQUESTY_MODELS: 'google/gemma-4-31b-it' }));
+  assert.equal(calls.length, 1);
+});
 
 test('DeepSeek answers first: right URL, auth, JSON mode, schema in the prompt, Gemini never touched', async () => {
   const { f, calls } = fakeFetch({ [DS]: [{ content: '{"answer":"hi"}' }] });
@@ -586,4 +619,11 @@ test('rootArray also accepts a bare array or a single-key wrapper, and rejects e
   resetLlmCooldowns();
   const { f } = fakeFetch({ [DS]: [{ content: '{"items":[]}' }], [XAI]: [{ content: '{"items":[{"id":"c"}]}' }] });
   assert.deepEqual(await runArray(f), [{ id: 'c' }], 'an empty array is a failed answer: repaired once, then next provider');
+});
+
+test('review #5: a 400 that merely quotes response_format is not read as "JSON mode unsupported"', async () => {
+  const quoted = { status: 400, body: '{"error":{"message":"prompt is too long for this model (request had response_format json_object)"}}' };
+  const { f, calls } = fakeFetch({ [REQ]: [quoted, { content: '{"answer":"x"}' }] });
+  await assert.rejects(run(noGemini, f, { REQUESTY_API_KEY: 'r-key', REQUESTY_MODELS: 'google/gemma-4-31b-it' }));
+  assert.equal(calls.length, 1, 'no second, counted request without JSON mode');
 });
