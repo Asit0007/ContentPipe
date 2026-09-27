@@ -167,6 +167,8 @@ Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intell
   -> every request appended to .runs/model-usage.jsonl (read by JobPipe's review dashboard)
 ```
 
+**Planned (2026-09-27): the story cycle.** The clips step moves after narration and **pauses** when the day's free GPU allowance runs out, instead of turning the rest into Ken Burns; AI clips start at 08:00 and resume the next morning, while the owner makes the rest by hand in Kling (target ~90% motion: ~20% AI, ~70% Kling). The hourly video burn is unloaded because it spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
+
 **Where the free quota goes.** The script is by far the biggest spender (about 34 of the ~37 text calls a video makes), which is why
 the smartest free model, Gemini 3.8 Flash (20 requests a day), is reserved for it; research and plan use the rest of the chain.
 Images draw on Cloudflare's 10,000 free Neurons a day, clips on the Hugging Face GPU allowance (shared with the video burn), and the
@@ -397,7 +399,7 @@ Hugging Face ZeroGPU gives a free account ~5 GPU-minutes a day, shared by images
 
 Every scene also exports three copy-paste prompts (buttons in the script editor and sections in the markdown export): **Nano Banana Pro**, **FLUX** and **Midjourney**. The FLUX and Midjourney ones (`shared/imagePrompts.ts`) add a clarity sentence before the style anchor, because a noisy or busy still flickers once animated, and Midjourney gets `--ar`, `--style raw` and a real `--no` field.
 
-### Daily video burn (running)
+### Daily video burn (unloaded 2026-09-27; to be retired)
 
 A LaunchAgent (`deploy/com.asitminz.videoburn.plist`, installed as `com.asitminz.videoburn`) runs `scripts/video-burn.ts` every hour and spends each free Hugging Face ZeroGPU window on as much AI footage as it gives (owner's "Balanced" profile, 2026-09-27). Two independent pools: **account** (your `HF_TOKEN`, 5 GPU-min/day; only Spaces owned by organisations trusted with the token) runs one MiniMax-H3 hero clip, then LTX-2.3 (Lightricks) clips, then Wan 2.2 at 4 steps to fill what is left; **anonymous** (no token, 2 GPU-min/day per IP) runs two Hugging Face-staff Wan Spaces, so the token never reaches their code. A refused call costs no quota; the first success in a pool opens its 24 h window; a spent pool sleeps 3 h and starts a fresh window 24 h after its first success. A "shared ZeroGPU pool is at capacity" answer is retried once after a minute. Shots come from `renders/video-burn/shots.json` (round-robin), so with one shot every model animates the same still and the clips compare side by side. Results: `renders/video-burn/summary.md`, `npx tsx scripts/video-burn.ts --status`. Pool and model choices, reservation maths and licences are in `server/videoBurn.ts`; the design it feeds is `../ContentRender/DESIGN.md`.
 
