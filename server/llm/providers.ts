@@ -142,7 +142,9 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
     baseUrl: 'https://api.mistral.ai/v1',
     keyEnv: ['MISTRAL_API_KEY'],
     modelsEnv: 'MISTRAL_MODELS',
-    defaultModels: ['mistral-large-latest', 'mistral-small-latest'],
+    // A free key (checked 2026-09-27) does not list mistral-large-latest, and answers Small, Medium and Magistral with
+    // a 0 requests/min limit; Ministral 14B (30/min) and 8B (188/min) answer, JSON mode included.
+    defaultModels: ['ministral-14b-latest', 'ministral-8b-latest'],
     maxTokensParam: 'max_tokens',
     maxTokens: 16000,
   },

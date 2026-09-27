@@ -287,7 +287,7 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 | 5 | OpenRouter | free `:free` models | `nvidia/nemotron-3-ultra-550b-a55b:free`, `nvidia/nemotron-3-super-120b-a12b:free`, `qwen/qwen3.8-27b:free`, `nvidia/nemotron-3.5-lightning:free` |
 | 6 | Ollama Cloud | free usage tier | `nemotron-3-ultra`, `gemma4:31b`, `nemotron-3-super`, `gpt-oss:120b` |
 | 7 | Hugging Face (routed) | $0.10 free credit a month, then pay-as-you-go; needs `HF_INFERENCE_TOKEN` | `deepseek-ai/DeepSeek-V4-Flash:cheapest` |
-| 8 | Mistral | free tier, trains on prompts | `mistral-large-latest`, `mistral-small-latest` |
+| 8 | Mistral | free tier, trains on prompts | `ministral-14b-latest`, `ministral-8b-latest` |
 | 9 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
 
 **Those model ids are best guesses from documentation, not live calls.** Run `npm run llm:check`: it lists each provider's real `/models`, flags any configured id that isn't there, and makes one tiny JSON request per provider so a bad key, an empty balance or a rejected parameter shows up before a real run. Override with `<ID>_MODELS`.
