@@ -54,7 +54,8 @@ export const MODEL_INFO: Record<string, ModelInfo> = {
   'qwen-3.8-27b': { name: 'Qwen 3.8 27B', maker: 'Alibaba (Qwen)', intelligence: 34, notes: 'On Cerebras: the same model as Groq\'s, on separate rate limits. HTTP 402 with the owner\'s key on 2026-09-27.' },
   'deepseek-ai/DeepSeek-V4-Flash:cheapest': { name: 'DeepSeek V4 Flash (via Hugging Face)', maker: 'DeepSeek', notes: 'Routed by Hugging Face to the cheapest provider. Paid per token; the free $0.10 a month lasts roughly a dozen script calls. Unverified on our schemas.' },
   'gpt-oss-120b': { name: 'gpt-oss-120b', maker: 'OpenAI (open weights)', intelligence: 12 },
-  'mistral-small-latest': { name: 'Mistral Small', maker: 'Mistral AI', intelligence: 11, notes: 'Never answers on this key: 429 with a 0 requests/min limit (2026-09-27). ministral-14b-latest works.' },
+  'mistral-small-latest': { name: 'Mistral Small', maker: 'Mistral AI', intelligence: 11, notes: 'Never answers on this key: 429 with a 0 requests/min limit (2026-09-27), so it was replaced by Ministral 14B.' },
+  'ministral-14b-latest': { name: 'Ministral 14B', maker: 'Mistral AI', notes: 'Last in the chain since 2026-09-27, replacing Mistral Small (blocked on this key). 30 requests/min on the free tier; JSON mode works (4 s). Not scored here. Mistral\'s free tier trains on prompts.' },
   'nvidia/nemotron-3.5-lightning:free': { name: 'Nemotron 3.5 Lightning (free)', maker: 'NVIDIA', intelligence: 13, notes: 'Took 57 s for a one-word reply on 2026-09-27.' },
   // Images: Cloudflare Workers AI (IMAGE_PROVIDER_ORDER=cloudflare:<model>), added 2026-09-27 to keep the Hugging Face GPU quota for video.
   'flux-2-klein-4b': { name: 'FLUX.2 [klein] 4B', maker: 'Black Forest Labs', notes: 'On Workers AI: multipart, 256-1920 px, 4 fixed steps. Weights are Apache 2.0, but Cloudflare states no licence: confirm before monetised use.' },

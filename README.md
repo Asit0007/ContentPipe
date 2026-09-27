@@ -386,7 +386,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 371 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 373 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call

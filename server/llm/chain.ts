@@ -42,7 +42,9 @@ export class ProviderHttpError extends Error {
     readonly provider: string,
     readonly status: number,
     readonly body: string,
-    readonly retryAfterSec?: number
+    readonly retryAfterSec?: number,
+    /** An `x-ratelimit-limit-*` header said 0: this key may never call this model (see `zeroRateLimit`). */
+    readonly limitZero = false
   ) {
     super(`${provider} HTTP ${status}: ${body.slice(0, 300)}`);
     this.name = 'ProviderHttpError';
@@ -113,7 +115,7 @@ function secondsUntilNextUtcMidnight(nowMs: number): number {
  * Why an `other` failure will repeat on the same model, so the chain skips that model for a while
  * instead of paying for the same refusal on every request.
  */
-export type RepeatCause = 'model_missing' | 'too_large' | 'timeout';
+export type RepeatCause = 'model_missing' | 'too_large' | 'timeout' | 'model_blocked';
 
 export interface ProviderClassification extends ClassifiedError {
   cause?: RepeatCause;
@@ -127,6 +129,10 @@ export function classifyProviderError(err: unknown, nowMs: number = Date.now()):
   if (err instanceof ProviderHttpError) {
     const { status, body } = err;
     if (status === 402 || ((status === 403 || status === 429) && NO_BALANCE.test(body))) return { kind: 'zero', status };
+    // Mistral's free key answers 429 "Rate limit exceeded" with `x-ratelimit-limit-req-minute: 0` for the models it
+    // does not cover (Small, Medium, Magistral; 2026-09-27). No wait fixes a limit of 0, so it is `zero`, but only for
+    // this model: the same key still serves Ministral and Codestral.
+    if (status === 429 && err.limitZero) return { kind: 'zero', status, cause: 'model_blocked' };
     if (status === 429) {
       const hint = err.retryAfterSec ?? parseDurationSec(body) ?? resetEpochSec(body, nowMs);
       if (PER_DAY.test(body) || (hint ?? 0) > 300) {
@@ -169,9 +175,13 @@ export function resetLlmCooldowns(): void {
 
 const isAuthStatus = (s?: number) => s === 401 || s === 402 || s === 403;
 
-/** Key/billing problems are provider-wide; quota is per model (Groq and Gemini both meter models separately). */
-function cooldownKey(providerId: string, model: string, c: ClassifiedError): string {
-  return isAuthStatus(c.status) || c.kind === 'zero' ? `${providerId}:*` : `${providerId}:${model}`;
+/**
+ * Key/billing problems are provider-wide; quota is per model (Groq and Gemini both meter models separately), and so is
+ * a model the key is blocked from (`model_blocked`).
+ */
+function cooldownKey(providerId: string, model: string, c: ProviderClassification): string {
+  const providerWide = isAuthStatus(c.status) || (c.kind === 'zero' && c.cause !== 'model_blocked');
+  return providerWide ? `${providerId}:*` : `${providerId}:${model}`;
 }
 
 /**
@@ -227,6 +237,14 @@ interface ChatResult {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
+/** True when any `x-ratelimit-limit-*` header is exactly 0 (Mistral: `x-ratelimit-limit-req-minute: 0`). */
+function zeroRateLimit(res: Response): boolean {
+  for (const [name, value] of res.headers) {
+    if (name.startsWith('x-ratelimit-limit-') && value.trim() === '0') return true;
+  }
+  return false;
+}
+
 function retryAfterHeader(res: Response): number | undefined {
   const raw = res.headers.get('retry-after');
   const n = raw === null ? NaN : Number(raw);
@@ -278,7 +296,7 @@ export async function callChat(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new ProviderHttpError(p.spec.id, res.status, body, retryAfterHeader(res));
+    throw new ProviderHttpError(p.spec.id, res.status, body, retryAfterHeader(res), zeroRateLimit(res));
   }
   const data: any = await res.json();
   const choice = data?.choices?.[0];
@@ -296,7 +314,7 @@ export async function listModelIds(p: ResolvedProvider, opts: LlmOptions = {}): 
     headers: { Authorization: `Bearer ${p.apiKey}`, ...(p.spec.headers ?? {}) },
     signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
   });
-  if (!res.ok) throw new ProviderHttpError(p.spec.id, res.status, await res.text().catch(() => ''), retryAfterHeader(res));
+  if (!res.ok) throw new ProviderHttpError(p.spec.id, res.status, await res.text().catch(() => ''), retryAfterHeader(res), zeroRateLimit(res));
   const data: any = await res.json();
   return (data?.data ?? []).map((m: any) => String(m?.id)).filter(Boolean);
 }

@@ -202,6 +202,17 @@ test('a per-minute rate limit whose upgrade link mentions billing is still just 
   assert.equal(classifyProviderError(http(429, 'Please check your billing details to continue')).kind, 'zero');
 });
 
+// Live, 2026-09-27: Mistral's free key answered mistral-small-latest with this body and `x-ratelimit-limit-req-minute: 0`.
+// Read as per-minute it was retried after every 60 s cooldown, forever.
+const MISTRAL_BLOCKED_BODY = '{"object":"error","message":"Rate limit exceeded","type":"rate_limited","param":null,"code":"1300","raw_status_code":429}';
+
+test('a 429 whose rate-limit header says 0 is a blocked model (zero), not a per-minute wait', () => {
+  const blocked = new ProviderHttpError('mistral', 429, MISTRAL_BLOCKED_BODY, undefined, true);
+  assert.deepEqual(classifyProviderError(blocked), { kind: 'zero', status: 429, cause: 'model_blocked' });
+  // The same body without the zero header is still an ordinary per-minute limit.
+  assert.equal(classifyProviderError(http(429, MISTRAL_BLOCKED_BODY)).kind, 'per_minute');
+});
+
 test('parseDurationSec reads the compound durations providers put in 429 bodies', () => {
   assert.equal(parseDurationSec('Please try again in 7m12.5s.'), 433);
   assert.equal(parseDurationSec('try again in 45s'), 45);
@@ -418,6 +429,21 @@ test('a timeout benches the model for ten minutes, not the 30 s a 5xx earns', as
   t += 600_000;
   await call();
   assert.deepEqual(calls.map((c) => c.body.model), ['slow', 'fast', 'fast', 'slow', 'fast'], 'after ten minutes it gets another chance');
+});
+
+test('a model blocked by a 0 rate limit is benched for 30 min, while the same provider\'s other models still run', async () => {
+  const blocked = { status: 429, body: MISTRAL_BLOCKED_BODY, headers: { 'x-ratelimit-limit-req-minute': '0', 'x-ratelimit-remaining-req-minute': '0' } };
+  const { f, calls } = fakeFetch({ [DS]: [blocked, { content: '{"answer":"open"}' }] });
+  let t = 1_000_000;
+  const e = { DEEPSEEK_API_KEY: 'k', DEEPSEEK_MODELS: 'blocked-model,open-model' };
+  const call = () => generateJson<any>(noGemini, 'p', 's', ['gm1'], simple, { fetch: f, env: e, sleep: async () => {}, now: () => t });
+  assert.deepEqual(await call(), { answer: 'open' });
+  t += 5 * 60_000; // past any per-minute wait, inside the 30-min bench
+  assert.deepEqual(await call(), { answer: 'open' });
+  assert.deepEqual(calls.map((c) => c.body.model), ['blocked-model', 'open-model', 'open-model'], 'the blocked model was not retried; its sibling was not benched');
+  t += 30 * 60_000;
+  await call();
+  assert.equal(calls[3].body.model, 'blocked-model', 'after 30 minutes it gets another chance (a key upgrade is picked up)');
 });
 
 test('every provider on a daily cap with no reset time -> a long Retry-After, not a one-minute re-poll', async () => {
