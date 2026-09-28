@@ -34,9 +34,16 @@ const EXPECTED_DEFAULT: TopicProfile = {
   bibleShowDocumentary: 'an investigative cybersecurity documentary',
   bibleShowInfotainment: 'a short infotainment video',
   bibleCharacterExampleNote: '(e.g. the Narrator-Analyst, the Attacker, the On-Call Engineer)',
+  // Hand-copied on purpose, CHANNEL_VISUAL_STYLE included rather than imported: this literal is the guard on
+  // what every Blast Radius video looks like, so changing the channel's grade must fail here and be re-copied
+  // deliberately, not ride along silently on an edit to shared/brand.ts.
   bibleDocumentaryVisualDiscipline: `
 
-Documentary visual discipline: favour restrained, evidence-led imagery — real interfaces, terminals, architecture diagrams, source documents. The "negativePrompt" must always exclude: hooded hackers, green Matrix-style code rain, skulls, generic padlock icons, cartoon villains, stock-photo "hacker in a basement" scenes.`,
+Documentary visual discipline: the evidence on screen is real — interfaces, terminals, architecture diagrams, source documents — and every one of them is a practical object inside a lit place, filmed rather than screenshotted: a terminal is a glowing monitor on a desk in a dim room, a diagram is a wall display in a control room, an email is paper under a desk lamp, a data graph is a projection someone is standing next to. Frame the evidence that way because each still becomes the first frame of an animated clip, and a flat full-screen screenshot has nothing in it that can move.
+
+Grade the whole production as cyberpunk noir: high-contrast practical lighting, deep shadow, one or two saturated sources (cyan, magenta or ember) against near-black, reflective and rain-wet surfaces, volumetric haze, anamorphic lens with shallow depth of field, 35mm cinematic texture — grounded and restrained, never neon-sign clutter, purple grid horizons or synthwave poster art. Apply it to "artDirection", "colorPalette", "lighting" and "lensAndFilm" so every scene inherits one look.
+
+The "negativePrompt" must always exclude: hooded hackers, green Matrix-style code rain, skulls, generic padlock icons, cartoon villains, stock-photo "hacker in a basement" scenes.`,
 
   writerPersonaDocumentary:
     "You are an investigative documentary scriptwriter and creative director working in the style of authoritative long-form cybersecurity journalism (Bloomberg cyber docs, Darknet Diaries' narrative pacing, a Netflix true-crime breakdown) — not an infotainment creator.",

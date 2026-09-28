@@ -16,6 +16,8 @@
  * inline, that test catches it.
  */
 
+import { CHANNEL_VISUAL_STYLE } from './brand';
+
 export const DEFAULT_TOPIC_DOMAIN = 'hacking and cybersecurity news';
 
 export interface TopicProfile {
@@ -98,7 +100,11 @@ const DEFAULT_PROFILE: TopicProfile = {
   bibleCharacterExampleNote: '(e.g. the Narrator-Analyst, the Attacker, the On-Call Engineer)',
   bibleDocumentaryVisualDiscipline: `
 
-Documentary visual discipline: favour restrained, evidence-led imagery — real interfaces, terminals, architecture diagrams, source documents. The "negativePrompt" must always exclude: hooded hackers, green Matrix-style code rain, skulls, generic padlock icons, cartoon villains, stock-photo "hacker in a basement" scenes.`,
+Documentary visual discipline: the evidence on screen is real — interfaces, terminals, architecture diagrams, source documents — and every one of them is a practical object inside a lit place, filmed rather than screenshotted: a terminal is a glowing monitor on a desk in a dim room, a diagram is a wall display in a control room, an email is paper under a desk lamp, a data graph is a projection someone is standing next to. Frame the evidence that way because each still becomes the first frame of an animated clip, and a flat full-screen screenshot has nothing in it that can move.
+
+Grade the whole production as ${CHANNEL_VISUAL_STYLE}. Apply it to "artDirection", "colorPalette", "lighting" and "lensAndFilm" so every scene inherits one look.
+
+The "negativePrompt" must always exclude: hooded hackers, green Matrix-style code rain, skulls, generic padlock icons, cartoon villains, stock-photo "hacker in a basement" scenes.`,
 
   writerPersonaDocumentary:
     "You are an investigative documentary scriptwriter and creative director working in the style of authoritative long-form cybersecurity journalism (Bloomberg cyber docs, Darknet Diaries' narrative pacing, a Netflix true-crime breakdown) — not an infotainment creator.",
