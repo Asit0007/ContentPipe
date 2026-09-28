@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Keeps ContentPipe's server up on 127.0.0.1:3000 so the 08:00 story agent (and CyberPipe, later) always
+  has something to call. NODE_ENV=production skips the Vite middleware and serves dist/ instead, which is
+  why this runs tsx server.ts rather than `npm start` — npm start needs a build that goes stale after a pull.
+
+  Install:
+    cp deploy/com.asitminz.contentpipe.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asitminz.contentpipe.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/com.asitminz.contentpipe
+
+  Logs: logs/contentpipe.out.log. Paths are this machine's.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.asitminz.contentpipe</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>node_modules/.bin/tsx</string>
+        <string>server.ts</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe/logs/contentpipe.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe/logs/contentpipe.err.log</string>
+</dict>
+</plist>

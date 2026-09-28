@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  08:00 every day: start (or resume) the one story in stories/next-story.json — research, plan, script,
+  and the brief ContentRender reads. Media stages are NOT run here; they have human gates.
+
+  RunAtLoad is deliberately false: loading this plist must not start a story at load time, only at 08:00.
+  Every stage is cached under .runs/story-<key>/, so a finished story costs nothing and a crashed one
+  resumes. To start a different story, change `storySlug` in stories/next-story.json.
+
+  caffeinate -i keeps the Mac awake for the run. launchd replays an 08:00 missed while the Mac was ASLEEP
+  but NOT one missed while it was powered off, so pair this with:
+    sudo pmset repeat wakeorpoweron MTWRFSU 07:55:00
+
+  Install:
+    cp deploy/com.asitminz.storycycle.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.asitminz.storycycle.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/com.asitminz.storycycle
+  Run it by hand right now:
+    launchctl kickstart -k gui/$(id -u)/com.asitminz.storycycle
+
+  Logs: logs/story-cycle.out.log. Paths are this machine's.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.asitminz.storycycle</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>/opt/homebrew/bin/node</string>
+        <string>node_modules/.bin/tsx</string>
+        <string>scripts/story-start.ts</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>CONTENTPIPE_BASE_URL</key>
+        <string>http://127.0.0.1:3000</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe/logs/story-cycle.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe/logs/story-cycle.err.log</string>
+</dict>
+</plist>

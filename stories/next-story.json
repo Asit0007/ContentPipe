@@ -1,0 +1,18 @@
+{
+  "storySlug": "oneplus-root-2026-09",
+  "note": "The one story the 08:00 agent starts. Edit before 08:00 to change it. `storySlug` names the run: change it to start a different story; keep it to resume this one.",
+
+  "messageText": "OnePlus phones ship an audio debug service that any installed app can reach with zero permissions. Researcher Rasmus Moorats showed that on a OnePlus 15 an untrusted app can chain command injection in that service with a vendor HAL to get root — no user interaction, no granted permissions. He reported it to OnePlus, who replied by email on 2026-05-20. Coverage disagrees about whether a fix shipped: the researcher's page says OnePlus 15 is fixed in OxygenOS 16.0.10.500(EX01), while The Hacker News reported the flaws as unpatched. Tell the story of how a debugging leftover became a root path on a flagship phone, and what a phone owner should actually do. State only what the sources support, and say plainly where they disagree.",
+
+  "sourceUrls": [
+    "https://blog.nns.ee/2026/09/24/oneplus-root/",
+    "https://blog.nns.ee/raw/2026-09-24-oneplus-root/2026-05-20-oneplus-email.txt",
+    "https://thehackernews.com/2026/09/unpatched-oneplus-flaws-let-installed.html",
+    "https://cybersecuritynews.com/oneplus-15-flaws-zero-permission-apps/"
+  ],
+
+  "targetTone": "Cyberpunk Drama",
+  "targetFormat": "16:9",
+  "targetDurationSec": 585,
+  "fresh": true
+}
