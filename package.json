@@ -13,7 +13,7 @@
     "test:e2e": "tsx --test --test-concurrency=1 e2e/*.e2e.test.ts",
     "render:fixture": "tsx scripts/render-fixture.ts",
     "story:start": "tsx scripts/story-start.ts",
-    "story:check": "node scripts/story-start.stub.mjs & STUB=$!; sleep 1; CONTENTPIPE_BASE_URL=http://127.0.0.1:3199 STORY_HEALTH_WAIT_SEC=10 tsx scripts/story-start.ts --force; RC=$?; kill $STUB 2>/dev/null; exit $RC",
+    "story:check": "node scripts/story-start.stub.mjs & STUB=$!; sleep 1; CONTENTPIPE_BASE_URL=http://127.0.0.1:3199 STORY_HEALTH_WAIT_SEC=10 tsx scripts/story-start.ts --story scripts/story-check-fixture.json --force; RC=$?; kill $STUB 2>/dev/null; exit $RC",
     "llm:check": "tsx scripts/llm-check.ts"
   },
   "dependencies": {

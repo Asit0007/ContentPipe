@@ -1,0 +1,15 @@
+{
+  "storySlug": "stub-check",
+  "note": "Fixture for `npm run story:check` only — never edit `stories/next-story.json`'s storySlug to this. A distinct slug keeps the stub run's `.runs/story-stub-check/` cache away from `.runs/story-<real slug>/`, which `story:check` used to write fake data into before this fixture existed (found 2026-09-29: it silently marked a real story 'already finished').",
+  "messageText": "Fixture story for the story:check stub run. Not a real story.",
+  "sourceUrls": [
+    "https://example.invalid/source-0",
+    "https://example.invalid/source-1",
+    "https://example.invalid/source-2",
+    "https://example.invalid/source-3"
+  ],
+  "targetTone": "Deep Dive Documentary",
+  "targetFormat": "16:9",
+  "targetDurationSec": 585,
+  "fresh": true
+}
