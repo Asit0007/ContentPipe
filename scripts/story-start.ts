@@ -1,17 +1,19 @@
 /**
- * story-start.ts — start one story at 08:00 and leave a ContentRender-ready brief behind.
+ * story-start.ts — start one story BY HAND and leave a ContentRender-ready brief behind.
  *
  * Why this exists: the story cycle's orchestrator (CyberPipe) is not installed — it has no .env,
- * no database and no Telegram bot — so nothing was starting a story at 08:00. This script is the
- * smallest thing that does: it walks ContentPipe's own /api/research -> /api/plan -> /api/script
- * exactly as CyberPipe's pipeline.py does (same strict header, same forwarding rules), writes the
- * brief ContentRender reads, and stops. It does NOT touch images, clips, narration or the bundle:
- * those have human gates, and the gates live in CyberPipe.
+ * no database and no Telegram bot — so there was no way to start a story short of driving
+ * /api/research -> /api/plan -> /api/script by hand. This script is the smallest thing that does:
+ * it walks that same chain exactly as CyberPipe's pipeline.py does (same strict header, same
+ * forwarding rules), writes the brief ContentRender reads, and stops. It does NOT touch images,
+ * clips, narration or the bundle: those have human gates, and the gates live in CyberPipe.
  *
- * It is safe to run daily at 08:00. Every stage is cached on disk under .runs/story-<key>/, so a
- * second run resumes instead of respending the text quota, and a finished story exits immediately.
- * That is what makes it a "resume at 08:00" hook rather than a story-a-day generator: to start a
- * NEW story, change `storySlug` in stories/next-story.json.
+ * **Run it by hand — `npm run story:start`** — never on a schedule (2026-09-29: the pipeline starts
+ * only when the owner starts it; the `com.asitminz.storycycle` LaunchAgent that used to fire this at
+ * 08:00 was removed for that reason — resuming a *paused* story is CyberPipe's job, once installed,
+ * not this script's). Every stage is still cached on disk under .runs/story-<key>/, so re-running it
+ * resumes instead of respending the text quota, and a finished story exits immediately; to start a
+ * NEW story, change `storySlug` in stories/next-story.json first.
  *
  *   npx tsx scripts/story-start.ts                       # the story in stories/next-story.json
  *   npx tsx scripts/story-start.ts --dry-run             # config + server check, spends nothing

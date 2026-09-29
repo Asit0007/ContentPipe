@@ -1,4 +1,4 @@
-// Stub ContentPipe for scripts/story-start.ts — exercises the whole 08:00 orchestration with ZERO quota.
+// Stub ContentPipe for scripts/story-start.ts — exercises the whole by-hand story start with ZERO quota.
 //
 //   npm run story:check
 //

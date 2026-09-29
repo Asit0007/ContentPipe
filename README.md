@@ -167,7 +167,14 @@ Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intell
   -> every request appended to .runs/model-usage.jsonl (read by JobPipe's review dashboard)
 ```
 
-**Planned (2026-09-27): the story cycle.** The clips step moves after narration and **pauses** when the day's free GPU allowance runs out, instead of turning the rest into Ken Burns; AI clips start at 08:00 and resume the next morning, while the owner makes the rest by hand in Kling (target ~90% motion: ~20% AI, ~70% Kling). The hourly video burn is unloaded because it spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
+**The story cycle (built 2026-09-29): manual start, automatic resume.** A story starts only when the owner starts it —
+`npm run story:start` here, or `submit_job.py` once CyberPipe is installed — never on a schedule. In ContentRender the
+clips step moved after narration, and a spent free ZeroGPU allowance **pauses** the whole run (`ClipsPaused`) instead of
+turning the rest into Ken Burns; CyberPipe resumes it on its own once the 24 h window is expected back, with a `/resume`
+Telegram command for when hand-made clips are already dropped in. The owner makes the rest by hand in Kling in the
+meantime (target ~90% motion: ~20% AI, ~70% Kling). After 3 days with no AI clip at all, ContentRender gives up and
+delivers with Ken Burns stills rather than blocking a video forever. The hourly video burn stays unloaded because it
+spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
 
 **Where the free quota goes.** The script is by far the biggest spender (about 34 of the ~37 text calls a video makes), which is why
 the smartest free model, Gemini 3.8 Flash (20 requests a day), is reserved for it; research and plan use the rest of the chain.

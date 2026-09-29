@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Keeps ContentPipe's server up on 127.0.0.1:3000 so the 08:00 story agent (and CyberPipe, later) always
-  has something to call. NODE_ENV=production skips the Vite middleware and serves dist/ instead, which is
-  why this runs tsx server.ts rather than `npm start` — npm start needs a build that goes stale after a pull.
+  Keeps ContentPipe's server up on 127.0.0.1:3000 so a story started by hand (`npm run story:start`) and
+  CyberPipe, once installed, always have something to call. NODE_ENV=production skips the Vite middleware
+  and serves dist/ instead, which is why this runs tsx server.ts rather than `npm start` — npm start needs
+  a build that goes stale after a pull.
 
   Install:
     cp deploy/com.asitminz.contentpipe.plist ~/Library/LaunchAgents/
@@ -24,7 +25,7 @@
         <string>server.ts</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe</string>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/AI Media/ContentPipe</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -39,8 +40,8 @@
     <key>ThrottleInterval</key>
     <integer>30</integer>
     <key>StandardOutPath</key>
-    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe/logs/contentpipe.out.log</string>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/AI Media/ContentPipe/logs/contentpipe.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/apple/Developer/My VSC projects/My Persona/ContentPipe/logs/contentpipe.err.log</string>
+    <string>/Users/apple/Developer/My VSC projects/My Persona/AI Media/ContentPipe/logs/contentpipe.err.log</string>
 </dict>
 </plist>
