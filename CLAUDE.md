@@ -28,7 +28,7 @@ Single Express app (`server.ts`) that also serves the Vite/React front end in mi
 /api/tts       → narration audio
 /api/generate-image → scene stills (Hugging Face Spaces in IMAGE_PROVIDER_ORDER, then an SVG placeholder for the UI only)
 /api/generate-video → scene still + motionPrompt → short clip (Spaces in VIDEO_PROVIDER_ORDER), saved to renders/clips/, served at /clips/
-/api/export/markdown → writes the brief to exports/
+/api/export/markdown → writes the brief to exports/, plus a readable <name>.html beside it and exports/index.html (server/briefPage.ts)
 /api/chat, /api/ip-names, /api/notebooklm-* → side features
 ```
 

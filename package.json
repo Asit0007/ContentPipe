@@ -14,7 +14,8 @@
     "render:fixture": "tsx scripts/render-fixture.ts",
     "story:start": "tsx scripts/story-start.ts",
     "story:check": "node scripts/story-start.stub.mjs & STUB=$!; sleep 1; CONTENTPIPE_BASE_URL=http://127.0.0.1:3199 STORY_HEALTH_WAIT_SEC=10 tsx scripts/story-start.ts --story scripts/story-check-fixture.json --force; RC=$?; kill $STUB 2>/dev/null; exit $RC",
-    "llm:check": "tsx scripts/llm-check.ts"
+    "llm:check": "tsx scripts/llm-check.ts",
+    "brief:page": "tsx scripts/brief-page.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

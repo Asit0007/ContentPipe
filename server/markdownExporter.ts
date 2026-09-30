@@ -3,6 +3,7 @@ import path from 'path';
 import { formatTimestamp } from './timeline';
 import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
 import { fluxPrompt, midjourneyPrompt } from '../shared/imagePrompts';
+import { writeBriefPage, writeBriefIndex } from './briefPageFiles';
 
 /**
  * Renders a finished script to a production-ready Markdown brief and writes it
@@ -673,7 +674,7 @@ export async function writeScriptMarkdown(payload: {
   research?: any;
   plan?: any;
   channelBrandName?: string;
-}): Promise<{ filename: string; absolutePath: string; relativePath: string; bytes: number }> {
+}): Promise<{ filename: string; absolutePath: string; relativePath: string; bytes: number; pagePath?: string }> {
   const markdown = renderScriptMarkdown(payload);
   await fs.mkdir(EXPORTS_DIR, { recursive: true });
 
@@ -695,10 +696,21 @@ export async function writeScriptMarkdown(payload: {
   const absolutePath = path.join(EXPORTS_DIR, filename);
   await fs.writeFile(absolutePath, markdown, 'utf8');
 
+  // The readable page beside it (and the index of all briefs). The Markdown is the deliverable: a page that
+  // fails to render must never fail the export.
+  let pagePath: string | undefined;
+  try {
+    pagePath = path.join('exports', path.basename(await writeBriefPage(absolutePath)));
+    await writeBriefIndex({ dir: EXPORTS_DIR });
+  } catch (err: any) {
+    console.warn(`[Export] brief page not written: ${err?.message || err}`);
+  }
+
   return {
     filename,
     absolutePath,
     relativePath: path.join('exports', filename),
     bytes: Buffer.byteLength(markdown, 'utf8'),
+    pagePath,
   };
 }

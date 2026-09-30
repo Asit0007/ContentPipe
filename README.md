@@ -341,6 +341,8 @@ Each brief contains YAML front matter, a production summary, loud warnings when 
 
 `exports/` is gitignored — these are working artefacts.
 
+**Each brief also gets a page (2026-09-30).** A long brief is ~500 KB of Markdown, so every export writes `exports/<name>.html` beside the `.md` and refreshes `exports/index.html`, a list of every brief. The page is self-contained (no server, no network: double-click it): runtime, scene count, mid-rolls and check counts at the top, sections that fold, one row per scene with a filter and a narrator/analyst switch, a Copy button on every prompt, and a pre-publish checklist that remembers its ticks. It is a view of the Markdown (`server/briefPage.ts` renders exactly the shapes the exporter writes, escaping everything, since briefs quote fetched pages); the `.md` stays the source. `npm run brief:page` rebuilds the pages for existing briefs or after a hand edit.
+
 In the UI the button lives in the export modal as **Save Markdown to exports/**. It needs no sign-in.
 
 ---
@@ -460,12 +462,13 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 418 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 429 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
 npm run story:start # start ONE story by hand: research -> plan -> script -> .runs/story-<slug>/brief.json + an export
                     #   (story in stories/next-story.json; --dry-run spends nothing, --story <file>, --force ignores the cache)
+npm run brief:page  # a readable HTML page beside every exported brief, plus exports/index.html (open that in a browser)
 npm run story:check # the same flow against a local stub on :3199, zero quota (uses scripts/story-check-fixture.json)
 npx tsx scripts/video-burn.ts --status   # results of the retired daily video burn (see above)
 npm run dev      # tsx server.ts — Express + Vite middleware
@@ -512,6 +515,7 @@ server/
   videoProviders.ts           Image-to-video chain in VIDEO_PROVIDER_ORDER; clips saved to renders/clips/, served at /clips/
   mediaOrder.ts, hfSpace.ts, spaceAdapters.ts   provider order + cooldowns; Gradio HTTP client; per-Space call shapes
   markdownExporter.ts         Brief rendering + file writing
+  briefPage.ts, briefPageFiles.ts   The exported brief as a self-contained HTML page, and exports/index.html
   fallbackGenerators.ts       Canned output when the API is unreachable
   notebooklmService.ts        Multi-voice podcast audio
 shared/
@@ -530,7 +534,7 @@ exports/                      Generated briefs (gitignored)
 .runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days);
                               story-<slug>/ holds a hand-started story's research, plan, script and brief.json
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
-scripts/                      story-start.ts (npm run story:start), story-start.stub.mjs + story-check-fixture.json
+scripts/                      brief-page.ts (npm run brief:page), story-start.ts (npm run story:start), story-start.stub.mjs + story-check-fixture.json
                               (npm run story:check), render-fixture.ts, llm-check.ts, video-burn.ts (retired),
                               tts-bakeoff/ (TTS engine comparison + blind listening set — see its README)
 stories/next-story.json       The story `npm run story:start` runs (text, links, tone, target length, storySlug)
