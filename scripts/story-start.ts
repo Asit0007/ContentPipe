@@ -24,6 +24,8 @@
  *      STORY_HEALTH_WAIT_SEC (default 180).
  */
 import fs from 'fs/promises';
+import http from 'node:http';
+import https from 'node:https';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
@@ -95,6 +97,50 @@ function retryAfterSec(header: string | null): number {
 
 const sleep = (sec: number) => new Promise((r) => setTimeout(r, Math.max(0, sec) * 1000));
 
+interface RawResponse {
+  status: number;
+  ok: boolean;
+  headers: Headers;
+  text: () => Promise<string>;
+}
+
+/**
+ * A POST over node:http/https, not fetch(). Node's global fetch is undici, which kills a request
+ * that hasn't finished receiving headers within 300s BY DEFAULT — far under every TIMEOUT_SEC value
+ * below, and none of these routes stream, so no byte comes back until the whole call is done
+ * server-side. Confirmed live 2026-09-29: a completed /api/script run (51/51 scenes, journal `status:
+ * "complete"`) was still reported "FAILED: fetch failed 5x", because each of its five underlying
+ * attempts individually ran past 5 minutes before undici killed the connection out from under it.
+ * Raising that ceiling via a custom `dispatcher` (the documented undici fix) does not work here: the
+ * separately npm-installed `undici` package's `Agent` is not accepted by Node's *internal* undici
+ * powering global fetch (`TypeError: fetch failed invalid onRequestStart method`, confirmed live) —
+ * they are different module instances with an incompatible internal interceptor shape. node:http has
+ * no such ceiling (only the AbortController below governs how long a route may run), so it sidesteps
+ * the whole problem instead of fighting undici's version skew.
+ */
+function rawPost(url: string, body: string, headers: Record<string, string>, signal: AbortSignal): Promise<RawResponse> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request(u, { method: 'POST', headers: { ...headers, 'Content-Length': String(Buffer.byteLength(body)) }, signal }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => {
+        const status = res.statusCode || 0;
+        const h = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) {
+          if (v === undefined) continue;
+          for (const one of Array.isArray(v) ? v : [v]) h.append(k, one);
+        }
+        resolve({ status, ok: status >= 200 && status < 300, headers: h, text: async () => Buffer.concat(chunks).toString('utf-8') });
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 /**
  * One ContentPipe call, with the waits its failure contract asks for. 429 (quota) and 503 (every
  * provider overloaded) are not this story's fault, so they wait out Retry-After and do not count as
@@ -107,9 +153,9 @@ async function post(route: string, body: unknown, label: string): Promise<any> {
     if (deadlineLeftSec() <= 0) throw new Fatal(`ran out of time (${DEADLINE_SEC}s) waiting on /api/${label}`);
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), TIMEOUT_SEC[label] * 1000);
-    let res: Response;
+    let res: RawResponse;
     try {
-      res = await fetch(`${BASE}${route}`, { method: 'POST', headers: STRICT, body: JSON.stringify(body), signal: ac.signal });
+      res = await rawPost(`${BASE}${route}`, JSON.stringify(body), STRICT, ac.signal);
     } catch (err: any) {
       clearTimeout(timer);
       // A client timeout does not stop the server: re-POST and let the journal resume.
