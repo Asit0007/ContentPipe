@@ -11,7 +11,7 @@ Text generation runs through a **multi-provider LLM chain** — DeepSeek first, 
 
 ---
 
-## Where it stands (2026-09-27, evening)
+## Where it stands (2026-09-30)
 
 The goal: *feed in a news item and links to its sources, have the app research it, write the script, and produce the images (character, background, scene) and the animation of those images into video.*
 
@@ -24,13 +24,21 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Sound & edit cue sheet (music, restrained SFX, silences, transitions) | **Done** (for a human editor) |
 | Titles, thumbnails, description, tags, chapters | **Done** |
 | Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro, FLUX and Midjourney prompts by hand via copy buttons |
-| Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day; Wan 2.2 reserves ~54 s a 4 s clip at 6 steps (about 5-8 a day, **being measured**, see below) |
+| Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day; Wan 2.2 reserves ~54 s a 4 s clip at 6 steps (about 5-8 a day by the reservation maths; the account's real daily reset was never measured, see below) |
 | Narration | **Two voices via ContentRender**: narrator Kokoro `af_heart` (local), analyst Gemini TTS `Charon` through `/api/tts` with the engine pinned; the browser UI still reads one voice |
 | Stills + narration → one MP4 with captions | **Module only** (`server/assemble.ts`, `npm run render:fixture`); no endpoint or button, and it uses stills, not the AI clips |
 | Batch generation of every scene's assets, checkpointed | **Not built** |
 | Burned-in captions / on-screen text | **Not built** (this ffmpeg lacks `drawtext`) |
-| Automated end to end via CyberPipe | **Built, not yet run on a real story**: research → plan → script (this server) → images → clips + narration → Resolve bundle (ContentRender), with Telegram gates |
-| A published Blast Radius video | **Not yet** |
+| Start one story by hand | **Done, run on a real story**: `npm run story:start` walks research → plan → script and leaves a ContentRender-ready brief. First real script 2026-09-30: *How a Zero-Permission App Could Control Your OnePlus*, 51 scenes, ~610 s |
+| Automated end to end via CyberPipe | **Built, never installed or run**: research → plan → script (this server) → images → narration → clips (pause and resume on the free quota) → Resolve bundle (ContentRender), with Telegram gates. The first story's media is being run by hand through ContentRender's command line instead |
+| A published Blast Radius video | **Not yet**: the first one's media run is in progress (`../ContentRender/output/runs/2026-09-30-how-a-zero-permission-app-could-control/`) |
+
+**Next steps, in order:**
+1. Finish the OnePlus media run in ContentRender: images gate → narration → narration gate → clips → bundle → final gate.
+2. Edit in DaVinci Resolve, generate the publish package, publish the first video.
+3. Phase 3 of `../plan-story-cycle.md`: a clip slot for every scene, 24 fps / 1080p conform, a `qc.md` report, plain per-video folders.
+4. Install CyberPipe (needs the owner's "Blast Radius" Telegram bot and LaunchAgent commands only the owner can run).
+5. Fix the browser UI's functional defects: [`UI_REVIEW.md`](UI_REVIEW.md), Phase 1.
 
 **Known quality issue:** MiniMax-H3's own soundtrack on clips is poor (owner's verdict on the first live clip, 2026-09-26). Mute clip audio in the edit and use the sound pass's cue sheet (YouTube Audio Library / Pixabay) and the narration instead. The picture is good.
 
@@ -44,6 +52,8 @@ cp .env.example .env      # then add at least one provider key (DEEPSEEK_API_KEY
 npm run llm:check         # verifies each key and model id against the live APIs
 npm run dev               # http://localhost:3000
 ```
+
+On the owner's Mac a LaunchAgent (`deploy/com.asitminz.contentpipe.plist`, installed as `com.asitminz.contentpipe`) already keeps the server up on port 3000, so `npm run dev` there fails with `EADDRINUSE`; use `PORT=3100 npm run dev` for a second copy. That agent runs the code as it was when it started: restart it after pulling a server change.
 
 The startup log prints the chain it resolved, e.g. `[LLM Chain] deepseek(deepseek-v4-pro,deepseek-flash) -> gemini(...)`. A provider with no key is skipped; with none set the chain is Gemini alone.
 
@@ -146,18 +156,22 @@ CyberPipe  (scheduler.py, a 60 s loop; one job = one story; every call strict)
 ├── images ──► ContentRender step ──► POST /api/generate-image ──► IMAGE_PROVIDER_ORDER (Cloudflare FLUX.2 klein 4B)   1 per scene
 │   └── Telegram gate (/regen <job> <scenes>)
 ├── narration ─► ContentRender step
-│   ├── AI clips ──────► POST /api/generate-video ──► VIDEO_PROVIDER_ORDER (HF Spaces: MiniMax-H3, then Wan 2.2)  up to 6 slots;
-│   │                                                                                             a failure becomes Ken Burns
 │   ├── narrator ──────► Kokoro af_heart, local (no API)                                    ~43 scenes
 │   └── analyst ───────► POST /api/tts {model pinned} ──► Gemini 3.1 Flash TTS, voice Charon  ~8 scenes (every 6th, never the last)
 │   └── Telegram gate
-└── bundle ──► ContentRender: FCPXML, captions, rough cut (ffmpeg, local, no model)
+└── bundle ──► ContentRender step
+    ├── AI clips ──────► POST /api/generate-video ──► VIDEO_PROVIDER_ORDER (HF Spaces: MiniMax-H3, then Wan 2.2)  up to 6 slots;
+    │                                                  a spent free quota PAUSES the run (resumes on its own; Ken Burns only after 3 days)
+    └── FCPXML, captions, rough cut (ffmpeg, local, no model)
     └── Telegram gate ──► COMPLETED (open the bundle in DaVinci Resolve)
+
+By hand, without CyberPipe (how the first real story ran): npm run story:start (research -> plan -> script, strict,
+  cached under .runs/story-<slug>/), then ContentRender's `npm run cli -- step ...` for the media stages.
 
 Browser UI (npm run dev, 127.0.0.1:3000): the same routes one at a time, plus /api/publish-package (titles, thumbnails,
   tags: 1-2 calls), /api/chat, /api/ip-names and /api/notebooklm-* — all text chain, purpose = the route's name.
-Video burn (launchd, hourly): scripts/video-burn.ts calls the video providers in-process (no HTTP), spending each
-  free Hugging Face GPU window: account pool MiniMax-H3 -> LTX-2.3 -> Wan 2.2; anonymous pool: two staff Wan Spaces.
+Video burn (retired 2026-09-27, LaunchAgent removed): scripts/video-burn.ts called the video providers in-process
+  (no HTTP): account pool MiniMax-H3 -> LTX-2.3 -> Wan 2.2; anonymous pool: two staff Wan Spaces.
 
 Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intelligence first:
   skip models reserved for other routes (LLM_RESERVED_FOR: gemini-3.8-flash is for "script")
@@ -173,12 +187,12 @@ clips step moved after narration, and a spent free ZeroGPU allowance **pauses** 
 turning the rest into Ken Burns; CyberPipe resumes it on its own once the 24 h window is expected back, with a `/resume`
 Telegram command for when hand-made clips are already dropped in. The owner makes the rest by hand in Kling in the
 meantime (target ~90% motion: ~20% AI, ~70% Kling). After 3 days with no AI clip at all, ContentRender gives up and
-delivers with Ken Burns stills rather than blocking a video forever. The hourly video burn stays unloaded because it
+delivers with Ken Burns stills rather than blocking a video forever. The hourly video burn is retired because it
 spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
 
 **Where the free quota goes.** The script is by far the biggest spender (about 34 of the ~37 text calls a video makes), which is why
 the smartest free model, Gemini 3.8 Flash (20 requests a day), is reserved for it; research and plan use the rest of the chain.
-Images draw on Cloudflare's 10,000 free Neurons a day, clips on the Hugging Face GPU allowance (shared with the video burn), and the
+Images draw on Cloudflare's 10,000 free Neurons a day, clips on the Hugging Face GPU allowance, and the
 analyst voice on Gemini TTS's 10 requests a day per engine.
 
 ### Research is real, within limits
@@ -227,6 +241,8 @@ One constant, `DEFAULT_CHANNEL_BRAND` in `shared/brand.ts`, is the show name eve
 It is deliberately **not** the name of this tool and not the name of any source site. A script that opens "Welcome back to ContentPipe", or a frame with another publication's name burned into it, is a brand leak — and those aren't hypothetical, they were the defaults until `shared/brand.ts` existed. `server/brand.test.ts` renders every canned surface, including the generated SVG, and fails on any tool or publication name.
 
 Pass `channelBrandName` on `/api/script` to override it per request.
+
+**Tone and look are two separate settings.** Every Blast Radius video is a *Deep Dive Documentary* with a cyberpunk-noir look. The tone (`targetTone`, tested by `isDocumentaryTone` in `shared/tone.ts`) decides **structure**: act plan, mid-roll boundaries, cold open, narration register. The look is `CHANNEL_VISUAL_STYLE` in `shared/brand.ts` and is applied to every video whatever the tone. Setting the tone to "Cyberpunk Drama" to get the look trades the long-form structure away and changes nothing about the picture.
 
 ### Topic domain: beyond cybersecurity
 
@@ -406,9 +422,9 @@ Hugging Face ZeroGPU gives a free account ~5 GPU-minutes a day, shared by images
 
 Every scene also exports three copy-paste prompts (buttons in the script editor and sections in the markdown export): **Nano Banana Pro**, **FLUX** and **Midjourney**. The FLUX and Midjourney ones (`shared/imagePrompts.ts`) add a clarity sentence before the style anchor, because a noisy or busy still flickers once animated, and Midjourney gets `--ar`, `--style raw` and a real `--no` field.
 
-### Daily video burn (unloaded 2026-09-27; to be retired)
+### Daily video burn (retired 2026-09-27)
 
-A LaunchAgent (`deploy/com.asitminz.videoburn.plist`, installed as `com.asitminz.videoburn`) runs `scripts/video-burn.ts` every hour and spends each free Hugging Face ZeroGPU window on as much AI footage as it gives (owner's "Balanced" profile, 2026-09-27). Two independent pools: **account** (your `HF_TOKEN`, 5 GPU-min/day; only Spaces owned by organisations trusted with the token) runs one MiniMax-H3 hero clip, then LTX-2.3 (Lightricks) clips, then Wan 2.2 at 4 steps to fill what is left; **anonymous** (no token, 2 GPU-min/day per IP) runs two Hugging Face-staff Wan Spaces, so the token never reaches their code. A refused call costs no quota; the first success in a pool opens its 24 h window; a spent pool sleeps 3 h and starts a fresh window 24 h after its first success. A "shared ZeroGPU pool is at capacity" answer is retried once after a minute. Shots come from `renders/video-burn/shots.json` (round-robin), so with one shot every model animates the same still and the clips compare side by side. Results: `renders/video-burn/summary.md`, `npx tsx scripts/video-burn.ts --status`. Pool and model choices, reservation maths and licences are in `server/videoBurn.ts`; the design it feeds is `../ContentRender/DESIGN.md`.
+**Retired: it spent the same GPU allowance the story cycle's clips need. The LaunchAgent is no longer installed; `deploy/com.asitminz.videoburn.plist` is kept only as a record and still carries the pre-move path. Final numbers: 3 clips (12.2 s), all from the anonymous pool; the account pool made none, and its daily reset was never measured (`CLAUDE.md`).** What it did: a LaunchAgent ran `scripts/video-burn.ts` every hour and spent each free Hugging Face ZeroGPU window on as much AI footage as it gives (owner's "Balanced" profile, 2026-09-27). Two independent pools: **account** (your `HF_TOKEN`, 5 GPU-min/day; only Spaces owned by organisations trusted with the token) runs one MiniMax-H3 hero clip, then LTX-2.3 (Lightricks) clips, then Wan 2.2 at 4 steps to fill what is left; **anonymous** (no token, 2 GPU-min/day per IP) runs two Hugging Face-staff Wan Spaces, so the token never reaches their code. A refused call costs no quota; the first success in a pool opens its 24 h window; a spent pool sleeps 3 h and starts a fresh window 24 h after its first success. A "shared ZeroGPU pool is at capacity" answer is retried once after a minute. Shots come from `renders/video-burn/shots.json` (round-robin), so with one shot every model animates the same still and the clips compare side by side. Results: `renders/video-burn/summary.md`, `npx tsx scripts/video-burn.ts --status`. Pool and model choices, reservation maths and licences are in `server/videoBurn.ts`; the design it feeds is `../ContentRender/DESIGN.md`.
 
 ---
 
@@ -448,7 +464,10 @@ npm test         # 418 unit tests — no network, no quota (pinned to LLM_PROVID
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
-npx tsx scripts/video-burn.ts --status   # the scheduled daily video burn (see below)
+npm run story:start # start ONE story by hand: research -> plan -> script -> .runs/story-<slug>/brief.json + an export
+                    #   (story in stories/next-story.json; --dry-run spends nothing, --story <file>, --force ignores the cache)
+npm run story:check # the same flow against a local stub on :3199, zero quota (uses scripts/story-check-fixture.json)
+npx tsx scripts/video-burn.ts --status   # results of the retired daily video burn (see above)
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
 npm start        # node dist/server.cjs
@@ -477,7 +496,7 @@ server/
   assemble.ts                 scene stills + narration -> MP4 via local ffmpeg; refuses placeholders and fallback audio
   captions.ts                 verbatim English SRT, timed across each scene's real speech window
   stubMedia.ts                stand-in TTS/image output for the assembler's tests and fixture render (never wired to an endpoint)
-  scriptPipeline.ts           the three script passes and chunking
+  scriptPipeline.ts           the first three script passes and chunking (the fourth is soundPipeline.ts)
   runJournal.ts               on-disk checkpoints (.runs/) for /api/script
   sourceArchive.ts            keeps the text the model actually saw (.runs/sources-*.json)
   researchCoverage.ts         counts how much of a dossier is genuinely cited
@@ -496,7 +515,9 @@ server/
   fallbackGenerators.ts       Canned output when the API is unreachable
   notebooklmService.ts        Multi-voice podcast audio
 shared/
-  brand.ts                    DEFAULT_CHANNEL_BRAND — imported by both server/ and src/
+  brand.ts                    DEFAULT_CHANNEL_BRAND and CHANNEL_VISUAL_STYLE (the channel's look) — imported by both server/ and src/
+  tone.ts                     isDocumentaryTone: the structure axis (documentary vs infotainment)
+  topicProfile.ts             persona, audience and visual rules per topic domain
   speakers.ts                 narrator / analyst placement (every 6th scene except the last) — imported by both server/ and src/
   modelUsage.ts               the modelUsage shape, and withoutModelUsage (strips it from echoed inputs)
   modelCatalog.ts             per-model details for the UI: maker, intelligence score, cost, live notes
@@ -506,10 +527,14 @@ src/
   types.ts                    Shared types — mirrors server/schemas.ts
   utils/googleWorkspace.ts    Firebase Auth + Docs/Sheets export
 exports/                      Generated briefs (gitignored)
-.runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days)
+.runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days);
+                              story-<slug>/ holds a hand-started story's research, plan, script and brief.json
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
-scripts/                      render-fixture.ts (npm run render:fixture), llm-check.ts (npm run llm:check),
+scripts/                      story-start.ts (npm run story:start), story-start.stub.mjs + story-check-fixture.json
+                              (npm run story:check), render-fixture.ts, llm-check.ts, video-burn.ts (retired),
                               tts-bakeoff/ (TTS engine comparison + blind listening set — see its README)
+stories/next-story.json       The story `npm run story:start` runs (text, links, tone, target length, storySlug)
+deploy/                       LaunchAgent plists: com.asitminz.contentpipe (keeps the server up); videoburn (retired)
 renders/                      Assembled videos and captions (gitignored)
 ```
 
@@ -525,7 +550,11 @@ renders/                      Assembled videos and captions (gitignored)
 
 **A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in four passes](#script-generation-runs-in-four-passes).
 
-**`EADDRINUSE: 0.0.0.0:3000`.** Something else owns the port — Grafana is a common culprit. Use `PORT=3100 npm run dev`.
+**A client reports `fetch failed` after about 5 minutes, but the server log shows the request finished.** Node's built-in `fetch` gives up after 300 s waiting for response headers, and none of these routes stream; `/api/script` on a long story under quota pressure ran 27 minutes. Passing an npm-installed undici `Agent` as `dispatcher` does not fix it (Node's internal undici rejects it). Call with `node:http` / `node:https` and your own timeout instead, as `scripts/story-start.ts` and ContentRender's client do. The run journal means the identical re-POST picks up the finished script.
+
+**`story:start` says a story is already finished.** It caches every stage under `.runs/story-<storySlug>/`. For a new story change `storySlug` in `stories/next-story.json`; `--force` discards the cache. (`story:check` used to write its stub output into the real story's cache; it has its own fixture and slug since 2026-09-29.)
+
+**`EADDRINUSE: 0.0.0.0:3000`.** Something else owns the port: on the owner's Mac the `com.asitminz.contentpipe` LaunchAgent, elsewhere Grafana is a common culprit. Use `PORT=3100 npm run dev`.
 
 **Scenes missing `visual` or `motion`.** A pass returned incomplete output. Check `generation.degraded` in the response, then the server log for `[Art Director]` and `[Production Bible]` lines. Don't fix it by merging schemas.
 
