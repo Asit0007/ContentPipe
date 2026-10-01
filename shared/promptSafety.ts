@@ -88,16 +88,27 @@ export function genericBrands(text: string): string {
 export const HARM_WORDS =
   /\b(hack(?:s|ed|er|ers|ing)?|exploit(?:s|ed|ing)?|malicious|malware|attack(?:s|ed|er|ers|ing)?|breach(?:es|ed)?|threat(?:s|ening)?|weapon\w*|victims?|inject(?:s|ed|ion|ing)?|payload|virus|steal\w*|stolen|criminal\w*|explo(?:de|des|ded|sion|sive)\w*|destroy\w*|kill\w*|blood\w*|bomb\w*|vulnerab\w*|compromis\w*|intrud\w*|infect\w*)\b/i;
 
-/** A sentence about on-screen words: a clip should not ask for text to appear, stay or change (text is an overlay). */
-const TEXT_MENTION = /\b(text|lettering|letters|words|caption|headline|writing|written|typed|inscription)\b/i;
-
 /**
- * A clip direction with every sentence that carries a harm word or talks about on-screen text dropped; '' when
- * nothing visual is left (the caller falls back to the scene's motion, then to a generic line).
+ * A clip direction with its story meaning taken out; '' when nothing visual is left (the caller falls back to the
+ * scene's motion, then to a generic line). Harm adjectives go word by word first ("the malicious app box" → "the
+ * app box"), then a sentence still carrying a harm word is dropped. Sentences about text stay: only the quoted
+ * words come out (stripLettering), because "text reflections shimmer on his glasses" is a picture (an audit of the
+ * first version, which dropped them, emptied 33 clip lines).
  */
 export function dropStoryMeaning(text: string): string {
-  const sentences = String(text ?? '').split(/(?<=[.!?])\s+/);
-  return sentences.filter((s) => !HARM_WORDS.test(s) && !TEXT_MENTION.test(s)).join(' ').trim();
+  // The same smallest-unit trim as a picture description (trimHarm): a clause such as ", emphasizing their
+  // vulnerability" goes, the pulsing highlights stay. Words inside quoted lettering are left to stripLettering.
+  return trimHarm(text);
+}
+
+/** Adjectives that label a thing harmful without changing what it looks like: dropped, the noun kept. */
+const HARM_ADJECTIVES = /\b(malicious|vulnerable|compromised|infected|stolen|hostile|rogue|fraudulent)\s+(?=['"\u2018\u201c]?[A-Za-z])/gi;
+
+export function dropHarmAdjectives(text: string): string {
+  return String(text ?? '')
+    .replace(HARM_ADJECTIVES, '')
+    .replace(/(['"\u2018\u201c])([a-z][a-z ]{0,30})(['"\u2019\u201d])/g, '$2') // a lower-case quote left behind: plain words
+    .replace(/\b([Aa]) ([aeiou])/g, '$1n $2');
 }
 
 /**
@@ -106,19 +117,26 @@ export function dropStoryMeaning(text: string): string {
  * then the whole sentence.
  */
 export function trimHarm(text: string): string {
-  const sentences = String(text ?? '').split(/(?<=[.!?])\s+/);
+  const sentences = dropHarmAdjectives(String(text ?? '')).split(/(?<=[.!?])\s+/);
+  // Words inside quoted lettering are the picture's text, not a description of harm: kept where lettering is kept.
+  const harmful = (t: string) => HARM_WORDS.test(t.replace(QUOTED, (_m, lead: string) => `${lead}"…"`));
   const kept = sentences.map((sentence) => {
-    if (!HARM_WORDS.test(sentence)) return sentence;
-    let t = sentence.replace(/\s*\([^)]*\)/g, (p) => (HARM_WORDS.test(p) ? '' : p));
-    t = t.replace(/,?\s+\b(indicating|emphasi[sz]ing|signifying|representing|suggesting|symboli[sz]ing|showing|marking|highlighting)\b[^.;]*/gi, (c) => (HARM_WORDS.test(c) ? '' : c));
-    if (HARM_WORDS.test(t)) {
-      const parts = t.replace(/[.!?]$/, '').split(/\s*;\s*/).filter((p) => !HARM_WORDS.test(p));
+    if (!harmful(sentence)) return sentence;
+    let t = sentence.replace(/\s*\([^)]*\)/g, (p) => (harmful(p) ? '' : p));
+    t = t.replace(/,?\s+\b(indicating|emphasi[sz]ing|signifying|representing|suggesting|symboli[sz]ing|showing|marking|highlighting)\b[^.;]*/gi, (c) => (harmful(c) ? '' : c));
+    if (harmful(t)) {
+      const parts = t.replace(/[.!?]$/, '').split(/\s*;\s*/).filter((p) => !harmful(p));
       t = parts.length ? `${parts.join('; ')}.` : '';
     }
     t = t.trim();
     return t && !/[.!?]$/.test(t) ? `${t}.` : t;
   });
   return kept.filter(Boolean).join(' ').replace(/\s{2,}/g, ' ').trim();
+}
+
+/** Brands generic, harm words trimmed, lettering kept: for a shot whose subject is the words (textIsSubject). */
+export function evidenceText(text: string): string {
+  return trimHarm(genericBrands(text));
 }
 
 /** Lettering out, brands generic, harm words trimmed: the form every picture description takes in a prompt. */
@@ -148,9 +166,11 @@ export interface SceneOverlay {
   kind: 'headline' | 'label';
   /** For a label: the sentence it came from, so the editor knows where it belongs in the frame. */
   where?: string;
+  /** The label stays drawn in the still (the words are the shot's subject), so it is not added again in the edit. */
+  inPicture?: boolean;
 }
 
-interface OverlaySceneLike {
+interface OverlaySceneLike extends SubjectSceneLike {
   onScreenText?: string;
   visual?: { character?: string; background?: string; scene?: string };
   visualPrompt?: string;
@@ -164,10 +184,11 @@ export function sceneOverlays(scene: OverlaySceneLike): SceneOverlay[] {
   const v = scene.visual;
   const source = v ? [v.background, v.scene, v.character].filter(Boolean).join(' ') : scene.visualPrompt || '';
   const sentences = source.split(/(?<=[.!?])\s+/);
+  const inPicture = textIsSubject(scene);
   for (const label of extractLettering(source)) {
     if (out.some((o) => o.text.toLowerCase() === label.toLowerCase())) continue;
     const where = sentences.find((s) => s.includes(label));
-    out.push({ text: label, kind: 'label', ...(where ? { where: pictureText(where) } : {}) });
+    out.push({ text: label, kind: 'label', ...(where ? { where: pictureText(where) } : {}), ...(inPicture ? { inPicture: true } : {}) });
   }
   return out;
 }
@@ -177,12 +198,41 @@ export function sceneOverlays(scene: OverlaySceneLike): SceneOverlay[] {
  * and `motionPrompt`, the UI's buttons too), so every caller gets clean plates and picture-only motion.
  */
 export function safeImagePrompt(prompt: string): string {
+  // An evidence shot (the words framed as the subject) keeps them, as in the brief's own image prompts.
+  if (textIsSubject({ visual: { scene: prompt } })) return evidenceText(prompt);
   const cleaned = pictureText(prompt);
   return hadLettering(prompt) ? `${cleaned} ${PLAIN_SURFACES}` : cleaned;
 }
 
 export function safeVideoPrompt(prompt: string): string {
   return pictureText(dropStoryMeaning(prompt)) || 'Slow, subtle camera movement.';
+}
+
+/** Framing words that make lettering the subject of a shot rather than a detail in it. */
+const SUBJECT_FRAMING = /\b(focus(?:es|ed|ing)?|focal|close-?up|macro|centered|centred|fills the frame|occupies the frame|dominant|zoom(?:s|ing)? in(?:to)?)\b/i;
+
+interface SubjectSceneLike {
+  visual?: { character?: string; background?: string; scene?: string };
+  clips?: { action?: string; camera?: string; endFrame?: string }[];
+}
+
+/**
+ * True when the words are what the shot is about — a close-up of a version number, a letter's "LEGAL ACTION", a
+ * date on a report: documentary evidence. Lifting that lettering out would leave a close-up of blank paper, so such
+ * a scene keeps its words in the picture (Nano Banana Pro writes them accurately) and moves with a zoom in the edit
+ * rather than an AI clip, which a filter can refuse over the words and which makes letters crawl.
+ */
+export function textIsSubject(scene: SubjectSceneLike): boolean {
+  const v = scene.visual || {};
+  const texts = [v.scene, v.background, v.character, ...(scene.clips || []).flatMap((c) => [c.action, c.camera, c.endFrame])];
+  return texts.some((t) => String(t ?? '').split(/(?<=[.!?])\s+/).some((sen) => extractLettering(sen).length > 0 && SUBJECT_FRAMING.test(sen)));
+}
+
+/** True when the words drawn in a text-subject shot themselves name harm ("LOCAL ATTACK VECTOR ONLY"). */
+export function letteringNamesHarm(scene: SubjectSceneLike & { visualPrompt?: string }): boolean {
+  const v = scene.visual || {};
+  const source = scene.visual ? [v.scene, v.background, v.character].join(' ') : scene.visualPrompt || '';
+  return extractLettering(source).some((l) => HARM_WORDS.test(l));
 }
 
 /** True when the description had lettering, so the image prompt says to draw those surfaces plain. */

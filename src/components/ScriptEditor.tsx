@@ -37,7 +37,7 @@ import { modelInfo } from '../../shared/modelCatalog';
 import { nanoBananaProPrompt } from '../../shared/nanoBananaPrompt';
 import { fluxPrompt, recommendImageTool, IMAGE_TOOL_LABEL } from '../../shared/imagePrompts';
 import { sceneClips, clipPrompt, clipPromptShort, clipNegative, clipHeader } from '../../shared/clipPrompts';
-import { sceneOverlays, hadLettering, CLEAN_PLATE_EDIT_PROMPT } from '../../shared/promptSafety';
+import { sceneOverlays, hadLettering, textIsSubject, CLEAN_PLATE_EDIT_PROMPT } from '../../shared/promptSafety';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -1014,12 +1014,14 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                           </div>
                           {(() => {
                             const overlays = sceneOverlays(scene);
-                            const lettered = hadLettering(scene.visual ? [scene.visual.character, scene.visual.background, scene.visual.scene].join(' ') : scene.visualPrompt);
-                            if (!overlays.length && !lettered) return null;
+                            const evidence = textIsSubject(scene);
+                            const lettered = !evidence && hadLettering(scene.visual ? [scene.visual.character, scene.visual.background, scene.visual.scene].join(' ') : scene.visualPrompt);
+                            if (!overlays.length && !lettered && !evidence) return null;
                             return (
                               <div className="flex items-start justify-between gap-2 text-[11px] text-zinc-400">
                                 <div className="min-w-0" title="Added in the edit, not drawn by the AI: readable, fixable, and nothing for a filter to read.">
-                                  On-screen text (add in the edit): <span className="text-zinc-200">{overlays.map((o) => o.text).join(' · ') || '—'}</span>
+                                  On-screen text (add in the edit): <span className="text-zinc-200">{overlays.filter((o) => !o.inPicture).map((o) => o.text).join(' · ') || '—'}</span>
+                                  {evidence && <span className="text-amber-300"> · the words are the shot: keep them in the still, use a zoom instead of an AI clip</span>}
                                 </div>
                                 {lettered && (
                                   <button

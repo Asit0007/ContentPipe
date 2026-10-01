@@ -16,7 +16,7 @@
  * Dependency-free: imported by both the server (the exported brief) and the UI (the copy buttons).
  */
 
-import { pictureText, hadLettering, PLAIN_SURFACES } from './promptSafety';
+import { pictureText, evidenceText, hadLettering, textIsSubject, PLAIN_SURFACES } from './promptSafety';
 
 const NO_CHARACTERS = /^no characters in frame\.?$/i;
 
@@ -49,13 +49,16 @@ function sentence(s: string | undefined): string {
  */
 function layered(scene: SceneLike): string {
   const v = scene.visual;
+  // A shot whose subject is the words keeps them (evidence: a version number, a letter); every other shot is a clean plate.
+  const keep = textIsSubject(scene);
+  const clean = keep ? evidenceText : pictureText;
   if (!v) {
-    const plain = hadLettering(scene.visualPrompt || '') ? PLAIN_SURFACES : '';
-    return [pictureText(scene.visualPrompt || ''), plain, VIDEO_READY_CLARITY].map(sentence).filter(Boolean).join(' ');
+    const plain = !keep && hadLettering(scene.visualPrompt || '') ? PLAIN_SURFACES : '';
+    return [clean(scene.visualPrompt || ''), plain, VIDEO_READY_CLARITY].map(sentence).filter(Boolean).join(' ');
   }
   const character = NO_CHARACTERS.test((v.character || '').trim()) ? '' : v.character || '';
-  const plain = hadLettering([character, v.background, v.scene].join(' ')) ? PLAIN_SURFACES : '';
-  return [pictureText(character), pictureText(v.background || ''), pictureText(v.scene || ''), plain, VIDEO_READY_CLARITY, v.styleAnchor].map(sentence).filter(Boolean).join(' ');
+  const plain = !keep && hadLettering([character, v.background, v.scene].join(' ')) ? PLAIN_SURFACES : '';
+  return [clean(character), clean(v.background || ''), clean(v.scene || ''), plain, VIDEO_READY_CLARITY, v.styleAnchor].map(sentence).filter(Boolean).join(' ');
 }
 
 /** True when the scene says anything about what to draw (the clarity clause alone is not a prompt). */
@@ -92,6 +95,7 @@ export function recommendImageTool(scene: ToolSceneLike): { tool: ImageTool; rea
   const v = scene.visual;
   // Judged on the clean plate: quoted lettering is now an overlay, so only lettering the description still asks for
   // in words ("a page of text", "a sign") counts.
+  if (textIsSubject(scene)) return { tool: 'nano-banana-pro', reason: 'the words are the subject of the shot' };
   const text = pictureText(v ? [v.character, v.background, v.scene].join(' ') : scene.visualPrompt || '');
   if (QUOTED_LABEL.test(text) || LETTERING.test(text)) return { tool: 'nano-banana-pro', reason: 'lettering in the picture' };
   if ((scene.charactersInFrame?.length ?? 0) >= 2) return { tool: 'nano-banana-pro', reason: 'two or more characters to keep consistent' };

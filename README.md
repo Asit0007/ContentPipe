@@ -429,7 +429,7 @@ Every scene also exports two copy-paste image prompts (buttons in the script edi
 
 Each scene is cut into equal clips of at most 10 s (Kling's longest clip): 12 s is two 6 s clips, 7 s is one. Each clip gets its own image-to-video prompt, as detailed as the image prompt and built from it: how it starts (clip 1 animates the scene's still, clip 2+ continues from the previous clip's last frame), the subject with its locked character anchor, the action, **one** camera move, the setting, its ambient motion, the motion-quality line, the style anchor, and the frame it ends on. The words spoken over each clip are shown beside it for the editor but never put in the prompt. Every scene also has a negative prompt for the video tool's negative field. The action, camera, ambience and end frame come from a fifth `/api/script` pass (`server/clipPipeline.ts`); scenes where it failed, and scripts written before it, get clips built from their `motion` direction instead, marked as such. A story written before the pass existed gets its clips with `npm run clips:add -- .runs/story-<slug>` (about one text call per 6 scenes; `--derived` for none).
 
-**Text goes on in the edit, not into the AI picture** (2026-10-01): image prompts are clean plates (lettering lifted out), each scene lists its on-screen text and where it goes, the headline cards come as `exports/<brief>.overlays.srt` (Resolve: File → Import → Subtitle), and lettered scenes get a prompt to wipe the words off a still already made. Clip prompts drop brand names and any sentence about what a shot *means*; every clip has a short fallback prompt. See `CLAUDE.md` "Picture prompts" for why (two Gemini refusals) and the order to try things in when a tool refuses.
+**Text goes on in the edit, not into the AI picture** (2026-10-01): image prompts are clean plates (lettering lifted out), except evidence shots whose subject is the words (a version number, a letter), which keep them, each scene lists its on-screen text and where it goes, the headline cards come as `exports/<brief>.overlays.srt` (Resolve: File → Import → Subtitle), and lettered scenes get a prompt to wipe the words off a still already made. Clip prompts drop brand names and any sentence about what a shot *means*; every clip has a short fallback prompt. See `CLAUDE.md` "Picture prompts" for why (two Gemini refusals) and the order to try things in when a tool refuses.
 
 **Picture prompts never carry a character's name** (2026-10-01): a story's researcher character was named after the real researcher, and Gemini refused a clip that asked to animate a realistic face under a real person's name. Image and video prompts now say "the man" / "the woman"; the narration keeps the name. Fix an older story with `npm run clips:add -- .runs/story-<slug> --names-only` (no model calls).
 
@@ -473,7 +473,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 450 unit tests (2026-10-01) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 451 unit tests (2026-10-01) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call

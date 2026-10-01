@@ -4,7 +4,7 @@ import { formatTimestamp } from './timeline';
 import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
 import { fluxPrompt, recommendImageTool, IMAGE_TOOL_LABEL } from '../shared/imagePrompts';
 import { sceneClips, clipPrompt, clipPromptShort, clipNegative, clipHeader } from '../shared/clipPrompts';
-import { sceneOverlays, hadLettering, promptRisks, CLEAN_PLATE_EDIT_PROMPT } from '../shared/promptSafety';
+import { sceneOverlays, hadLettering, textIsSubject, letteringNamesHarm, promptRisks, CLEAN_PLATE_EDIT_PROMPT } from '../shared/promptSafety';
 import { formatSrtTime } from './captions';
 import { writeBriefPage, writeBriefIndex } from './briefPageFiles';
 
@@ -566,7 +566,7 @@ export function renderScriptMarkdown(payload: {
       out.push('');
       out.push(...(pick.tool === 'nano-banana-pro' ? [...nbpBlock, ...fluxBlock] : [...fluxBlock, ...nbpBlock]));
       const v0 = sc.visual;
-      if (hadLettering(v0 ? [v0.character, v0.background, v0.scene].join(' ') : sc.visualPrompt || '')) {
+      if (!textIsSubject(sc) && hadLettering(v0 ? [v0.character, v0.background, v0.scene].join(' ') : sc.visualPrompt || '')) {
         out.push('**Already made this still with words in it?** Attach it in the Gemini app (Nano Banana Pro) with this edit prompt, and add the words back in the edit:');
         out.push(fence(CLEAN_PLATE_EDIT_PROMPT, 'text'));
         out.push('');
@@ -579,7 +579,7 @@ export function renderScriptMarkdown(payload: {
       out.push('#### On-screen text (add in the edit)');
       out.push('');
       for (const o of overlays) {
-        out.push(o.kind === 'headline' ? `- **Headline card:** ${o.text}` : `- **Label:** ${o.text}${o.where ? ` — where: ${o.where}` : ''}`);
+        out.push(o.kind === 'headline' ? `- **Headline card:** ${o.text}` : o.inPicture ? `- **In the picture (keep it there):** ${o.text}` : `- **Label:** ${o.text}${o.where ? ` — where: ${o.where}` : ''}`);
       }
       out.push('');
     }
@@ -611,6 +611,14 @@ export function renderScriptMarkdown(payload: {
     if (firstClip) {
       out.push(`#### Video clips (${clips.length})`);
       out.push('');
+      if (textIsSubject(sc)) {
+        out.push(
+          letteringNamesHarm(sc)
+            ? '> **The words are the subject of this shot, and they name harm** (here a video filter refused one like it: OnePlus scene 46). Keep them in the still and move it with a slow zoom in Resolve; skip the AI clip.'
+            : '> **The words are the subject of this shot** (documentary evidence). Keep them in the still (Nano Banana Pro writes them accurately). Try a clip with a slow camera move: the prompts below leave the words out. If the letters crawl or warp, use a slow zoom in Resolve instead.'
+        );
+        out.push('');
+      }
       out.push('Clip 1 animates this scene\'s still; each later clip starts from the last frame of the one before. Turn sound off in the video tool: narration, music and effects are added in the edit.');
       out.push('');
       for (const c of clips) {

@@ -11,7 +11,7 @@
  * Dependency-free: imported by both the server (the exported brief) and the UI (the copy button).
  */
 
-import { pictureText, hadLettering, PLAIN_SURFACES } from './promptSafety';
+import { pictureText, evidenceText, hadLettering, textIsSubject, PLAIN_SURFACES } from './promptSafety';
 
 const NO_CHARACTERS = /^no characters in frame\.?$/i;
 
@@ -38,8 +38,9 @@ export function nanoBananaProPrompt(scene: SceneLike, aspectRatio = '16:9'): str
   const v = scene.visual;
   // A clean plate (2026-10-01): lettering and brand names out (shared/promptSafety.ts); the words go on in the edit.
   const described = v ? [NO_CHARACTERS.test((v.character || '').trim()) ? '' : v.character || '', v.background || '', v.scene || ''] : [scene.visualPrompt || ''];
-  const plain = hadLettering(described.join(' ')) ? PLAIN_SURFACES : '';
-  const layers = [...described.map(pictureText), plain, v ? v.styleAnchor : ''];
+  const keep = textIsSubject(scene);
+  const plain = !keep && hadLettering(described.join(' ')) ? PLAIN_SURFACES : '';
+  const layers = [...described.map(keep ? evidenceText : pictureText), plain, v ? v.styleAnchor : ''];
   const body = layers.map(sentence).filter(Boolean).join(' ');
   if (!body) return '';
   const frame = ORIENTATION[aspectRatio] || ORIENTATION['16:9'];

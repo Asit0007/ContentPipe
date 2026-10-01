@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   extractLettering, stripLettering, genericBrands, dropStoryMeaning, trimHarm, pictureText, promptRisks, sceneOverlays, PLAIN_SURFACES,
+  textIsSubject, letteringNamesHarm,
 } from '../shared/promptSafety';
 import { sceneClips, clipPrompt, clipPromptShort } from '../shared/clipPrompts';
 import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
@@ -25,10 +26,13 @@ test('brands become what a camera sees; ordinary words that look like brands are
 
 test('story meaning leaves a clip direction; picture descriptions are trimmed at the smallest unit', () => {
   assert.equal(dropStoryMeaning('The slabs hold still, mirroring the constrained nature of the threat. Haze drifts.'), 'Haze drifts.');
-  assert.equal(dropStoryMeaning('The ember-orange projected text stays sharp. Haze drifts.'), 'Haze drifts.', 'a clip never asks for text');
+  assert.equal(dropStoryMeaning('The text reflections shimmer on his glasses. Haze drifts.'), 'The text reflections shimmer on his glasses. Haze drifts.', 'text is a picture; only quoted words come out (audit: the first version emptied 33 clip lines)');
+  assert.equal(dropStoryMeaning('The orange highlights pulse, emphasizing their vulnerability.'), 'The orange highlights pulse.', 'clause-level, like a picture');
+  assert.equal(dropStoryMeaning("The camera reveals the 'VULNERABILITY DISCLOSURE' section."), "The camera reveals the 'VULNERABILITY DISCLOSURE' section.", 'words inside lettering are left to stripLettering');
   assert.equal(trimHarm('A grid of blocks; most glow cyan (patched), but 18 glow ember orange (vulnerable).'), 'A grid of blocks; most glow cyan (patched), but 18 glow ember orange.');
   assert.equal(trimHarm('Most are cyan, but 18 pulse in ember orange, indicating vulnerability.'), 'Most are cyan, but 18 pulse in ember orange.');
-  assert.equal(trimHarm("Left side shows a smartphone; right side shows a malicious app icon."), 'Left side shows a smartphone.');
+  // Audit, 2026-10-01: scene 35's split screen lost its right half when the whole clause was dropped over one word.
+  assert.equal(trimHarm("Left side shows a sketch of a smartphone; right side shows a sketch of a 'malicious app' icon."), 'Left side shows a sketch of a smartphone; right side shows a sketch of an app icon.');
   assert.equal(trimHarm('The composition emphasizes the attack. A desk lamp glows.'), 'A desk lamp glows.');
 });
 
@@ -71,9 +75,10 @@ test('the refused scene 46: no prompt for it carries the attack wording any more
   }
   assert.match(clipPrompt(scene46, sceneClips(scene46)[1]), /Action: Static\./, 'a clip with nothing visual left falls back to the scene\'s motion');
   assert.match(clipPrompt(scene46, sceneClips(scene46)[0]), /Camera: Wide shot\. /, '"Wide Shot shot" is not doubled');
-  const nbp = nanoBananaProPrompt(scene46);
-  assert.doesNotMatch(nbp, /ATTACK|LOCAL/);
-  assert.ok(nbp.includes(PLAIN_SURFACES));
+  // The words are its subject (centred, the focal point) and they name harm: the still keeps them, the edit zooms.
+  assert.equal(textIsSubject(scene46), true);
+  assert.equal(letteringNamesHarm(scene46), true);
+  assert.match(nanoBananaProPrompt(scene46), /LOCAL ATTACK VECTOR ONLY/, 'an evidence shot keeps its words in the still');
   assert.deepEqual(sceneOverlays(scene46).map((o) => o.text), ['LOCAL ATTACK VECTOR ONLY']);
   assert.equal(pictureText('man in late 30s, rimless glasses'), 'man in late 30s, rimless glasses', 'a character anchor passes through byte for byte');
 });
@@ -84,6 +89,21 @@ test('whole prompts at the media endpoints get the same rules (ContentRender sen
   assert.doesNotMatch(img, /OnePlus|ATTACK|LOCAL/);
   assert.ok(img.endsWith(PLAIN_SURFACES));
   assert.equal(safeImagePrompt('A dark room. Noir.'), 'A dark room. Noir.', 'a prompt with nothing to remove is unchanged');
+  assert.match(safeImagePrompt("Macro on the CRT; the text 'VERSION 16.0.10.500' is centered."), /VERSION 16\.0\.10\.500/, 'evidence keeps its words at the endpoint too');
   assert.equal(safeVideoPrompt('The slabs mirror the threat. Haze drifts slowly.'), 'Haze drifts slowly.');
   assert.equal(safeVideoPrompt('The malicious app attacks.'), 'Slow, subtle camera movement.');
+});
+
+test('text-subject shots keep their words; incidental lettering becomes a clean plate', () => {
+  const evidence = { visual: { background: 'A dim desk.', scene: "Extreme macro on the CRT; the text 'VERSION 16.0.10.500' is centered." } };
+  assert.equal(textIsSubject(evidence), true);
+  assert.equal(letteringNamesHarm(evidence), false, 'a version number is harmless: try a clip');
+  assert.match(nanoBananaProPrompt(evidence), /VERSION 16\.0\.10\.500/);
+  assert.doesNotMatch(nanoBananaProPrompt(evidence), /plain and unmarked/);
+  const incidental = { visual: { background: "A briefing room; on the far wall a small sign labeled 'EXIT'.", scene: 'Wide shot of the man at the table.' } };
+  assert.equal(textIsSubject(incidental), false);
+  assert.doesNotMatch(nanoBananaProPrompt(incidental), /EXIT/);
+  assert.ok(nanoBananaProPrompt(incidental).includes(PLAIN_SURFACES));
+  assert.deepEqual(sceneOverlays(incidental).map((o) => [o.text, !!o.inPicture]), [['EXIT', false]]);
+  assert.deepEqual(sceneOverlays(evidence).map((o) => [o.text, !!o.inPicture]), [['VERSION 16.0.10.500', true]]);
 });
