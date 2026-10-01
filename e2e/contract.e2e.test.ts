@@ -109,6 +109,11 @@ function stubAnswer(prompt: string, url = ''): { status: number; body: any } {
     const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
     tag = `sound@${nums[0]}`;
     out = { scenes: nums.map((n) => ({ sceneNumber: n, sfxCue: n === 2 ? '[SFX: lock clunk + sub-bass]' : '', sfxOnWord: n === 2 ? 'word' : '', sfxSearchTerms: n === 2 ? ['deadbolt lock'] : [], ambience: '', silenceBeforeSec: 0, transitionIn: n === 3 ? 'dissolve' : 'Hard Cut', transitionReason: n === 3 ? 'time passes' : 'continuous', audioBridge: 'none' })) };
+  } else if (prompt.includes('director of photography')) {
+    // The clip pass: the prompt's worked example has its own sceneNumber, so read only the <scenes> block.
+    const scenes = JSON.parse(prompt.slice(prompt.indexOf('<scenes>') + 8, prompt.indexOf('</scenes>')));
+    tag = `clips@${scenes[0].sceneNumber}`;
+    out = { scenes: scenes.map((s: any) => ({ sceneNumber: s.sceneNumber, clips: s.clips.map((c: any) => ({ clipNumber: c.clipNumber, action: `act${s.sceneNumber}.${c.clipNumber}`, camera: 'static', environment: 'haze', endFrame: 'end' })) })) };
   } else if (prompt.includes('art director and cinematographer')) {
     const nums = [...prompt.matchAll(/"sceneNumber": (\d+)/g)].map((m) => Number(m[1]));
     tag = `art@${nums[0]}`;
@@ -219,7 +224,7 @@ test('STRICT: a daily-quota hit mid-script answers 429 + Retry-After with runId/
   assert.ok(Math.abs(Number(r.headers.get('retry-after')) - secondsToNextPacificMidnight()) <= 10 || Math.abs(Number(r.headers.get('retry-after')) - secondsToNextPacificMidnight()) >= 3500, 'Retry-After ≈ next midnight Pacific (an hour off is tolerated only on DST days)');
   assert.equal(r.body.kind, 'per_day');
   assert.equal(r.body.retryable, true);
-  assert.deepEqual(r.body.progress, { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, soundChunksDone: 0, scenesSoFar: 3 });
+  assert.deepEqual(r.body.progress, { hasProductionBible: true, narrativeChunksDone: 1, artChunksDone: 0, soundChunksDone: 0, clipChunksDone: 0, scenesSoFar: 3 });
   assert.ok(r.body.runId);
   assert.equal(r.body.scenes, undefined);
   assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4']);
@@ -233,7 +238,7 @@ test('CRASH: kill -9, restart, quota reset → the identical request resumes and
   await startApp();
   const r = await post('/api/script', SCRIPT_REQ, true);
   assert.equal(r.status, 200);
-  assert.deepEqual(stub.log, ['narr@4', 'art@1', 'score', 'sound@1'], 'bible and the first chunk must not be requested again');
+  assert.deepEqual(stub.log, ['narr@4', 'art@1', 'score', 'sound@1', 'clips@1'], 'bible and the first chunk must not be requested again');
   assert.equal(r.body.scenes.length, 5);
   assert.ok(r.body.scenes.every((s: any) => s.visual && s.motion));
   assert.equal(r.body.generation.complete, true);
@@ -251,6 +256,7 @@ test('CRASH: kill -9, restart, quota reset → the identical request resumes and
       ['Art direction, scenes 1-5 (chunk 1/1)', false, true],
       ['Music plan (score)', false, true],
       ['Sound & edit, scenes 1-5 (chunk 1/1)', false, true],
+      ['Clip prompts, scenes 1-5 (chunk 1/1)', false, true],
     ]
   );
   assert.ok(usage.every((c) => c.provider === 'gemini' && c.model), 'each call names the model that answered');
@@ -261,7 +267,7 @@ test('REGENERATE after delivery starts a fresh run instead of replaying the deli
   reset();
   const r = await post('/api/script', SCRIPT_REQ, true);
   assert.equal(r.status, 200);
-  assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4', 'art@1', 'score', 'sound@1']);
+  assert.deepEqual(stub.log, ['bible', 'narr@1', 'narr@4', 'art@1', 'score', 'sound@1', 'clips@1']);
   assert.ok(!r.body.generation.resumed);
 });
 
@@ -480,6 +486,9 @@ test('CVE SCRUB: a CVE id the model wrote into narration, on-screen text or an i
   assert.equal(s1.onScreenText, 'THE FLAW');
   assert.equal(s1.infographic.badge, 'THE FLAW RESOLVED');
   assert.equal(s1.infographic.summary, 'The lifecycle of the flaw shows the gap.');
+  // CLIPS: the clip pass ran, and each clip's narration was rebuilt from the scrubbed text (checked by the regex above).
+  assert.deepEqual(s1.clips.map((c: any) => [c.clipNumber, c.durationSec, c.source, c.action]), [[1, 10, 'model', 'act1.1']]);
+  assert.match(s1.clips[0].narrationBeat, /tracked as the flaw\./);
   const checks: any[] = r.body.qualityChecks || [];
   assert.deepEqual(checks.find((c) => c.id === 'cve-ids-replaced')?.sceneNumbers, [1], 'the replacement is disclosed, not silent');
   assert.equal(checks.find((c) => c.id === 'severity-rating-shown'), undefined, 'nothing left for the audit to flag');

@@ -546,6 +546,45 @@ export function buildSoundDirectionSchema(sceneCount: number) {
 }
 
 /**
+ * The clip pass (server/clipPipeline.ts): for each scene, one entry per clip, the clip count fixed by code from the
+ * scene's duration. Two levels of arrays of flat strings, far below the nesting that broke `infographic`.
+ */
+export function buildClipDirectionSchema(sceneCount: number) {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      scenes: {
+        type: Type.ARRAY,
+        minItems: sceneCount,
+        maxItems: sceneCount,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            sceneNumber: { type: Type.INTEGER },
+            clips: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  clipNumber: { type: Type.INTEGER },
+                  action: { type: Type.STRING },
+                  camera: { type: Type.STRING },
+                  environment: { type: Type.STRING },
+                  endFrame: { type: Type.STRING },
+                },
+                required: ['clipNumber', 'action', 'camera', 'environment', 'endFrame'],
+              },
+            },
+          },
+          required: ['sceneNumber', 'clips'],
+        },
+      },
+    },
+    required: ['scenes'],
+  };
+}
+
+/**
  * First-pass schema: the production bible.
  *
  * Split out for the same reason as visualDirectionSchema — when characterBible

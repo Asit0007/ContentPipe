@@ -25,6 +25,8 @@ import { isStrict, sendStrictFailure, orFallback } from './server/strict';
 import { UpstreamUnavailableError } from './server/quota';
 import { analyzeScript, buildTimeline, placeMidrolls } from './server/timeline';
 import { applySoundDirection } from './server/soundPipeline';
+import { applyClipDirection } from './server/clipPipeline';
+import { sceneClips } from './shared/clipPrompts';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
 import { extractUrls, fetchSources, buildSourceContext, sourceId } from './server/sourceFetcher';
@@ -711,6 +713,11 @@ app.post('/api/script', async (req, res) => {
     if (!usedFallback) {
       const midrollAfterScenes = placeMidrolls(script.scenes, buildTimeline(script.scenes)).markers.map((m) => m.afterSceneNumber);
       script = await applySoundDirection(ai, script, opts, { midrollAfterScenes, channelBrandName });
+
+      // --- Pass 4: clips -------------------------------------------------------
+      // Each scene cut into clips of at most 10 s, each with what moves, one camera move and its last frame, for the
+      // image-to-video prompts made by hand in Kling (server/clipPipeline.ts, shared/clipPrompts.ts).
+      script = await applyClipDirection(ai, script, opts);
     }
 
     if (usedFallback) degraded.push('Canned fallback script: AI generation was unavailable, so this is placeholder content, not a real draft.');
@@ -720,7 +727,9 @@ app.post('/api/script', async (req, res) => {
     // the script: the prompt asks for none and the audit only warns, yet a live run still put one in a badge and a
     // summary (server/severityScrub.ts). Labels such as "CRITICAL RISK" have no clean stand-in and are flagged instead.
     const scrub = scrubCveIds(script.scenes);
-    script.scenes = scrub.scenes;
+    // Each clip carries the words spoken over it, copied from the narration before the scrub: rebuild them from the
+    // scrubbed narration (sceneClips keeps the clip pass's direction and redoes timing and words).
+    script.scenes = scrub.scenes.map((s: any) => (Array.isArray(s.clips) ? { ...s, clips: sceneClips(s) } : s));
     // Deterministic: timeline, chapters, mid-roll markers and the retention/compliance audit.
     Object.assign(script, analyzeScript(script, { requestedDurationSec, research: researchData }));
     if (scrub.changes.length) {

@@ -52,6 +52,7 @@ interface JournalState {
   /** Sound pass (server/soundPipeline.ts). Optional so journals written before it existed still load. */
   scorePlan?: any[];
   soundChunks?: Record<string, { firstScene: number; directions: any[] }>;
+  clipChunks?: Record<string, { firstScene: number; directions: any[] }>;
   finalScript?: any;
   /** Every model call made for this run so far, so a resumed run can still say which model wrote its earlier chunks. */
   modelCalls?: ModelCall[];
@@ -165,6 +166,15 @@ export class RunJournal {
     await this.save();
   }
 
+  getClipChunk(index: number, firstScene: number): any[] | undefined {
+    const c = this.state.clipChunks?.[String(index)];
+    return c && c.firstScene === firstScene ? c.directions : undefined;
+  }
+  async setClipChunk(index: number, firstScene: number, directions: any[]) {
+    this.state.clipChunks = { ...(this.state.clipChunks ?? {}), [String(index)]: { firstScene, directions } };
+    await this.save();
+  }
+
   /** Calls recorded by earlier, interrupted requests for this run — marked, because this request did not make them. */
   priorModelCalls(): ModelCall[] {
     return (this.state.modelCalls ?? []).map((c) => ({ ...c, fromCheckpoint: true }));
@@ -217,6 +227,7 @@ export class RunJournal {
       narrativeChunksDone: Object.keys(this.state.narrativeChunks).length,
       artChunksDone: Object.keys(this.state.artChunks).length,
       soundChunksDone: Object.keys(this.state.soundChunks ?? {}).length,
+      clipChunksDone: Object.keys(this.state.clipChunks ?? {}).length,
       scenesSoFar: Object.values(this.state.narrativeChunks).reduce((n, c) => n + c.length, 0),
     };
   }

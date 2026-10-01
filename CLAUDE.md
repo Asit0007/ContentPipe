@@ -23,7 +23,7 @@ Single Express app (`server.ts`) that also serves the Vite/React front end in mi
 ```
 /api/research  → fetches source URLs, extracts text, builds a cited dossier
 /api/plan      → narrative beats
-/api/script    → four passes: production bible → narrative → art direction → sound & edit (checkpointed, resumable)
+/api/script    → five passes: production bible → narrative → art direction → sound & edit → clips (checkpointed, resumable)
 /api/publish-package → titles, thumbnails, description, tags (model writes copy; the checkable parts are deterministic)
 /api/tts       → narration audio
 /api/generate-image → scene stills (Hugging Face Spaces in IMAGE_PROVIDER_ORDER, then an SVG placeholder for the UI only)
@@ -43,6 +43,7 @@ Where things live (`server.ts` is routes and wiring only — the logic moved out
 | `server/strict.ts` | the strict-mode contract (`X-ContentPipe-Strict`) and `orFallback` |
 | `server/scriptPipeline.ts` | the first three script passes, chunk sizes, `buildGenerationSummary` |
 | `server/soundPipeline.ts`, `shared/sound.ts` | the fourth pass: music plan, sound effects, silences, transitions, and the closed transition list — see "Sound & edit pass" below |
+| `server/clipPipeline.ts`, `shared/clipPrompts.ts` | the fifth pass and the per-clip image-to-video prompts (≤ 10 s clips) — see "Clip pass" below |
 | `server/runJournal.ts` | on-disk checkpoints in `.runs/` |
 | `server/timeline.ts` | deterministic timeline, chapters, mid-roll placement, retention/compliance audit |
 | `server/publishPackage.ts` | titles / thumbnails / description / tags and their linters |
@@ -74,7 +75,7 @@ ListModels is necessary but not sufficient — confirm with an actual `generateC
 
 The most important thing in this repo. Given a big `responseSchema`, models return `finishReason: STOP` — no error, no truncation — with required fields simply **absent**. Confirmed on `gemini-3.6-flash`: `characterBible`, `styleGuide`, `visual` and `motion` all missing despite being in `required`. The same schema fragments work perfectly when requested on their own.
 
-Hence separate passes in `/api/script` (four since the sound & edit pass), each with a small schema. **Do not consolidate them to save a round trip.** If you add fields, add them to whichever pass keeps its schema smallest, or add another pass.
+Hence separate passes in `/api/script` (five since the clip pass), each with a small schema. **Do not consolidate them to save a round trip.** If you add fields, add them to whichever pass keeps its schema smallest, or add another pass.
 
 Related: arrays need explicit `minItems`. Without it the model returns one scene and stops.
 
@@ -289,7 +290,7 @@ Why: HF ZeroGPU is ~5 GPU-min a day and images and video share it; video gets it
 - **Wire test 2026-09-27 (dummy token, no account):** requests to both models reached `api.cloudflare.com` and came back HTTP 401 `{"result":null,"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}` in ~70-170 ms — so the URL, the `result` envelope and the 401 handling are right. No image has been generated yet.
 - **Live test 2026-09-27 (owner's account, `flux-2-klein-4b`, 16:9, through `generateSceneImage` with `IMAGE_PROVIDER_ORDER=cloudflare:flux-2-klein-4b`):** one image, first try, no fallback. Real size **1536x864** (so multiple-of-16 sizes are accepted), JPEG, 881 KB, **48 s** wall clock (one sample; may include a cold start). Quality: clear focal subject, the character anchor followed, the cracked monitor and red code drawn, cinematic grade; small on-screen text is gibberish (keep on-screen text out of prompts) and the shadows are dark and slightly grainy. The `result.image` envelope works.
 - **Still unmeasured:** the real Neuron cost per image (check the Cloudflare dashboard's Workers AI usage after a known number of images), and whether an animation from this still is clean. Try one image-to-video clip before committing a whole script to it.
-- **By-hand prompts:** every scene exports Nano Banana Pro, **FLUX** and **Midjourney** prompts (`shared/imagePrompts.ts`; script-editor buttons; markdown export). FLUX and Midjourney add a clarity clause before the style anchor (smooth gradients, even light, one clear subject) because the still becomes a video's first frame; grain and busy micro-texture flicker once animated. Nano Banana's prompt is unchanged. Midjourney pins no version and puts unwanted things in `--no`.
+- **By-hand prompts:** every scene exports Nano Banana Pro and **FLUX** prompts (`shared/imagePrompts.ts`; script-editor buttons; markdown export), and `recommendImageTool` marks which to use: Nano Banana Pro for lettering in the picture (quoted labels, "labeled", "reads", signs, headlines; `headline`/`terminal`/`diagram` visual types) or 2+ characters in frame, FLUX otherwise (owner, 2026-10-01: FLUX is accurate but garbles in-image text). It is a keyword heuristic and says what it matched. FLUX adds a clarity clause before the style anchor (smooth gradients, even light, one clear subject) because the still becomes a video's first frame; grain and busy micro-texture flicker once animated. Nano Banana's prompt is unchanged. **Midjourney was removed 2026-10-01 (owner); don't add it back.**
 
 ## Kaggle notebooks for video: ruled out for Blast Radius (2026-09-27)
 
@@ -476,6 +477,17 @@ Why: the narrative pass used to write one `soundEffect` per scene as item 10 of 
 - `signatureIntro` is `''` for every tone. It used to be "Welcome back to Blast Radius..." for non-documentary scripts, while `intro-line-present` warned about that exact line.
 - A `plainWords` rule in `shared/topicProfile.ts` now goes into the narrative prompt: technical terms get explained, and the word "CVE" is never used. A live script said "No patch. No CVE." in 14 scenes.
 - The bare word is audited as `cve-jargon`, separately from real ids and scores (`severity-rating-shown`).
+
+## Clip pass (2026-10-01)
+
+The owner makes most of each video's picture by hand in Kling (image-to-video, 5 or 10 s clips) and adds narration, music and effects in DaVinci Resolve. One `motionPrompt` sentence per 12-15 s scene could not direct that, so a fifth `/api/script` pass cuts every scene into clips and writes each one's direction.
+
+- **Timing is code's, always recomputed.** `clipTimings` (`shared/clipPrompts.ts`) splits `durationEst` into `ceil(d/10)` equal clips rounded to 0.5 s (12 s → 6 + 6, never 10 + 2: a 2 s clip shows nothing and costs a full generation). `sceneClips(scene)` recomputes timing and the narration over each clip (`narrationBeats`: whole sentences by their middle word, else an even word split) from the scene's *current* duration on every read, keeping only the stored creative fields. So a retimed scene still splits right, and after `scrubCveIds` `server.ts` re-runs `sceneClips` so no clip carries a pre-scrub CVE id (e2e "CVE SCRUB" asserts it).
+- **The model writes only what needs judgment** (`server/clipPipeline.ts`, `buildClipDirectionSchema`, 6 scenes a chunk): per clip `action` (tied to that clip's narration), `camera` (exactly one move), `environment` (ambient motion), `endFrame` (the next clip starts from it). It sees the scene's visual layers, planned motion and the clip split. Clips come back by `clipNumber`; extra clips are dropped and a clip without action or camera falls back. Checkpointed as `clipChunks` (`clipChunksDone` in progress). A failed chunk degrades to clips built from `motion` (`source: 'derived'`, said in the brief and UI); strict rethrows retryable failures.
+- **The prompt is assembled in code** (`clipPrompt`): labelled lines — start (clip 1 animates the still; clip 2+ continues from the last frame of the one before), Subject (the character layer, locked anchor included), Action, Camera (shot type + the move + easing), Setting (background), Atmosphere, a fixed motion-quality line ("Silent clip"), Look (the style anchor), Ends on. The narration is **never** in the prompt (a video model draws words). `clipNegative` = shared video failures (`CLIP_NEGATIVES`: morphing, flicker, garbled lettering, talking, lip movement...) + the scene's image negative. `klingLength` says make 5 or 10 s and what to trim to.
+- **Where it shows:** a "Video clips (N)" subsection per scene in the export (header, narration over the clip, prompt, negative); copy buttons per clip in the script editor. The old one-line "Motion prompt" block left the export (the motion table stays); `motion.motionPrompt` is still what the in-app "Animate clip" button sends to a Hugging Face Space.
+- **Backfill:** `npm run clips:add -- .runs/story-<slug>` runs the pass in-process on an existing story (no server needed; strict, journaled as `.runs/clips-<folder>.json`), rewrites `brief.json`/`script.json` (originals kept once as `*.before-clips.json`) and writes a fresh export. `--derived` makes no model calls. Calls outside a request have no purpose, so the reserved Gemini 3.8 Flash is not used.
+- **Cost:** ceil(scenes/6) text calls (9 for 51 scenes). **Not live-verified on a whole new script yet**; first live use was the OnePlus backfill (2026-10-01).
 
 ## Retention audit and publish package
 

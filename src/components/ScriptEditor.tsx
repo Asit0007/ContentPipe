@@ -35,7 +35,8 @@ import { ScriptQualityPanel } from './ScriptQualityPanel';
 import { logModelCalls } from '../utils/modelUsageLog';
 import { modelInfo } from '../../shared/modelCatalog';
 import { nanoBananaProPrompt } from '../../shared/nanoBananaPrompt';
-import { fluxPrompt, midjourneyPrompt } from '../../shared/imagePrompts';
+import { fluxPrompt, recommendImageTool, IMAGE_TOOL_LABEL } from '../../shared/imagePrompts';
+import { sceneClips, clipPrompt, clipNegative, clipHeader } from '../../shared/clipPrompts';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -207,12 +208,18 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
   };
 
   // Nano Banana Pro has no free API quota on this key: copy its prompt and make the still by hand in the Gemini app.
-  // FLUX and Midjourney get the same layers plus a clarity clause, because the still becomes a video's first frame.
-  const handleCopyPrompt = (scene: VideoScriptScene, kind: 'nbp' | 'flux' | 'mj') => {
+  // FLUX gets the same layers plus a clarity clause, because the still becomes a video's first frame. FLUX for plain
+  // pictures, Nano Banana Pro for complex ones and lettering (recommendImageTool).
+  const handleCopyPrompt = (scene: VideoScriptScene, kind: 'nbp' | 'flux') => {
     const ratio = videoScript.aspectRatio || '16:9';
-    const build = kind === 'flux' ? fluxPrompt : kind === 'mj' ? midjourneyPrompt : nanoBananaProPrompt;
-    navigator.clipboard.writeText(build(scene, ratio));
-    setCopiedNbpScene(`${scene.id}:${kind}`);
+    const build = kind === 'flux' ? fluxPrompt : nanoBananaProPrompt;
+    copyText(`${scene.id}:${kind}`, build(scene, ratio));
+  };
+
+  // Clip prompts (shared/clipPrompts.ts): one per clip of at most 10 s, pasted into Kling by hand.
+  const copyText = (key: string, text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedNbpScene(key);
     playWebAudioSFX('pop');
     setTimeout(() => setCopiedNbpScene(null), 2500);
   };
@@ -970,17 +977,12 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         <span>{copiedNbpScene === `${scene.id}:flux` ? 'Copied' : 'FLUX prompt'}</span>
                       </button>
 
-                      <button
-                        type="button"
-                        id={`copy-mj-btn-${scene.sceneNumber}`}
-                        disabled={!scene.visualPrompt.trim() && !scene.visual}
-                        onClick={() => handleCopyPrompt(scene, 'mj')}
-                        title="Copy a Midjourney prompt with --ar, --style raw and --no set. Written so the still animates cleanly."
-                        className="flex items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50 cursor-pointer"
+                      <span
+                        className="text-[11px] text-zinc-400"
+                        title="FLUX for plain pictures; Nano Banana Pro for complex ones and any lettering, which FLUX draws badly."
                       >
-                        {copiedNbpScene === `${scene.id}:mj` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
-                        <span>{copiedNbpScene === `${scene.id}:mj` ? 'Copied' : 'Midjourney prompt'}</span>
-                      </button>
+                        Use <span className="font-semibold text-orange-300">{IMAGE_TOOL_LABEL[recommendImageTool(scene).tool]}</span> ({recommendImageTool(scene).reason})
+                      </span>
 
                       {scene.imageError && (
                         <span className="text-[11px] text-rose-400 flex items-center gap-1" title={scene.imageError}>
@@ -988,6 +990,51 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         </span>
                       )}
                     </div>
+
+                    {(() => {
+                      const ratio = videoScript.aspectRatio || '16:9';
+                      const clips = sceneClips(scene);
+                      if (!clips.length || !clipPrompt(scene, clips[0], ratio)) return null;
+                      return (
+                        <div className="space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold text-zinc-300">
+                              <Clapperboard className="inline h-3.5 w-3.5 mr-1 text-orange-400" />
+                              Video clips ({clips.length}) — clip 1 animates the still, each later clip starts from the last frame before it
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => copyText(`${scene.id}:clipneg`, clipNegative(scene))}
+                              title={clipNegative(scene)}
+                              className="text-[11px] text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                            >
+                              {copiedNbpScene === `${scene.id}:clipneg` ? 'Copied' : 'Copy negative prompt'}
+                            </button>
+                          </div>
+                          {clips.map((c) => (
+                            <div key={c.clipNumber} className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 text-[11px] text-zinc-400">
+                                <div className="text-zinc-300">
+                                  {clipHeader(c, clips.length)}
+                                  {c.source === 'derived' && <span className="text-amber-400"> · from motion only</span>}
+                                </div>
+                                <div className="truncate" title={c.action}>{c.action}</div>
+                              </div>
+                              <button
+                                type="button"
+                                id={`copy-clip-btn-${scene.sceneNumber}-${c.clipNumber}`}
+                                onClick={() => copyText(`${scene.id}:clip${c.clipNumber}`, clipPrompt(scene, c, ratio))}
+                                title={clipPrompt(scene, c, ratio)}
+                                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-200 transition-colors cursor-pointer"
+                              >
+                                {copiedNbpScene === `${scene.id}:clip${c.clipNumber}` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
+                                <span>{copiedNbpScene === `${scene.id}:clip${c.clipNumber}` ? 'Copied' : `Clip ${c.clipNumber} prompt`}</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
 
                     {scene.generatedImageUrl && (
                       <div className="relative rounded-xl overflow-hidden border border-zinc-700 bg-zinc-950 group aspect-video">

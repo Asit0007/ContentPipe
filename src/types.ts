@@ -1,3 +1,4 @@
+import type { SceneClip } from '../shared/clipPrompts';
 import type { Speaker } from '../shared/speakers';
 
 import type { ModelCall } from '../shared/modelUsage';
@@ -247,6 +248,11 @@ export interface VideoScriptScene {
   visual?: SceneVisual;
   /** Camera and subject motion for animating this scene's still. */
   motion?: MotionDirection;
+  /**
+   * The scene cut into clips of at most 10 s, each with its own image-to-video direction (server/clipPipeline.ts).
+   * Absent on older scripts; shared/clipPrompts.ts sceneClips() derives them from `motion` then.
+   */
+  clips?: SceneClip[];
   /** Source ids ([S#]) backing the factual claims in this narration. */
   citations?: string[];
   /**

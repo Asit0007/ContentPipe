@@ -2,7 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { formatTimestamp } from './timeline';
 import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
-import { fluxPrompt, midjourneyPrompt } from '../shared/imagePrompts';
+import { fluxPrompt, recommendImageTool, IMAGE_TOOL_LABEL } from '../shared/imagePrompts';
+import { sceneClips, clipPrompt, clipNegative, clipHeader } from '../shared/clipPrompts';
 import { writeBriefPage, writeBriefIndex } from './briefPageFiles';
 
 /**
@@ -553,15 +554,14 @@ export function renderScriptMarkdown(payload: {
     }
     const nbp = nanoBananaProPrompt(sc, script.aspectRatio);
     if (nbp) {
-      out.push('**Nano Banana Pro prompt** — paste into the Gemini app (image generation), one scene at a time:');
-      out.push(fence(nbp, 'text'));
+      // Two image tools (owner, 2026-10-01): FLUX for plain pictures, Nano Banana Pro for complex ones and any
+      // lettering, which FLUX garbles. The recommended one comes first.
+      const pick = recommendImageTool(sc);
+      const nbpBlock = ['**Nano Banana Pro prompt** — paste into the Gemini app (image generation), one scene at a time:', fence(nbp, 'text'), ''];
+      const fluxBlock = ['**FLUX prompt** — Cloudflare Workers AI, or any FLUX app:', fence(fluxPrompt(sc, script.aspectRatio), 'text'), ''];
+      out.push(`**Use ${IMAGE_TOOL_LABEL[pick.tool]}** for this still (${pick.reason}).`);
       out.push('');
-      out.push('**FLUX prompt** — Cloudflare Workers AI, or any FLUX app:');
-      out.push(fence(fluxPrompt(sc, script.aspectRatio), 'text'));
-      out.push('');
-      out.push('**Midjourney prompt:**');
-      out.push(fence(midjourneyPrompt(sc, script.aspectRatio), 'text'));
-      out.push('');
+      out.push(...(pick.tool === 'nano-banana-pro' ? [...nbpBlock, ...fluxBlock] : [...fluxBlock, ...nbpBlock]));
     }
 
     // Motion
@@ -583,11 +583,29 @@ export function renderScriptMarkdown(payload: {
         )
       );
       out.push('');
-      if (m.motionPrompt) {
-        out.push('**Motion prompt — paste into an image-to-video model:**');
-        out.push(fence(m.motionPrompt, 'text'));
+    }
+
+    // Video clips: the scene cut into clips of at most 10 s, one image-to-video prompt each (shared/clipPrompts.ts).
+    const clips = sceneClips(sc);
+    const firstClip = clips.length ? clipPrompt(sc, clips[0], script.aspectRatio) : '';
+    if (firstClip) {
+      out.push(`#### Video clips (${clips.length})`);
+      out.push('');
+      out.push('Clip 1 animates this scene\'s still; each later clip starts from the last frame of the one before. Turn sound off in the video tool: narration, music and effects are added in the edit.');
+      out.push('');
+      for (const c of clips) {
+        out.push(`**${clipHeader(c, clips.length)}**${c.source === 'derived' ? ' — built from the motion direction only' : ''}`);
+        out.push('');
+        if (c.narrationBeat) {
+          out.push(`> Narration over this clip: ${c.narrationBeat}`);
+          out.push('');
+        }
+        out.push(fence(clipPrompt(sc, c, script.aspectRatio), 'text'));
         out.push('');
       }
+      out.push('**Negative prompt** (every clip of this scene):');
+      out.push(fence(clipNegative(sc), 'text'));
+      out.push('');
     }
 
     // Infographic

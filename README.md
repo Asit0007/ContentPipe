@@ -20,10 +20,10 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Research from real sources, cited, with honest gaps | **Done** |
 | Plan and scene-by-scene script, written for a non-technical viewer | **Done** |
 | Layered image prompts with enforced character/style/place consistency | **Done** |
-| Motion direction and a paste-ready image-to-video prompt per scene | **Done** |
+| Motion direction, and each scene cut into clips of at most 10 s with a detailed image-to-video prompt per clip (for Kling, by hand) | **Done** (clip pass, 2026-10-01) |
 | Sound & edit cue sheet (music, restrained SFX, silences, transitions) | **Done** (for a human editor) |
 | Titles, thumbnails, description, tags, chapters | **Done** |
-| Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro, FLUX and Midjourney prompts by hand via copy buttons |
+| Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro and FLUX prompts by hand via copy buttons, with the tool to use marked per scene |
 | Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day; Wan 2.2 reserves ~54 s a 4 s clip at 6 steps (about 5-8 a day by the reservation maths; the account's real daily reset was never measured, see below) |
 | Narration | **Two voices via ContentRender**: narrator Kokoro `af_heart` (local), analyst Gemini TTS `Charon` through `/api/tts` with the engine pinned; the browser UI still reads one voice |
 | Stills + narration → one MP4 with captions | **Module only** (`server/assemble.ts`, `npm run render:fixture`); no endpoint or button, and it uses stills, not the AI clips |
@@ -115,7 +115,7 @@ Telegram / news input
   /api/plan ─────── narrative beats, hook strategy, pacing, target duration
         │
         ▼
-  /api/script ───── four passes (bible, narrative, art, sound & edit), scenes in duration-sized chunks
+  /api/script ───── five passes (bible, narrative, art, sound & edit, clips), scenes in duration-sized chunks
         │            (see below)
         │
         ▼
@@ -253,7 +253,7 @@ Every prompt in this repo used to hardcode a single topic: an "elite investigati
 - **Cybersecurity-specific quality rules stay cybersecurity-specific on purpose.** `server/timeline.ts`'s CVE/CVSS "don't rate it, show it" audit and the `terminal`/`diagram`/`headline` evidence-mix check are untouched — they're harmless no-ops outside a tech/security story, and generalizing them further is a separate, unscoped effort.
 - **Not covered:** `server/fallbackGenerators.ts` (the canned-content path used only when every LLM provider is down) is still cybersecurity-flavored regardless of `topicDomain` — a non-default topic under total provider outage gets the cyber fallback, flagged `isQuotaFallback` as always.
 
-### Script generation runs in four passes
+### Script generation runs in five passes
 
 Not one call, deliberately.
 
@@ -263,6 +263,7 @@ Not one call, deliberately.
 | 2. Narrative | scenes: narration, cinematography, infographics | `buildScriptScenesSchema(min, max)` |
 | 3. Art direction | per scene: `visual`, `motion`, `citations` | `buildVisualDirectionSchema(count)` |
 | 4. Sound & edit | `musicCues` (one call), then per scene: `sound` (effect, ambience, silence, transition, J/L-cut) | `buildScorePlanSchema`, `buildSoundDirectionSchema(count)` |
+| 5. Clips | per scene: `clips` — each ≤ 10 s clip's action, camera move, ambience and end frame (timing is code's) | `buildClipDirectionSchema(count)` |
 
 **Why split:** on a single combined schema, models return `finishReason: STOP` while silently omitting required fields. Observed with `gemini-3.6-flash`: `characterBible`, `styleGuide`, `visual` and `motion` all absent despite being listed in `required`. The same fields come back reliably when each pass gets a small, focused schema. If you merge these passes back together, expect fields to start disappearing.
 
@@ -422,7 +423,13 @@ Note that ListModels is not proof of access — `gemini-2.5-flash` appears in th
 
 Hugging Face ZeroGPU gives a free account ~5 GPU-minutes a day, shared by images and video, so video gets it and images can come from **Cloudflare Workers AI**: set `IMAGE_PROVIDER_ORDER=cloudflare:flux-2-klein-4b` plus `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. Live-verified once: a 1536x864 16:9 still, first try, ~48 s. Only two commercially usable FLUX models are allowed (klein-4b, schnell); the licence on the hosted service is not stated by Cloudflare, so confirm before monetised use. Details, limits and what is unmeasured: `CLAUDE.md`.
 
-Every scene also exports three copy-paste prompts (buttons in the script editor and sections in the markdown export): **Nano Banana Pro**, **FLUX** and **Midjourney**. The FLUX and Midjourney ones (`shared/imagePrompts.ts`) add a clarity sentence before the style anchor, because a noisy or busy still flickers once animated, and Midjourney gets `--ar`, `--style raw` and a real `--no` field.
+Every scene also exports two copy-paste image prompts (buttons in the script editor and sections in the markdown export): **Nano Banana Pro** and **FLUX**, and says which to use (`recommendImageTool` in `shared/imagePrompts.ts`): Nano Banana Pro when the picture holds lettering (a labelled whiteboard, a printout, a sign — FLUX garbles text) or two or more characters, FLUX otherwise. The recommended prompt comes first. The FLUX prompt adds a clarity sentence before the style anchor, because a noisy or busy still flickers once animated. Midjourney was dropped on 2026-10-01 (owner).
+
+### Video clips: one prompt per ≤ 10 s (2026-10-01)
+
+Each scene is cut into equal clips of at most 10 s (Kling's longest clip): 12 s is two 6 s clips, 7 s is one. Each clip gets its own image-to-video prompt, as detailed as the image prompt and built from it: how it starts (clip 1 animates the scene's still, clip 2+ continues from the previous clip's last frame), the subject with its locked character anchor, the action, **one** camera move, the setting, its ambient motion, the motion-quality line, the style anchor, and the frame it ends on. The words spoken over each clip are shown beside it for the editor but never put in the prompt. Every scene also has a negative prompt for the video tool's negative field. The action, camera, ambience and end frame come from a fifth `/api/script` pass (`server/clipPipeline.ts`); scenes where it failed, and scripts written before it, get clips built from their `motion` direction instead, marked as such. A story written before the pass existed gets its clips with `npm run clips:add -- .runs/story-<slug>` (about one text call per 6 scenes; `--derived` for none).
+
+**A story's existing stills stay valid.** The clip pass changes nothing in the script or the image prompts, and each clip prompt is built from the same visual layers the still was drawn from, so clip 1 can animate the still you already have. Remake only the stills that fail: where the brief says **Use Nano Banana Pro** and FLUX garbled the lettering (the OnePlus run's scene 4 reads "LISER" for USER), paste the Nano Banana Pro prompt into the Gemini app and save the result over `stills/scene-NNN.png` in the ContentRender run; ContentRender adopts a hand-replaced still and reopens the images gate.
 
 ### Daily video burn (retired 2026-09-27)
 
@@ -462,7 +469,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 429 unit tests — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 439 unit tests (2026-10-01) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
@@ -499,7 +506,7 @@ server/
   assemble.ts                 scene stills + narration -> MP4 via local ffmpeg; refuses placeholders and fallback audio
   captions.ts                 verbatim English SRT, timed across each scene's real speech window
   stubMedia.ts                stand-in TTS/image output for the assembler's tests and fixture render (never wired to an endpoint)
-  scriptPipeline.ts           the first three script passes and chunking (the fourth is soundPipeline.ts)
+  scriptPipeline.ts           the first three script passes and chunking (the fourth is soundPipeline.ts, the fifth clipPipeline.ts)
   runJournal.ts               on-disk checkpoints (.runs/) for /api/script
   sourceArchive.ts            keeps the text the model actually saw (.runs/sources-*.json)
   researchCoverage.ts         counts how much of a dossier is genuinely cited
@@ -552,7 +559,7 @@ renders/                      Assembled videos and captions (gitignored)
 
 **A provider is configured but never answers.** Look for `[LLM Chain] <provider>/<model> -> ...` warnings in the server log. `zero` or HTTP 401/402/403 means a bad key or no balance, and that provider is then skipped for 30 minutes — fix it and restart. HTTP 404, or a 400 saying the model doesn't exist, means a stale model id: that model is skipped for 30 minutes, `npm run llm:check` lists the live ones, and `<ID>_MODELS` overrides the default. HTTP 413 means the request is too large for that model's limit (Groq's free tier counts the output cap against tokens-per-minute) — lower `<ID>_MAX_TOKENS`.
 
-**A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in four passes](#script-generation-runs-in-four-passes).
+**A non-Gemini provider keeps falling through with "answer rejected".** Its output broke the schema twice. The log names the violations. Small schemas help both the model and the validator — see [Script generation runs in five passes](#script-generation-runs-in-five-passes).
 
 **A client reports `fetch failed` after about 5 minutes, but the server log shows the request finished.** Node's built-in `fetch` gives up after 300 s waiting for response headers, and none of these routes stream; `/api/script` on a long story under quota pressure ran 27 minutes. Passing an npm-installed undici `Agent` as `dispatcher` does not fix it (Node's internal undici rejects it). Call with `node:http` / `node:https` and your own timeout instead, as `scripts/story-start.ts` and ContentRender's client do. The run journal means the identical re-POST picks up the finished script.
 

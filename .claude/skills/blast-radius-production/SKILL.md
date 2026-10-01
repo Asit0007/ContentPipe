@@ -1,11 +1,11 @@
 ---
 name: blast-radius-production
-description: Turn a finished ContentPipe script (the /api/script JSON) into a $0 production pack for the by-hand image and video stage — which stills to generate within an image budget (default 30), which scenes get AI clips and from which free tool, clip lengths snapped to each tool's limits (Kling 5/10 s, Flow 8 s, Seedance up to 30 s), one-camera-move image-to-video prompts, timeline-ordered filenames and DaVinci Resolve assembly steps. Use when asked for a shot list, image list, clip plan, "what do I generate next", or how to take a Blast Radius script into Flux / Midjourney / Nano Banana, Kling / Seedance / Wan / Flow and DaVinci Resolve.
+description: Turn a finished ContentPipe script (the /api/script JSON) into a $0 production pack for the by-hand image and video stage — which stills to generate within an image budget (default 30), which scenes get AI clips and from which free tool, clip lengths snapped to each tool's limits (Kling 5/10 s, Flow 8 s, Seedance up to 30 s), one-camera-move image-to-video prompts, timeline-ordered filenames and DaVinci Resolve assembly steps. Use when asked for a shot list, image list, clip plan, "what do I generate next", or how to take a Blast Radius script into FLUX / Nano Banana Pro, Kling / Seedance / Wan / Flow and DaVinci Resolve.
 ---
 
 # Blast Radius production pack
 
-ContentPipe stops at a script. This skill covers the step after it: the stills and clips you make by hand with free tools, then the edit in DaVinci Resolve. It follows `free-ai-video-stack` (global skill), which has the free-tier facts, the licence checks and the prompt rules. Read its section 1 before recommending any tool for a monetised video.
+ContentPipe stops at a script. Its exported brief now has the image prompts (FLUX or Nano Banana Pro, the tool marked per scene) and one image-to-video prompt per clip of at most 10 s (2026-10-01); use those for the prompts and this pack for the budget, routing and file names. This skill covers the step after it: the stills and clips you make by hand with free tools, then the edit in DaVinci Resolve. It follows `free-ai-video-stack` (global skill), which has the free-tier facts, the licence checks and the prompt rules. Read its section 1 before recommending any tool for a monetised video.
 
 ## Run it
 

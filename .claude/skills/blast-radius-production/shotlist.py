@@ -230,7 +230,8 @@ def render_md(script, cfg, scenes, images, shots, credits, day_caps, total, args
         L.append("\n> **Non-commercial tool in use (`--allow-noncommercial`).** Its free output may not go on a monetised channel. Drafts only.")
 
     L += ["", "## Stills", "", "Generate in order. Same seed and the same character reference for every still of one character. "
-          f"Midjourney: append `--ar {ar}` and `--no <negative>`. Flux / Nano Banana: paste as is; negative into the negative field if there is one.", ""]
+          f"Aspect ratio {ar}. Nano Banana Pro for any still with lettering or two or more characters, FLUX for the rest: paste as is; negative into the negative field if there is one. "
+          "The exported brief marks the tool per scene and has a prompt per ≤ 10 s clip.", ""]
     for im in images:
         s = im["scene"]
         L.append(f"### img{im['n']:02d} — scene {s['sceneNumber']}: {s.get('title', '')}")

@@ -146,3 +146,37 @@ test('the Voice row names the analyst, the narrator, and shows a dash for a scri
   assert.match(md, /\| Voice \| Analyst \(second voice\) \|/);
   assert.match(md, /\| Voice \| — \|/);
 });
+
+test('image prompts: the recommended tool comes first, no Midjourney; each scene has its video clips, at most 10 s each', () => {
+  const md = render({
+    title: 'T',
+    aspectRatio: '16:9',
+    scenes: [
+      {
+        sceneNumber: 1, title: 'Board', narration: 'One sentence here. Another sentence here.', durationEst: 12, onScreenText: '', visualType: 'cyberpunk',
+        visual: { character: 'No characters in frame.', background: "A whiteboard labeled 'ROOT'.", scene: 'Wide.', styleAnchor: 'Noir.' },
+        motion: { shotType: 'Wide', cameraMove: 'Slow push-in', subjectMotion: 'Haze drifts' },
+        clips: [{ clipNumber: 1, action: 'Light sweeps across the board.', camera: 'Static camera.', environment: 'Haze drifts.', endFrame: 'The board, centred.' }],
+      },
+      {
+        sceneNumber: 2, title: 'Room', narration: 'Short.', durationEst: 7, onScreenText: '', visualType: 'cyberpunk',
+        visual: { character: 'No characters in frame.', background: 'An empty server room.', scene: 'Wide.', styleAnchor: 'Noir.' },
+        motion: { shotType: 'Wide', cameraMove: 'Slow pan left', subjectMotion: 'Fans spin' },
+      },
+    ],
+  });
+  assert.doesNotMatch(md, /Midjourney/);
+  const [s1, s2] = md.split('### Scene 2');
+  assert.match(s1, /\*\*Use Nano Banana Pro\*\* for this still \(lettering in the picture\)/);
+  assert.ok(s1.indexOf('**Nano Banana Pro prompt**') < s1.indexOf('**FLUX prompt**'), 'the recommended prompt comes first');
+  assert.match(s2, /\*\*Use FLUX\*\*/);
+  assert.ok(s2.indexOf('**FLUX prompt**') < s2.indexOf('**Nano Banana Pro prompt**'));
+  assert.match(s1, /#### Video clips \(2\)/);
+  assert.match(s1, /\*\*Clip 1 of 2 · 0:00–0:06 \(6 s\) · make 10 s in Kling, trim to 6 s\*\*\n/);
+  assert.match(s1, /\*\*Clip 2 of 2 · 0:06–0:12 \(6 s\) · make 10 s in Kling, trim to 6 s\*\* — built from the motion direction only/);
+  assert.match(s1, /> Narration over this clip: One sentence here\./);
+  assert.match(s1, /Action: Light sweeps across the board\./);
+  assert.match(s1, /\*\*Negative prompt\*\* \(every clip of this scene\)/);
+  assert.match(s2, /#### Video clips \(1\)/);
+  assert.doesNotMatch(md, /Motion prompt — paste/, 'the one-line motion prompt is replaced by the clip prompts');
+});
