@@ -28,6 +28,7 @@ import { applySoundDirection } from './server/soundPipeline';
 import { applyClipDirection } from './server/clipPipeline';
 import { sceneClips } from './shared/clipPrompts';
 import { scrubCharacterNames } from './server/characterNames';
+import { safeImagePrompt, safeVideoPrompt } from './shared/promptSafety';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
 import { extractUrls, fetchSources, buildSourceContext, sourceId } from './server/sourceFetcher';
@@ -852,7 +853,8 @@ app.post('/api/generate-image', async (req, res) => {
 
   try {
     const ai = getAIClient();
-    const { strictError, ...result } = await generateSceneImage(ai, { prompt, aspectRatio: targetAspectRatio, imageSize: targetSize });
+    // A clean plate whoever calls: lettering, brand names and harm words out (shared/promptSafety.ts, 2026-10-01).
+    const { strictError, ...result } = await generateSceneImage(ai, { prompt: safeImagePrompt(String(prompt)), aspectRatio: targetAspectRatio, imageSize: targetSize });
     // Every listed provider's image is real and labelled; the SVG placeholder is not artwork, so strict never gets it.
     if (strict && result.isPlaceholder) {
       const why = result.attempts.map((a) => `${a.provider}: ${a.error}`).join('; ');
@@ -887,7 +889,7 @@ app.post('/api/generate-video', async (req, res) => {
   try {
     const result = await generateSceneVideo({
       imageUrl,
-      prompt: prompt.trim().slice(0, 2000),
+      prompt: safeVideoPrompt(prompt.trim()).slice(0, 2000),
       durationSec: Math.min(14, Math.max(1, Number(durationSec) || 5)),
       aspectRatio: validAspectRatios.includes(aspectRatio) ? aspectRatio : '16:9',
     });

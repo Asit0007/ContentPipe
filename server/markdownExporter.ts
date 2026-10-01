@@ -3,7 +3,9 @@ import path from 'path';
 import { formatTimestamp } from './timeline';
 import { nanoBananaProPrompt } from '../shared/nanoBananaPrompt';
 import { fluxPrompt, recommendImageTool, IMAGE_TOOL_LABEL } from '../shared/imagePrompts';
-import { sceneClips, clipPrompt, clipNegative, clipHeader } from '../shared/clipPrompts';
+import { sceneClips, clipPrompt, clipPromptShort, clipNegative, clipHeader } from '../shared/clipPrompts';
+import { sceneOverlays, hadLettering, promptRisks, CLEAN_PLATE_EDIT_PROMPT } from '../shared/promptSafety';
+import { formatSrtTime } from './captions';
 import { writeBriefPage, writeBriefIndex } from './briefPageFiles';
 
 /**
@@ -491,6 +493,7 @@ export function renderScriptMarkdown(payload: {
   out.push('');
   out.push('## Scenes');
   out.push('');
+  renderGuardrails(out);
 
   for (const sc of scenes) {
     out.push(`### Scene ${sc.sceneNumber ?? '?'} — ${sc.title || 'Untitled'}`);
@@ -562,6 +565,23 @@ export function renderScriptMarkdown(payload: {
       out.push(`**Use ${IMAGE_TOOL_LABEL[pick.tool]}** for this still (${pick.reason}).`);
       out.push('');
       out.push(...(pick.tool === 'nano-banana-pro' ? [...nbpBlock, ...fluxBlock] : [...fluxBlock, ...nbpBlock]));
+      const v0 = sc.visual;
+      if (hadLettering(v0 ? [v0.character, v0.background, v0.scene].join(' ') : sc.visualPrompt || '')) {
+        out.push('**Already made this still with words in it?** Attach it in the Gemini app (Nano Banana Pro) with this edit prompt, and add the words back in the edit:');
+        out.push(fence(CLEAN_PLATE_EDIT_PROMPT, 'text'));
+        out.push('');
+      }
+    }
+
+    // Text goes on in the edit, not into the AI picture (2026-10-01): readable, fixable, and nothing for a filter to read.
+    const overlays = sceneOverlays(sc);
+    if (overlays.length) {
+      out.push('#### On-screen text (add in the edit)');
+      out.push('');
+      for (const o of overlays) {
+        out.push(o.kind === 'headline' ? `- **Headline card:** ${o.text}` : `- **Label:** ${o.text}${o.where ? ` — where: ${o.where}` : ''}`);
+      }
+      out.push('');
     }
 
     // Motion
@@ -600,7 +620,19 @@ export function renderScriptMarkdown(payload: {
           out.push(`> Narration over this clip: ${c.narrationBeat}`);
           out.push('');
         }
-        out.push(fence(clipPrompt(sc, c, script.aspectRatio), 'text'));
+        const full = clipPrompt(sc, c, script.aspectRatio);
+        out.push(fence(full, 'text'));
+        out.push('');
+        const risks = promptRisks(full);
+        if (risks.length) {
+          out.push(`> ⚠ Still in this prompt, may trip a filter: ${risks.map((r) => `${r.match} (${r.kind})`).join(', ')}`);
+          out.push('');
+        }
+        out.push('<details><summary>Short prompt — if the tool refuses the full one</summary>');
+        out.push('');
+        out.push(fence(clipPromptShort(sc, c, script.aspectRatio), 'text'));
+        out.push('');
+        out.push('</details>');
         out.push('');
       }
       out.push('**Negative prompt** (every clip of this scene):');
@@ -687,6 +719,41 @@ export function renderScriptMarkdown(payload: {
   return out.join('\n');
 }
 
+/** One section, once per brief: why prompts look the way they do, and what to try when a tool refuses one. */
+function renderGuardrails(out: string[]) {
+  out.push('> **Making the pictures and clips: what the prompts leave out, and what to do when a tool refuses.**');
+  out.push('> Picture prompts describe only what a camera sees: no lettering (it is listed under "On-screen text" and goes on in the edit), no brand names, no character names, and no sentence about what the shot *means*. A video tool only has to move what is already in the still; the narration carries the story.');
+  out.push('> If a tool still refuses a clip ("That request looks like it goes against our terms"), in this order:');
+  out.push('> 1. Use the **short prompt** under the clip (motion and camera only).');
+  out.push('> 2. If the still has words in it, clean it first with the edit prompt under the scene\'s image prompts, then retry.');
+  out.push('> 3. Try the other video tool (Kling, or Gemini), or the free in-app "Animate clip" (Hugging Face, open-weight models).');
+  out.push('> 4. If nothing moves it, use the still with a slow zoom in Resolve: for a still shot (light, haze, a static object) it looks the same and costs nothing.');
+  out.push('> Never respell or hide words to get past a filter: Google\'s and Kling\'s terms forbid getting around safety filters, and the account is the penalty. Don\'t resubmit one refused prompt over and over either.');
+  out.push('');
+}
+
+/**
+ * The headline cards as subtitles, one per scene at its start, for DaVinci Resolve: File → Import → Subtitle, style
+ * the track once, and every card is in place. Times are the script's estimates; re-export after narration retimes.
+ */
+export function renderOverlaySrt(script: any): string {
+  const scenes: any[] = Array.isArray(script?.scenes) ? script.scenes : [];
+  const starts = new Map<number, number>();
+  for (const t of Array.isArray(script?.timeline) ? script.timeline : []) starts.set(Number(t.sceneNumber), Number(t.startSec) || 0);
+  let at = 0;
+  const cues: string[] = [];
+  for (const sc of scenes) {
+    const start = starts.get(Number(sc.sceneNumber)) ?? at;
+    const dur = Math.max(0, Number(sc.durationEst) || 0);
+    at = start + dur;
+    const head = sceneOverlays(sc).find((o) => o.kind === 'headline');
+    if (!head || dur <= 0) continue;
+    const end = start + Math.min(dur, 4);
+    cues.push(`${cues.length + 1}\n${formatSrtTime(start)} --> ${formatSrtTime(end)}\n${head.text}\n`);
+  }
+  return cues.join('\n');
+}
+
 export async function writeScriptMarkdown(payload: {
   script: any;
   research?: any;
@@ -713,6 +780,9 @@ export async function writeScriptMarkdown(payload: {
 
   const absolutePath = path.join(EXPORTS_DIR, filename);
   await fs.writeFile(absolutePath, markdown, 'utf8');
+  // The headline cards for Resolve's subtitle import, beside the brief.
+  const srt = renderOverlaySrt(payload.script);
+  if (srt) await fs.writeFile(absolutePath.replace(/\.md$/, '.overlays.srt'), srt, 'utf8');
 
   // The readable page beside it (and the index of all briefs). The Markdown is the deliverable: a page that
   // fails to render must never fail the export.

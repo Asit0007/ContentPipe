@@ -36,7 +36,8 @@ import { logModelCalls } from '../utils/modelUsageLog';
 import { modelInfo } from '../../shared/modelCatalog';
 import { nanoBananaProPrompt } from '../../shared/nanoBananaPrompt';
 import { fluxPrompt, recommendImageTool, IMAGE_TOOL_LABEL } from '../../shared/imagePrompts';
-import { sceneClips, clipPrompt, clipNegative, clipHeader } from '../../shared/clipPrompts';
+import { sceneClips, clipPrompt, clipPromptShort, clipNegative, clipHeader } from '../../shared/clipPrompts';
+import { sceneOverlays, hadLettering, CLEAN_PLATE_EDIT_PROMPT } from '../../shared/promptSafety';
 
 interface ScriptEditorProps {
   videoScript: VideoScript | null;
@@ -1011,6 +1012,28 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                               {copiedNbpScene === `${scene.id}:clipneg` ? 'Copied' : 'Copy negative prompt'}
                             </button>
                           </div>
+                          {(() => {
+                            const overlays = sceneOverlays(scene);
+                            const lettered = hadLettering(scene.visual ? [scene.visual.character, scene.visual.background, scene.visual.scene].join(' ') : scene.visualPrompt);
+                            if (!overlays.length && !lettered) return null;
+                            return (
+                              <div className="flex items-start justify-between gap-2 text-[11px] text-zinc-400">
+                                <div className="min-w-0" title="Added in the edit, not drawn by the AI: readable, fixable, and nothing for a filter to read.">
+                                  On-screen text (add in the edit): <span className="text-zinc-200">{overlays.map((o) => o.text).join(' · ') || '—'}</span>
+                                </div>
+                                {lettered && (
+                                  <button
+                                    type="button"
+                                    onClick={() => copyText(`${scene.id}:clean`, CLEAN_PLATE_EDIT_PROMPT)}
+                                    title="For a still already made with words in it: attach it in the Gemini app with this edit prompt."
+                                    className="shrink-0 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                                  >
+                                    {copiedNbpScene === `${scene.id}:clean` ? 'Copied' : 'Copy still-cleaning prompt'}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
                           {clips.map((c) => (
                             <div key={c.clipNumber} className="flex items-start justify-between gap-2">
                               <div className="min-w-0 text-[11px] text-zinc-400">
@@ -1029,6 +1052,14 @@ export const ScriptEditor: React.FC<ScriptEditorProps> = ({
                               >
                                 {copiedNbpScene === `${scene.id}:clip${c.clipNumber}` ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5 text-orange-400" />}
                                 <span>{copiedNbpScene === `${scene.id}:clip${c.clipNumber}` ? 'Copied' : `Clip ${c.clipNumber} prompt`}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyText(`${scene.id}:short${c.clipNumber}`, clipPromptShort(scene, c, ratio))}
+                                title={`If a tool refuses the full prompt: ${clipPromptShort(scene, c, ratio)}`}
+                                className="shrink-0 rounded-lg bg-zinc-900 hover:bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400 cursor-pointer"
+                              >
+                                {copiedNbpScene === `${scene.id}:short${c.clipNumber}` ? 'Copied' : 'Short'}
                               </button>
                             </div>
                           ))}

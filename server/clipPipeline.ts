@@ -64,6 +64,9 @@ For every clip of every scene, write what happens in it:
 - Keep the people, the place and the light of the still. Never add a new character, change clothing or move to another location.
 - Call people by what they look like ("the man", "the woman in the navy suit"), never by a name. The video model sees only the picture, and a name can make it refuse the clip as a request to depict a real person.
 - Keep motion restrained and physically plausible: this is a documentary, not an action film. One clear movement per clip beats several small ones.
+- Describe only what a camera sees, never what the shot means: "the haze drifts across the two black slabs", not "the stillness mirrors how limited the danger was". The story is told by the narration; the video tool sees only your words and the still, and words about harm (attack, threat, malicious, exploit) make it refuse the clip.
+- No writing in the picture: never mention words, labels, dates or text on a screen, board or page, and never ask for text to appear or change. Text is added in the edit.
+- No brand or product names ("a smartphone", not the maker's name).
 - Write for the model, not the viewer: plain, visual, present tense. No camera jargon the model cannot film ("establishing", "B-roll"), no emotions it cannot see.
 - Return exactly the clip numbers given for each scene, in order.
 </rules>

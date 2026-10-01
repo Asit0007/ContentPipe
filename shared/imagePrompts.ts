@@ -16,6 +16,8 @@
  * Dependency-free: imported by both the server (the exported brief) and the UI (the copy buttons).
  */
 
+import { pictureText, hadLettering, PLAIN_SURFACES } from './promptSafety';
+
 const NO_CHARACTERS = /^no characters in frame\.?$/i;
 
 const FRAME: Record<string, string> = {
@@ -40,12 +42,20 @@ function sentence(s: string | undefined): string {
   return /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
-/** Layers in order, with the clarity clause just before the style anchor (or at the end for a flat visualPrompt). */
+/**
+ * Layers in order, with the clarity clause just before the style anchor (or at the end for a flat visualPrompt).
+ * A clean plate since 2026-10-01: lettering and brand names come out of the description (shared/promptSafety.ts),
+ * the words go on in the edit as overlays, and a description that had lettering says its surfaces are plain.
+ */
 function layered(scene: SceneLike): string {
   const v = scene.visual;
-  if (!v) return [sentence(scene.visualPrompt), sentence(VIDEO_READY_CLARITY)].filter(Boolean).join(' ');
-  const character = NO_CHARACTERS.test((v.character || '').trim()) ? '' : v.character;
-  return [character, v.background, v.scene, VIDEO_READY_CLARITY, v.styleAnchor].map(sentence).filter(Boolean).join(' ');
+  if (!v) {
+    const plain = hadLettering(scene.visualPrompt || '') ? PLAIN_SURFACES : '';
+    return [pictureText(scene.visualPrompt || ''), plain, VIDEO_READY_CLARITY].map(sentence).filter(Boolean).join(' ');
+  }
+  const character = NO_CHARACTERS.test((v.character || '').trim()) ? '' : v.character || '';
+  const plain = hadLettering([character, v.background, v.scene].join(' ')) ? PLAIN_SURFACES : '';
+  return [pictureText(character), pictureText(v.background || ''), pictureText(v.scene || ''), plain, VIDEO_READY_CLARITY, v.styleAnchor].map(sentence).filter(Boolean).join(' ');
 }
 
 /** True when the scene says anything about what to draw (the clarity clause alone is not a prompt). */
@@ -71,9 +81,7 @@ interface ToolSceneLike extends SceneLike {
 /** A quoted label inside the picture description ('ROOT', "ACCESS DENIED"); the opening quote follows a space, so a possessive is not one. */
 const QUOTED_LABEL = /(^|[\s(:])['"\u201c\u2018][A-Za-z0-9][^'"\u201c\u201d\u2018\u2019]{0,48}['"\u201d\u2019](?=[\s.,;:!?)]|$)/;
 /** Words that put lettering in the picture: a sign, a headline, a labelled diagram, a screen that reads something. */
-const LETTERING = /\b(label(?:l)?ed|labels?|reads|reading|headlines?|captions?|signs?|signage|logos?|lettering|text|written|printed words|typed|inscribed|stamped|banner)\b/i;
-/** Visual types that are made of words. */
-const WORDY_TYPES = new Set(['headline', 'terminal', 'diagram']);
+const LETTERING = /\b(label(?:l)?ed|labels?|reads|reading|headlines?|captions?|signs?|signage|logos?|lettering|text|written|printed words|typed|inscribed|stamped|banner|list of|model numbers|numbers|calendar|newspaper|document|report|printout|spreadsheet)\b/i;
 
 /**
  * Which tool should draw this scene's still, and why. Nano Banana Pro when the picture holds lettering (FLUX garbles
@@ -82,9 +90,10 @@ const WORDY_TYPES = new Set(['headline', 'terminal', 'diagram']);
  */
 export function recommendImageTool(scene: ToolSceneLike): { tool: ImageTool; reason: string } {
   const v = scene.visual;
-  const text = v ? [v.character, v.background, v.scene].join(' ') : scene.visualPrompt || '';
+  // Judged on the clean plate: quoted lettering is now an overlay, so only lettering the description still asks for
+  // in words ("a page of text", "a sign") counts.
+  const text = pictureText(v ? [v.character, v.background, v.scene].join(' ') : scene.visualPrompt || '');
   if (QUOTED_LABEL.test(text) || LETTERING.test(text)) return { tool: 'nano-banana-pro', reason: 'lettering in the picture' };
-  if (WORDY_TYPES.has(String(scene.visualType || ''))) return { tool: 'nano-banana-pro', reason: `a ${scene.visualType} shot, likely to carry lettering` };
   if ((scene.charactersInFrame?.length ?? 0) >= 2) return { tool: 'nano-banana-pro', reason: 'two or more characters to keep consistent' };
   return { tool: 'flux', reason: 'no lettering, a plain picture' };
 }

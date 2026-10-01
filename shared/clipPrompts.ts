@@ -12,8 +12,13 @@
  * endFrame) come from the clip pass (server/clipPipeline.ts); where that pass failed or never ran (older scripts) they
  * are derived from the scene's `motion` direction instead.
  *
+ * Every line goes through shared/promptSafety.ts (2026-10-01, after Gemini refused two clips): no lettering, no
+ * brand names, and no clip-direction sentence that carries story meaning instead of a picture.
+ *
  * Dependency-free: imported by both the server (the exported brief) and the UI (the copy buttons).
  */
+
+import { pictureText, dropStoryMeaning } from './promptSafety';
 
 export const CLIP_MAX_SEC = 10;
 
@@ -63,6 +68,8 @@ const FRAME: Record<string, string> = {
 /**
  * What a video model gets wrong most often, for the tool's negative-prompt field (Kling has one). Speech is listed
  * because the narration is laid in the edit, and a model that adds lip movement makes the picture fight the voice.
+ * Motion faults only: the style guide's "don't draw" list (hooded hackers, skulls...) belongs to the still, which is
+ * already made, and in a video negative field its words were one more thing for a filter to read.
  */
 export const CLIP_NEGATIVES =
   'morphing, warping, melting or changing faces, extra fingers, flicker, jitter, garbled or changing lettering, sudden cuts, camera shake, talking, lip movement, subtitles, watermark';
@@ -136,7 +143,7 @@ function derivedDirection(scene: SceneLike, clipNumber: number, of: number): Cli
   const action = clean(m.subjectMotion) || clean(m.motionPrompt) || 'Subtle natural movement in the scene';
   return {
     clipNumber,
-    action: clipNumber === 1 ? action : `${action} The movement carries on from the previous clip.`,
+    action: clipNumber === 1 ? action : `${sentence(action)} The movement carries on from the previous clip.`,
     camera: clipNumber === 1 || of === 1 ? camera : `The same move continues: ${camera.charAt(0).toLowerCase()}${camera.slice(1)}`,
     environment: '',
     endFrame: '',
@@ -174,11 +181,21 @@ function hasPicture(scene: SceneLike): boolean {
  * anchor, identical in every scene, as in the image prompts) and how the clip ends. Labelled lines rather than one
  * paragraph so the owner can read and edit a line before pasting; Kling reads either.
  */
+/** A clip direction as it goes into a prompt: story-meaning sentences dropped, lettering out, brands generic. */
+function pictureLine(text: string, fallback = ''): string {
+  return sentence(pictureText(dropStoryMeaning(text) || dropStoryMeaning(fallback) || fallback));
+}
+
+/** What moves when a clip's own action had nothing visual left: the scene's planned motion, then a generic line. */
+function actionFallback(scene: SceneLike): string {
+  return dropStoryMeaning(clean(scene.motion?.subjectMotion)) || 'Subtle, natural movement in the scene';
+}
+
 export function clipPrompt(scene: SceneLike, clip: SceneClip, aspectRatio = '16:9'): string {
   if (!hasPicture(scene)) return '';
   const v = scene.visual;
   const m = scene.motion || {};
-  const character = v && !NO_CHARACTERS.test(clean(v.character)) ? sentence(v.character) : '';
+  const character = v && !NO_CHARACTERS.test(clean(v.character)) ? sentence(pictureText(v.character || '')) : '';
   const frame = FRAME[aspectRatio] || FRAME['16:9'];
   const start =
     clip.clipNumber === 1
@@ -189,21 +206,33 @@ export function clipPrompt(scene: SceneLike, clip: SceneClip, aspectRatio = '16:
   const lines = [
     `${frame}, ${clip.durationSec} s, one continuous shot. ${start}`,
     character && `Subject: ${character}`,
-    `Action: ${sentence(clip.action)}`,
-    `Camera: ${[shot && `${shot} shot.`, sentence(clip.camera), pace && `Pacing: ${pace.toLowerCase()}.`].filter(Boolean).join(' ')}`,
-    v?.background ? `Setting: ${sentence(v.background)}` : !v && scene.visualPrompt ? `Setting: ${sentence(scene.visualPrompt)}` : '',
-    clip.environment && `Atmosphere: ${sentence(clip.environment)}`,
+    `Action: ${pictureLine(clip.action, actionFallback(scene))}`,
+    `Camera: ${[shot && `${shot.replace(/\s+shot$/i, '')} shot.`, pictureLine(clip.camera, 'Slow push-in'), pace && `Pacing: ${pace.toLowerCase()}.`].filter(Boolean).join(' ')}`,
+    v?.background ? `Setting: ${sentence(pictureText(v.background))}` : !v && scene.visualPrompt ? `Setting: ${sentence(pictureText(scene.visualPrompt))}` : '',
+    clip.environment && dropStoryMeaning(clip.environment) && `Atmosphere: ${pictureLine(clip.environment)}`,
     'Motion: real-time speed, physically plausible weight and inertia; faces, hands and any lettering stay stable and sharp from the first frame to the last. Silent clip.',
     v?.styleAnchor && `Look: ${sentence(v.styleAnchor)}`,
-    clip.endFrame && `Ends on: ${sentence(clip.endFrame)}`,
+    clip.endFrame && dropStoryMeaning(clip.endFrame) && `Ends on: ${pictureLine(clip.endFrame)}`,
   ];
   return lines.filter(Boolean).join('\n');
 }
 
-/** The negative prompt for every clip of a scene: the shared video failures plus the scene's own image negatives. */
-export function clipNegative(scene: SceneLike): string {
-  const own = clean(scene.visual?.negative).replace(/[.]$/, '');
-  return own ? `${CLIP_NEGATIVES}, ${own}` : CLIP_NEGATIVES;
+/**
+ * The fallback when a tool refuses the full prompt: only what moves and how the camera moves. The still already
+ * carries the people, the place and the look, so an image-to-video tool needs nothing else, and every extra word is
+ * one more thing a filter can misread.
+ */
+export function clipPromptShort(scene: SceneLike, clip: SceneClip, aspectRatio = '16:9'): string {
+  if (!hasPicture(scene)) return '';
+  const frame = FRAME[aspectRatio] || FRAME['16:9'];
+  const start = clip.clipNumber === 1 ? 'Animate the attached image.' : `Continue from the last frame of clip ${clip.clipNumber - 1}.`;
+  const env = clip.environment && dropStoryMeaning(clip.environment) ? ` ${pictureLine(clip.environment)}` : '';
+  return `${frame}, ${clip.durationSec} s. ${start} ${pictureLine(clip.action, actionFallback(scene))} ${pictureLine(clip.camera, 'Slow push-in')}${env} Smooth, realistic motion. Silent.`;
+}
+
+/** The negative prompt for every clip: motion faults only (see CLIP_NEGATIVES). `scene` is kept for callers. */
+export function clipNegative(_scene?: SceneLike): string {
+  return CLIP_NEGATIVES;
 }
 
 /** Kling makes 5 s or 10 s clips: the length to ask for, and whether the editor trims it. */

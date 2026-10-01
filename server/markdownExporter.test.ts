@@ -167,16 +167,22 @@ test('image prompts: the recommended tool comes first, no Midjourney; each scene
   });
   assert.doesNotMatch(md, /Midjourney/);
   const [s1, s2] = md.split('### Scene 2');
-  assert.match(s1, /\*\*Use Nano Banana Pro\*\* for this still \(lettering in the picture\)/);
-  assert.ok(s1.indexOf('**Nano Banana Pro prompt**') < s1.indexOf('**FLUX prompt**'), 'the recommended prompt comes first');
+  // The whiteboard's label is an overlay now, so its clean plate goes to FLUX, and the words are listed for the edit.
+  assert.match(s1, /\*\*Use FLUX\*\* for this still/);
+  assert.ok(s1.indexOf('**FLUX prompt**') < s1.indexOf('**Nano Banana Pro prompt**'), 'the recommended prompt comes first');
+  assert.match(s1, /#### On-screen text \(add in the edit\)\n\n- \*\*Label:\*\* ROOT/);
+  assert.match(s1, /Already made this still with words in it\?/);
+  assert.doesNotMatch(s1.slice(s1.indexOf('**FLUX prompt**')), /'ROOT'/, 'no prompt carries the label');
   assert.match(s2, /\*\*Use FLUX\*\*/);
-  assert.ok(s2.indexOf('**FLUX prompt**') < s2.indexOf('**Nano Banana Pro prompt**'));
+  assert.doesNotMatch(s2, /#### On-screen text|Already made this still/, 'a scene without words gets neither');
   assert.match(s1, /#### Video clips \(2\)/);
   assert.match(s1, /\*\*Clip 1 of 2 · 0:00–0:06 \(6 s\) · make 10 s in Kling, trim to 6 s\*\*\n/);
   assert.match(s1, /\*\*Clip 2 of 2 · 0:06–0:12 \(6 s\) · make 10 s in Kling, trim to 6 s\*\* — built from the motion direction only/);
   assert.match(s1, /> Narration over this clip: One sentence here\./);
   assert.match(s1, /Action: Light sweeps across the board\./);
   assert.match(s1, /\*\*Negative prompt\*\* \(every clip of this scene\)/);
+  assert.match(s1, /<summary>Short prompt — if the tool refuses the full one<\/summary>/);
+  assert.match(md, /Never respell or hide words to get past a filter/, 'the guardrail section is there once');
   assert.match(s2, /#### Video clips \(1\)/);
   assert.doesNotMatch(md, /Motion prompt — paste/, 'the one-line motion prompt is replaced by the clip prompts');
 });

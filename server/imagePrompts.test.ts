@@ -36,11 +36,15 @@ test('a scene with no characters, or only a flat visualPrompt, still works; an e
 
 test('image tool: Nano Banana Pro for lettering or two characters, FLUX for a plain picture', () => {
   assert.deepEqual(recommendImageTool(scene), { tool: 'flux', reason: 'no lettering, a plain picture' });
-  // The live OnePlus scene 4: a whiteboard with quoted labels.
+  // The live OnePlus scene 4: quoted labels are overlays now (added in the edit), so the clean plate is a FLUX picture.
   const board = { visual: { ...scene.visual, background: "A whiteboard shows a small block labeled 'USER' and an arrow to 'ROOT'." } };
-  assert.equal(recommendImageTool(board).tool, 'nano-banana-pro');
-  assert.equal(recommendImageTool({ visual: { ...scene.visual, scene: 'A printout reads "ACCESS DENIED" under the lamp' } }).tool, 'nano-banana-pro');
-  assert.equal(recommendImageTool({ ...scene, visualType: 'terminal' }).tool, 'nano-banana-pro');
+  assert.equal(recommendImageTool(board).tool, 'flux');
+  assert.doesNotMatch(fluxPrompt(board), /USER|ROOT/, 'the lettering is not in the prompt');
+  assert.match(fluxPrompt(board), /plain and unmarked/);
+  // Lettering still asked for in words, with no quote to lift out, stays with Nano Banana Pro.
+  assert.equal(recommendImageTool({ visual: { ...scene.visual, scene: 'A printout reads under the lamp' } }).tool, 'nano-banana-pro');
+  assert.equal(recommendImageTool({ visual: { ...scene.visual, scene: 'A list of device models on the whiteboard' } }).tool, 'nano-banana-pro');
+  assert.equal(recommendImageTool({ ...scene, visualType: 'terminal' }).tool, 'flux', 'a terminal is screen texture, not words to read');
   assert.equal(recommendImageTool({ ...scene, charactersInFrame: ['a', 'b'] }).reason, 'two or more characters to keep consistent');
   // A possessive apostrophe is not a quoted label.
   assert.equal(recommendImageTool({ visual: { ...scene.visual, character: "Mara's hands rest on the desk; the analyst's mug steams" } }).tool, 'flux');

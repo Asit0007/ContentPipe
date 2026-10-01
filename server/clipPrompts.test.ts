@@ -83,7 +83,8 @@ test('clip prompt: start, subject (anchor), action, one camera move, setting, lo
 });
 
 test('negative prompt, Kling length and header', () => {
-  assert.equal(clipNegative(scene), `${CLIP_NEGATIVES}, cartoon villains, skulls`);
+  assert.equal(clipNegative(scene), CLIP_NEGATIVES, 'motion faults only: the still\'s "don\'t draw" list stays out of the video prompt');
+  assert.doesNotMatch(clipNegative(scene), /skulls|villains|hacker/);
   assert.equal(clipNegative({}), CLIP_NEGATIVES);
   assert.deepEqual(klingLength(5), { make: 5 });
   assert.deepEqual(klingLength(4), { make: 5, trimTo: 4 });
