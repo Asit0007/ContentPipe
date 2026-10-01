@@ -3,6 +3,11 @@
  *
  *   npm run clips:add -- .runs/story-oneplus-root-2026-09            # run the clip pass, rewrite the brief and export
  *   npm run clips:add -- .runs/story-oneplus-root-2026-09 --derived  # no model calls: clips built from each scene's motion
+ *   npm run clips:add -- .runs/story-oneplus-root-2026-09 --names-only  # no model calls: keep the clips, only take
+ *                                                                       # character names out of every picture prompt
+ *
+ * Every mode takes character names out of the picture prompts (server/characterNames.ts): a name in a video prompt
+ * got a clip refused by Gemini on 2026-10-01.
  *
  * It runs the same pass `/api/script` now runs (server/clipPipeline.ts), in this process, so the ContentPipe server
  * need not be running. It spends about one text call per 6 scenes (9 for a 51-scene story). Strict: a quota or
@@ -21,10 +26,12 @@ import { applyClipDirection } from '../server/clipPipeline';
 import { RunJournal, hashRunInput } from '../server/runJournal';
 import { writeScriptMarkdown } from '../server/markdownExporter';
 import { sceneClips } from '../shared/clipPrompts';
+import { scrubCharacterNames } from '../server/characterNames';
 import { DEFAULT_CHANNEL_BRAND } from '../shared/brand';
 
 const args = process.argv.slice(2);
 const derivedOnly = args.includes('--derived');
+const namesOnly = args.includes('--names-only');
 const target = args.find((a) => !a.startsWith('--'));
 
 async function readJson(file: string): Promise<any | undefined> {
@@ -43,14 +50,17 @@ async function main() {
   if (!Array.isArray(brief?.scenes) || brief.scenes.length === 0) throw new Error(`no scenes in ${briefPath}`);
 
   let script: any;
-  if (derivedOnly) {
-    script = { ...brief, scenes: brief.scenes.map((s: any) => ({ ...s, clips: sceneClips({ ...s, clips: undefined }) })) };
+  const scrub = (s: any) => ({ ...s, scenes: scrubCharacterNames(s.scenes, s.characterBible) });
+  if (namesOnly) {
+    script = scrub(brief);
+  } else if (derivedOnly) {
+    script = scrub({ ...brief, scenes: brief.scenes.map((s: any) => ({ ...s, clips: sceneClips({ ...s, clips: undefined }) })) });
   } else {
     const key = `clips-${path.basename(dir)}`.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 64);
     const journal = await RunJournal.open(key, hashRunInput(brief.scenes.map((s: any) => [s.sceneNumber, s.durationEst, s.narration, s.visual, s.motion])));
     if (journal.resumed) console.log(`resuming: ${JSON.stringify(journal.progress())}`);
     const degraded: string[] = [];
-    script = await applyClipDirection(getAIClient(), structuredClone(brief), { strict: true, journal, degraded });
+    script = scrub(await applyClipDirection(getAIClient(), scrub(structuredClone(brief)), { strict: true, journal, degraded }));
     for (const d of degraded) console.log(`degraded: ${d}`);
     await journal.markDelivered();
   }

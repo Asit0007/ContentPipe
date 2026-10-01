@@ -216,7 +216,7 @@ ${JSON.stringify(
 For EVERY scene above return an object with:
 - "sceneNumber": matching integer
 - "visual":
-  - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "${NO_CHARACTERS_SENTINEL}"
+  - "character": ONLY the people in frame — pose, expression, framing — and the exact promptAnchor of every character present, copied word for word, unchanged. If nobody is in frame write "${NO_CHARACTERS_SENTINEL}". Refer to people by appearance, never by the bible "name": an image or video model sees only these words, and a real person's name next to a realistic face makes it refuse the picture
   - "background": ONLY the environment — the place the camera is in: location, architecture, depth, atmosphere, time of day. Mention no people, and no composition, panel split, overlay or on-screen text (those belong in "scene"). If this scene returns to a place already established in PRIOR VISUAL CONTEXT above, match that wording as closely as you can (the code enforces it verbatim regardless — matching now avoids a jarring rewrite when it does).
   - "scene": the composed shot — how character and background combine, staging, focal point, foreground/midground/background layering, composition rule.
   - "styleAnchor": the style guide restated compactly. This string MUST be byte-identical across every scene.

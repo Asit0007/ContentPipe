@@ -62,6 +62,7 @@ For every clip of every scene, write what happens in it:
 
 <rules>
 - Keep the people, the place and the light of the still. Never add a new character, change clothing or move to another location.
+- Call people by what they look like ("the man", "the woman in the navy suit"), never by a name. The video model sees only the picture, and a name can make it refuse the clip as a request to depict a real person.
 - Keep motion restrained and physically plausible: this is a documentary, not an action film. One clear movement per clip beats several small ones.
 - Write for the model, not the viewer: plain, visual, present tense. No camera jargon the model cannot film ("establishing", "B-roll"), no emotions it cannot see.
 - Return exactly the clip numbers given for each scene, in order.

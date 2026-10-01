@@ -27,6 +27,7 @@ import { analyzeScript, buildTimeline, placeMidrolls } from './server/timeline';
 import { applySoundDirection } from './server/soundPipeline';
 import { applyClipDirection } from './server/clipPipeline';
 import { sceneClips } from './shared/clipPrompts';
+import { scrubCharacterNames } from './server/characterNames';
 import { buildPublishPackage } from './server/publishPackage';
 import { RunJournal, isValidRunId, hashRunInput, acquireRun, releaseRun, pruneOldRuns } from './server/runJournal';
 import { extractUrls, fetchSources, buildSourceContext, sourceId } from './server/sourceFetcher';
@@ -706,6 +707,9 @@ app.post('/api/script', async (req, res) => {
     script.characterBible = productionBible.characterBible;
     script.styleGuide = productionBible.styleGuide;
     script = await applyVisualDirection(ai, script, researchData, opts);
+    // Picture prompts call characters by description, never by name: a bible character may carry the name of the real
+    // person in the story, and an image or video model refuses a realistic face plus a real name (server/characterNames.ts).
+    script.scenes = scrubCharacterNames(script.scenes, script.characterBible);
 
     // --- Pass 3: sound & edit -----------------------------------------------
     // Music plan, sound effects, silences and transitions (server/soundPipeline.ts). Durations are settled by now, so
@@ -718,6 +722,7 @@ app.post('/api/script', async (req, res) => {
       // Each scene cut into clips of at most 10 s, each with what moves, one camera move and its last frame, for the
       // image-to-video prompts made by hand in Kling (server/clipPipeline.ts, shared/clipPrompts.ts).
       script = await applyClipDirection(ai, script, opts);
+      script.scenes = scrubCharacterNames(script.scenes, script.characterBible);
     }
 
     if (usedFallback) degraded.push('Canned fallback script: AI generation was unavailable, so this is placeholder content, not a real draft.');

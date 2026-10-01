@@ -429,6 +429,8 @@ Every scene also exports two copy-paste image prompts (buttons in the script edi
 
 Each scene is cut into equal clips of at most 10 s (Kling's longest clip): 12 s is two 6 s clips, 7 s is one. Each clip gets its own image-to-video prompt, as detailed as the image prompt and built from it: how it starts (clip 1 animates the scene's still, clip 2+ continues from the previous clip's last frame), the subject with its locked character anchor, the action, **one** camera move, the setting, its ambient motion, the motion-quality line, the style anchor, and the frame it ends on. The words spoken over each clip are shown beside it for the editor but never put in the prompt. Every scene also has a negative prompt for the video tool's negative field. The action, camera, ambience and end frame come from a fifth `/api/script` pass (`server/clipPipeline.ts`); scenes where it failed, and scripts written before it, get clips built from their `motion` direction instead, marked as such. A story written before the pass existed gets its clips with `npm run clips:add -- .runs/story-<slug>` (about one text call per 6 scenes; `--derived` for none).
 
+**Picture prompts never carry a character's name** (2026-10-01): a story's researcher character was named after the real researcher, and Gemini refused a clip that asked to animate a realistic face under a real person's name. Image and video prompts now say "the man" / "the woman"; the narration keeps the name. Fix an older story with `npm run clips:add -- .runs/story-<slug> --names-only` (no model calls).
+
 **A story's existing stills stay valid.** The clip pass changes nothing in the script or the image prompts, and each clip prompt is built from the same visual layers the still was drawn from, so clip 1 can animate the still you already have. Remake only the stills that fail: where the brief says **Use Nano Banana Pro** and FLUX garbled the lettering (the OnePlus run's scene 4 reads "LISER" for USER), paste the Nano Banana Pro prompt into the Gemini app and save the result over `stills/scene-NNN.png` in the ContentRender run; ContentRender adopts a hand-replaced still and reopens the images gate.
 
 ### Daily video burn (retired 2026-09-27)
@@ -469,7 +471,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 439 unit tests (2026-10-01) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 443 unit tests (2026-10-01) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
