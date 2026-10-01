@@ -1,7 +1,7 @@
 /**
  * One tick of the daily video burn: spend each free Hugging Face ZeroGPU window on as much AI footage as it gives,
  * across the Wan / MiniMax / LTX Spaces in server/videoBurn.ts. Run hourly by the LaunchAgent
- * com.asitminz.videoburn (deploy/com.asitminz.videoburn.plist).
+ * com.asitminz.videoburn until it was retired on 2026-09-27 (its plist was deleted from deploy/ on 2026-10-01).
  *
  *   npx tsx scripts/video-burn.ts             one tick (both pools)
  *   npx tsx scripts/video-burn.ts --status    print the summary so far

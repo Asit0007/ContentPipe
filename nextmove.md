@@ -56,7 +56,7 @@ A 9-minute video is ~540 s of picture. Free credits across every tool give rough
 ### Day 1: script (about 30 min of your time)
 
 ```bash
-cd ~/"Developer/My VSC projects/My Persona/ContentPipe"
+cd ~/"Developer/My VSC projects/My Persona/AI Media/ContentPipe"
 npm run llm:check                # confirm which free models answer today
 PORT=3100 npm run dev
 ```
