@@ -14,6 +14,13 @@ const ok = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const bad = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
+/** True when `ok: true` sits anywhere inside the reply, however deeply the model nested it. */
+function hasOkTrue(v: unknown, depth = 0): boolean {
+  if (!v || typeof v !== 'object' || depth > 6) return false;
+  if ((v as Record<string, unknown>).ok === true) return true;
+  return Object.values(v as Record<string, unknown>).some((x) => hasOkTrue(x, depth + 1));
+}
+
 async function main() {
   console.log(`chain: ${describeChain()}\n`);
   const resolved = resolveProviders();
@@ -63,8 +70,15 @@ async function main() {
         true
       );
       const parsed = JSON.parse(r.text || '{}');
-      console.log(`  ${parsed.ok ? ok('json call ok') : bad('unexpected reply')} ${usable[0]} ${dim(`${Date.now() - t0}ms finish=${r.finishReason}`)}`);
-      if (!parsed.ok) failures++;
+      // Small models often wrap the object ({"response": {"data": {"ok": true}}}, Mistral's Ministral, 2026-10-03).
+      // That is valid JSON and real calls get the schema plus a repair round, so it is a quirk to show, not a failure.
+      const wrapped = !parsed.ok && hasOkTrue(parsed);
+      const verdict = parsed.ok ? ok('json call ok') : wrapped ? ok('json call ok') + dim(' (wraps its answer in extra objects)') : bad('unexpected reply');
+      console.log(`  ${verdict} ${usable[0]} ${dim(`${Date.now() - t0}ms finish=${r.finishReason}`)}`);
+      if (!parsed.ok && !wrapped) {
+        console.log(`  ${dim('reply: ' + String(r.text).slice(0, 160).replace(/\s+/g, ' '))}`);
+        failures++;
+      }
     } catch (e) {
       const c = classifyProviderError(e);
       console.log(`  ${bad('json call failed')} [${c.kind}] ${(e as Error).message}`);
