@@ -18,7 +18,7 @@ free output isn't licensed for a monetised channel (see the licence table).
 | Titles, thumbnails, description, tags | **Works** | `/api/publish-package` |
 | Stills | **Automatic**: Cloudflare FLUX klein-4b, free, 1920 wide for new stories (OnePlus: 1536×864). Lettered or evidence shots: Nano Banana Pro by hand in the Gemini app, saved over `stills/scene-NNN.png` | ContentRender `stills` stage; the brief marks FLUX or Nano Banana Pro per scene |
 | Narration | **Automatic, two voices**: Kokoro `af_heart` narrator (local), Gemini `Charon` analyst; loudness matched | ContentRender `narration` stage |
-| Free AI clips | **Automatic, scarce**: Hugging Face ZeroGPU Spaces (MiniMax-H3, Wan 2.2, two token-less Wan Spaces), a few short clips a day; the run pauses when the free quota is spent | ContentRender `clips` stage, at most 6 per video |
+| Free AI clips | **Automatic, the main source**: Hugging Face ZeroGPU Spaces (MiniMax-H3, Wan 2.2, two token-less Wan Spaces), a few short clips a day; the run pauses when the free quota is spent and resumes when it is back | ContentRender `clips` stage, **every scene** since 2026-10-03 (`CLIP_SLOTS_MAX=100`), best first |
 | Hand-made clips | **By hand** in Google Flow/Veo from the per-clip prompts in the export; drop the file in `clips-in/slot-NN.mp4` (NN = scene number) | Flow on Google AI Pro credits |
 | Edit | **Resolve bundle**: FCPXML timeline (stills with Ken Burns, clips, two voices, markers), captions, rough cut, shot list, licence list | ContentRender `bundle` stage → DaVinci Resolve 18.6 (free) |
 | On-screen text | Added in the edit, never baked into AI pictures | `exports/<brief>.overlays.srt` (Resolve subtitle import) + the per-scene "On-screen text" list |
@@ -34,7 +34,7 @@ cleared for commercial use from day one. This is a reading of the terms, not leg
 | Wan 2.1 / 2.2 clips (account or token-less Spaces) | **Yes**: Apache 2.0 |
 | MiniMax-H3 clips | **Yes** under $20M/yr revenue; credit **"MiniMax H3"** in the description. Mute its soundtrack |
 | FLUX.2 klein-4b stills via Cloudflare | Weights Apache 2.0 (BFL); Cloudflare's hosted terms not yet read |
-| Google Flow / Veo, Nano Banana Pro (Gemini app) | Google's Terms of Service (effective 2026-07-30): "Google won't claim ownership over that content"; output may not be used to train AI models. No commercial restriction found in those terms, the Google One terms (2025-11-11) or the Flow FAQ (read 2026-10-03). Check a Flow export for a visible watermark |
+| Google Flow / Veo, Nano Banana Pro (Gemini app) | Google's Terms of Service (effective 2026-07-30): "Google won't claim ownership over that content"; output may not be used to train AI models. No commercial restriction found in those terms, the Google One terms (2025-11-11) or the Flow FAQ (read 2026-10-03). **Downloads carry a visible watermark** (owner, 2026-10-03): use Flow only as a fallback, and never crop or remove the mark |
 | LTX-2.x clips | **Not cleared**: its licence's commercial terms are unread |
 | Kling free | **No**: free output must keep Kling's logo; commercial use needs a paid plan. Not used |
 | Kaggle notebooks | **No**: personal, non-commercial use only |
@@ -55,8 +55,9 @@ Run folder: `../ContentRender/output/runs/2026-09-30-how-a-zero-permission-app-c
    `npm run cli -- approve --gate images --brief <run>/brief.json --video-id <run id>` in ContentRender, then `step`.
    Always use the run's own `brief.json`: a different brief starts the run over.
 3. **Narration gate.** Listen to `review/narration.mp3`; redo bad scenes (`regenerate --kind narration --scenes N`); approve.
-4. **Clips.** The pipeline makes up to 6 free clips (scenes 1, 3, 9, 13, 15, 19) and pauses when the free quota runs out.
-   Make more in Flow from the export's per-clip prompts, hero moments first (hook, act turns, the reveal). A clip that is
+4. **Clips.** The pipeline tries a free clip for every scene, best first (scenes 1, 3, 9, 13, 15, 19, 25, 27…), a few a
+   day, pausing when the free quota runs out and resuming the next day; at ~2-4 a day all 51 take 2-3 weeks. Make any
+   you want by hand meanwhile (Flow adds a visible watermark) and drop them in; `/finish` stops the wait any day. A clip that is
    refused: short prompt → wipe the words off the still → another tool → a still with a slow zoom. Never respell words to
    get past a filter. `finish-clips` stops the wait; a clip dropped in later still wins on `rebuild`.
 5. **Bundle → Resolve.** Open `resolve/*.fcpxml` in Resolve 18.6. Add on-screen text from `*.overlays.srt`, music and
@@ -102,7 +103,6 @@ account), and paid APIs.
 | Question | How to answer it |
 |---|---|
 | How many Flow/Veo clips a month does the AI Pro plan allow? | Google's pages don't say; read the credit counter in Flow after a few clips |
-| Does a Flow export carry a visible watermark? | Check the first download |
 | Cloudflare's hosted terms for FLUX klein-4b | Read them before the first monetised upload |
 
 ## 6. Skills that support this
