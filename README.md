@@ -20,7 +20,7 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Research from real sources, cited, with honest gaps | **Done** |
 | Plan and scene-by-scene script, written for a non-technical viewer | **Done** |
 | Layered image prompts with enforced character/style/place consistency | **Done** |
-| Motion direction, and each scene cut into clips of at most 10 s with a detailed image-to-video prompt per clip (for Kling, by hand) | **Done** (clip pass, 2026-10-01) |
+| Motion direction, and each scene cut into clips of at most 10 s with a detailed image-to-video prompt per clip (for a by-hand image-to-video tool: Google Flow/Veo since 2026-10-03, Kling before) | **Done** (clip pass, 2026-10-01) |
 | Sound & edit cue sheet (music, restrained SFX, silences, transitions) | **Done** (for a human editor) |
 | Titles, thumbnails, description, tags, chapters | **Done** |
 | Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro and FLUX prompts by hand via copy buttons, with the tool to use marked per scene |
@@ -185,8 +185,8 @@ Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intell
 `npm run story:start` here, or `submit_job.py` once CyberPipe is installed — never on a schedule. In ContentRender the
 clips step moved after narration, and a spent free ZeroGPU allowance **pauses** the whole run (`ClipsPaused`) instead of
 turning the rest into Ken Burns; CyberPipe resumes it on its own once the 24 h window is expected back, with a `/resume`
-Telegram command for when hand-made clips are already dropped in. The owner makes the rest by hand in Kling in the
-meantime (target ~90% motion: ~20% AI, ~70% Kling). After 3 days with no AI clip at all, ContentRender gives up and
+Telegram command for when hand-made clips are already dropped in. The owner makes the rest by hand in Google Flow/Veo in the
+meantime (since 2026-10-03 the target is as much motion as free tools allow; it was ~90% with ~70% from Kling). After 3 days with no AI clip at all, ContentRender gives up and
 delivers with Ken Burns stills rather than blocking a video forever. The hourly video burn is retired because it
 spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
 
@@ -427,7 +427,7 @@ Every scene also exports two copy-paste image prompts (buttons in the script edi
 
 ### Video clips: one prompt per ≤ 10 s (2026-10-01)
 
-Each scene is cut into equal clips of at most 10 s (Kling's longest clip): 12 s is two 6 s clips, 7 s is one. Each clip gets its own image-to-video prompt, as detailed as the image prompt and built from it: how it starts (clip 1 animates the scene's still, clip 2+ continues from the previous clip's last frame), the subject with its locked character anchor, the action, **one** camera move, the setting, its ambient motion, the motion-quality line, the style anchor, and the frame it ends on. The words spoken over each clip are shown beside it for the editor but never put in the prompt. Every scene also has a negative prompt for the video tool's negative field. The action, camera, ambience and end frame come from a fifth `/api/script` pass (`server/clipPipeline.ts`); scenes where it failed, and scripts written before it, get clips built from their `motion` direction instead, marked as such. A story written before the pass existed gets its clips with `npm run clips:add -- .runs/story-<slug>` (about one text call per 6 scenes; `--derived` for none).
+Each scene is cut into equal clips of at most 10 s (Kling's longest clip; Flow's Veo clips are 8-10 s): 12 s is two 6 s clips, 7 s is one. Each clip gets its own image-to-video prompt, as detailed as the image prompt and built from it: how it starts (clip 1 animates the scene's still, clip 2+ continues from the previous clip's last frame), the subject with its locked character anchor, the action, **one** camera move, the setting, its ambient motion, the motion-quality line, the style anchor, and the frame it ends on. The words spoken over each clip are shown beside it for the editor but never put in the prompt. Every scene also has a negative prompt for the video tool's negative field. The action, camera, ambience and end frame come from a fifth `/api/script` pass (`server/clipPipeline.ts`); scenes where it failed, and scripts written before it, get clips built from their `motion` direction instead, marked as such. A story written before the pass existed gets its clips with `npm run clips:add -- .runs/story-<slug>` (about one text call per 6 scenes; `--derived` for none).
 
 **Text goes on in the edit, not into the AI picture** (2026-10-01): image prompts are clean plates (lettering lifted out), except evidence shots whose subject is the words (a version number, a letter), which keep them, each scene lists its on-screen text and where it goes, the headline cards come as `exports/<brief>.overlays.srt` (Resolve: File → Import → Subtitle), and lettered scenes get a prompt to wipe the words off a still already made. Clip prompts drop brand names and any sentence about what a shot *means*; every clip has a short fallback prompt. See `CLAUDE.md` "Picture prompts" for why (two Gemini refusals) and the order to try things in when a tool refuses.
 
