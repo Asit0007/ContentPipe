@@ -177,6 +177,18 @@ interface InfoParam {
   type?: any;
 }
 
+/**
+ * A slider's range as /gradio_api/info states it ("numeric value between 0.5 and 5.0"). Asking a Space for more than
+ * its slider allows is refused, and a refusal cools that Space for 30 minutes, so the generic adapter clamps to this.
+ */
+function sliderRange(p: InfoParam): [number, number] | undefined {
+  const m = /between\s+(-?\d+(?:\.\d+)?)\s+and\s+(-?\d+(?:\.\d+)?)/i.exec(String(p.type?.description || ''));
+  if (!m) return undefined;
+  const lo = Number(m[1]);
+  const hi = Number(m[2]);
+  return lo <= hi ? [lo, hi] : undefined;
+}
+
 const isFileType = (t: string) => /filepath|dict\(path/i.test(t);
 const PROMPT_NAME = /^(?:prompt|text|caption|positive|original_prompt|prompt_value|in_0)$|prompt/i;
 
@@ -202,6 +214,7 @@ export function genericAdapter<J extends ImageJob | VideoJob>(spaceId: string, k
       const [endpoint, ep] = pick;
       let usedPrompt = false;
       let usedImage = false;
+      let durationSec: number | undefined;
       const data: unknown[] = [];
       for (const p of ep.parameters as InfoParam[]) {
         const name = (p.parameter_name || p.label || '').toLowerCase();
@@ -215,7 +228,10 @@ export function genericAdapter<J extends ImageJob | VideoJob>(spaceId: string, k
         } else if (/aspect|ratio/.test(name) && type.includes(`'${job.aspectRatio}'`)) {
           data.push(job.aspectRatio);
         } else if (kind === 'video' && /duration|seconds/.test(name) && /float|int/.test(type)) {
-          data.push((job as VideoJob).durationSec);
+          const range = sliderRange(p);
+          const wanted = (job as VideoJob).durationSec;
+          durationSec = range ? clamp(wanted, range[0], range[1]) : wanted;
+          data.push(durationSec);
         } else if (/randomize/.test(name) && /bool/.test(type)) {
           data.push(true);
         } else if (p.parameter_has_default) {
@@ -228,7 +244,7 @@ export function genericAdapter<J extends ImageJob | VideoJob>(spaceId: string, k
       }
       if (!usedPrompt) throw new SpaceError(`Space ${spaceId}: found no prompt parameter`, { kind: 'other' });
       const outputIndex = Math.max(0, (ep.returns || []).findIndex((r: InfoParam) => isFileType(String(r?.python_type?.type || ''))));
-      return { endpoint, data, outputIndex };
+      return { endpoint, data, outputIndex, ...(durationSec !== undefined ? { durationSec } : {}) };
     },
   };
 }

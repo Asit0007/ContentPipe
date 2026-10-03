@@ -150,6 +150,37 @@ test('named adapters put inputs in the positions each Space expects and clamp du
   assert.equal(wan.data[4], 5);
 });
 
+test('the generic adapter clamps a duration to the slider range the Space states, and reports what it sent', async () => {
+  // The duration parameters of the two token-less Wan Spaces, as /gradio_api/info returned them on 2026-10-03.
+  const spaces = {
+    'linoyts/wan2-2-i2v-rCM': { description: 'numeric value between 0.5 and 5.0', max: 5 },
+    'multimodalart/wan2-1-fast': { description: 'numeric value between 0.3 and 3.4', max: 3.4 },
+  };
+  for (const [id, s] of Object.entries(spaces)) {
+    const info = {
+      named_endpoints: {
+        '/generate_video': {
+          parameters: [
+            { parameter_name: 'input_image', python_type: { type: 'filepath' } },
+            { parameter_name: 'prompt', python_type: { type: 'str' }, parameter_has_default: true, parameter_default: '' },
+            { parameter_name: 'duration_seconds', python_type: { type: 'float' }, type: { type: 'number', description: s.description }, parameter_has_default: true, parameter_default: 2 },
+          ],
+          returns: [{ python_type: { type: 'filepath' } }],
+        },
+      },
+    };
+    const ctx = { upload: async () => ({ path: '/up/i.png', meta: { _type: 'gradio.FileData' as const } }), apiInfo: async () => info };
+    const job = (durationSec: number) => ({ prompt: 'P', image: { bytes: Buffer.alloc(1), contentType: 'image/png' }, durationSec, aspectRatio: '16:9' as const });
+    const long = await genericAdapter<any>(id, 'video').build(job(6), ctx); // ContentRender asks for up to 6 s
+    assert.equal(long.data[2], s.max, `${id}: 6 s is clamped to the slider's maximum`);
+    assert.equal(long.durationSec, s.max, `${id}: the clamped length is reported`);
+    const short = await genericAdapter<any>(id, 'video').build(job(0.1), ctx);
+    assert.ok((short.data[2] as number) >= 0.3, `${id}: too short is raised to the minimum`);
+    const fits = await genericAdapter<any>(id, 'video').build(job(3), ctx);
+    assert.equal(fits.data[2], 3, `${id}: a length inside the range is sent as asked`);
+  }
+});
+
 test('the generic adapter fills a new Space by parameter name, and refuses a parameter it cannot fill', async () => {
   const info = {
     named_endpoints: {
