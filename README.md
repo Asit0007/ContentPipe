@@ -161,7 +161,7 @@ CyberPipe  (scheduler.py, a 60 s loop; one job = one story; every call strict)
 │   └── Telegram gate
 └── bundle ──► ContentRender step
     ├── AI clips ──────► POST /api/generate-video ──► VIDEO_PROVIDER_ORDER (HF Spaces: MiniMax-H3, then Wan 2.2)  up to 6 slots;
-    │                                                  a spent free quota PAUSES the run (resumes on its own; Ken Burns only after 3 days)
+    │                                                  a spent free quota PAUSES the run (resumes on its own; Ken Burns only after 7 days)
     └── FCPXML, captions, rough cut (ffmpeg, local, no model)
     └── Telegram gate ──► COMPLETED (open the bundle in DaVinci Resolve)
 
@@ -186,7 +186,7 @@ Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intell
 clips step moved after narration, and a spent free ZeroGPU allowance **pauses** the whole run (`ClipsPaused`) instead of
 turning the rest into Ken Burns; CyberPipe resumes it on its own once the 24 h window is expected back, with a `/resume`
 Telegram command for when hand-made clips are already dropped in. The owner makes the rest by hand in Google Flow/Veo in the
-meantime (since 2026-10-03 the target is as much motion as free tools allow; it was ~90% with ~70% from Kling). After 3 days with no AI clip at all, ContentRender gives up and
+meantime (since 2026-10-03 the target is as much motion as free tools allow; it was ~90% with ~70% from Kling). After 7 days with no AI clip at all, ContentRender gives up and
 delivers with Ken Burns stills rather than blocking a video forever. The hourly video burn is retired because it
 spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
 
