@@ -72,10 +72,12 @@ Port 3000 in use? `PORT=3100 npm run dev`.
 | `HF_INFERENCE_TOKEN` | No | A fine-grained Hugging Face token with only "Make calls to Inference Providers" (not `HF_TOKEN`). Routes DeepSeek-V4-Flash through Hugging Face's router: **$0.10 of free credit a month**, then pay-as-you-go (credits must be bought; without them the chain skips it on HTTP 402). Provider id `huggingface`. |
 | `REQUESTY_API_KEY` | No | Requesty router, free plan: 200 requests/day across its free models. Its strong free models (Nemotron 3 Ultra/Super) are "Training Permitted": prompts and outputs are kept for training. Public-news prompts only. Provider id `requesty`. |
 | `MISTRAL_API_KEY` | No | Free "Experiment" tier, which requires opting into training on your prompts. |
-| `LLM_CATALOG` | No | Absolute path to the shared `LLM-Catalog/providers.json` (2026-10-07), which JobPipe reads too. Its entries replace the built-in providers of the same id and add `sambanova`, `zai` and `omniroute`. Unset: the built-in list. A path that is set but unreadable or invalid is an error, not a silent fallback. |
+| `LLM_CATALOG` | No | Absolute path to the shared `LLM-Catalog/providers.json` (2026-10-07), which JobPipe reads too. Its entries replace the built-in providers of the same id and add `zai`, `pollinations`, `omniroute`, `sambanova` and `vercel` (the last two are unusable at $0, see below). Unset: the built-in list. A path that is set but unreadable or invalid is an error, not a silent fallback. |
 | `LLM_SHARED_ENV` | No | The shared keys file, read after `.env` without overriding it. Default `~/.config/asitminz/llm.env`; `off` skips it. |
-| `SAMBANOVA_API_KEY`, `ZAI_API_KEY` | No | Catalog providers. SambaNova: free tier of 20 requests/day per model, no training on prompts. Z.AI: free GLM-4.7-Flash / GLM-4.5-Flash, API content not stored. Both read 2026-10-07; see the catalog for sources. |
-| `OMNIROUTE_API_KEY` | No | A local OmniRoute gateway (`http://127.0.0.1:20128/v1`), started by hand and skipped while down. No default models: used only for `omniroute:<provider>/<model>` entries in `LLM_MODEL_ORDER`, official keyed providers only. |
+| `ZAI_API_KEY` | No | Z.AI: free GLM-4.7-Flash / GLM-4.5-Flash, API content not stored (read 2026-10-07). Its `/models` lists only paid GLMs; the free Flash ids are served anyway. |
+| `POLLINATIONS_API_KEY` | No | A Pollinations `sk_` key (enter.pollinations.ai). Text is paid in pollen: one-off quest pollen plus a small daily tier refill. Used for GLM-5.3-Flash (score 42, reserved for `/api/script`) and the zero-priced Ling 3.1 Flash. Not the same thing as the keyless legacy image endpoint below. |
+| `SAMBANOVA_API_KEY`, `AI_GATEWAY_API_KEY` | No | In the catalog but **not used**: SambaNova answers 402 "payment method required" for every model on a card-less account, and Vercel AI Gateway's free $5 a month needs a card on file. The owner keeps everything free (2026-10-07). |
+| `OMNIROUTE_API_KEY` | No | A local OmniRoute gateway (`http://127.0.0.1:20128/v1`; installed 2026-10-07, start with `~/.omniroute/start.sh`, stop with `omniroute stop`), skipped while down. No default models: used only for `omniroute:<provider>/<model>` entries in `LLM_MODEL_ORDER`. The key is locked to an allowlist (Z.AI's two Flash models), so its keyless pools answer 403. Not in this Mac's order. |
 | `LLM_PROVIDER_ORDER` | No | Comma-separated. Default `deepseek,xai,groq,cerebras,sambanova,zai,openrouter,ollama,huggingface,requesty,mistral,gemini` (`sambanova` and `zai` exist only with `LLM_CATALOG`). |
 | `<ID>_MODELS`, `<ID>_MAX_TOKENS`, `<ID>_BASE_URL` | No | Per-provider overrides, `<ID>` = `DEEPSEEK`, `XAI`, `GROQ`, `CEREBRAS`, `OPENROUTER`, `MISTRAL`. Model ids drift — see `npm run llm:check`. |
 | `LLM_TIMEOUT_MS` | No | Per-request ceiling for the non-Gemini providers. Defaults to 120000. |
@@ -178,7 +180,7 @@ Video burn (retired 2026-09-27, LaunchAgent removed): scripts/video-burn.ts call
   (no HTTP): account pool MiniMax-H3 -> LTX-2.3 -> Wan 2.2; anonymous pool: two staff Wan Spaces.
 
 Inside every text call (server/llm/chain.ts), in LLM_MODEL_ORDER, highest intelligence first:
-  skip models reserved for other routes (LLM_RESERVED_FOR: gemini-3.8-flash is for "script")
+  skip models reserved for other routes (LLM_RESERVED_FOR: Pollinations GLM-5.3-Flash and gemini-3.8-flash are for "script")
   -> skip models cooling down (quota until reset; 503 30 s doubling to 10 min; timeout 10 min; 404/402 30 min)
   -> wait for a per-minute slot (Gemini Flash 5, Flash-Lite 15, TTS 3; server/rateLimit.ts)
   -> one request -> schema check, one repair round -> next model on failure
@@ -195,7 +197,7 @@ delivers with Ken Burns stills rather than blocking a video forever. The hourly 
 spent the same GPU allowance. Checklist: `../plan-story-cycle.md` (outside the repos).
 
 **Where the free quota goes.** The script is by far the biggest spender (about 34 of the ~37 text calls a video makes), which is why
-the smartest free model, Gemini 3.8 Flash (20 requests a day), is reserved for it; research and plan use the rest of the chain.
+the two smartest free models are reserved for it: Pollinations GLM-5.3-Flash (score 42, paid from a small free pollen balance) and Gemini 3.8 Flash (41, 20 requests a day); research and plan use the rest of the chain.
 Images draw on Cloudflare's 10,000 free Neurons a day, clips on the Hugging Face GPU allowance, and the
 analyst voice on Gemini TTS's 10 requests a day per engine.
 
@@ -370,6 +372,8 @@ In the UI the button lives in the export modal as **Save Markdown to exports/**.
 | 8 | Requesty | free plan, 200 requests/day; the Nemotron models train on prompts ("Training Permitted Models") | `nvidia/nemotron-3-ultra-550b-a55b`, `nvidia/nemotron-3-super-120b-a12b`, `google/gemma-4-31b-it` |
 | 9 | Mistral | free tier, trains on prompts | `ministral-14b-latest`, `ministral-8b-latest` |
 | 10 | Gemini | free tier, ~20 requests/day/model | the `TEXT_MODELS` chain below |
+
+**Shared catalog providers (2026-10-07).** With `LLM_CATALOG` set, the providers in `LLM-Catalog/providers.json` join this list: **Z.AI** (free GLM Flash models), **Pollinations** (pollen) and a local **OmniRoute**. SambaNova and Vercel AI Gateway are listed there but unusable without a card. This Mac's ranked order, smartest first, starts Pollinations GLM-5.3-Flash (42) → Gemini 3.8 Flash (41) → 3.7 Flash (39) → Groq / OpenRouter Qwen3.8 27B (34) → Pollinations Ling 3.1 Flash (est.) → Gemini 3.6 / 3.5 Flash, and runs down to Ministral 8B; the full list with free limits is in the catalog's README.
 
 **Those model ids are best guesses from documentation, not live calls.** Run `npm run llm:check`: it lists each provider's real `/models`, flags any configured id that isn't there, and makes one tiny JSON request per provider so a bad key, an empty balance or a rejected parameter shows up before a real run. Override with `<ID>_MODELS`.
 
