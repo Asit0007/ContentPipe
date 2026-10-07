@@ -64,6 +64,7 @@ export const MODEL_INFO: Record<string, ModelInfo> = {
   'nvidia/nemotron-3.5-lightning:free': { name: 'Nemotron 3.5 Lightning (free)', maker: 'NVIDIA', intelligence: 13, notes: 'Took 57 s for a one-word reply on 2026-09-27, then 13 s in the rerank probe.' },
   'nvidia/nemotron-3-ultra-550b-a55b:free': { name: 'Nemotron 3 Ultra (OpenRouter, free)', maker: 'NVIDIA', intelligence: 23, notes: 'Returned malformed JSON to a tiny JSON-mode call on 2026-09-27; the repair round may rescue it. Upstream provider may train on prompts.' },
   'nvidia/nemotron-3-super-120b-a12b:free': { name: 'Nemotron 3 Super (OpenRouter, free)', maker: 'NVIDIA', intelligence: 13 },
+  'gemma-4-31B-it': { name: 'Gemma 4 31B (SambaNova, free)', maker: 'Google (open weights)', intelligence: 19, notes: 'Free preview on SambaNova, 20 requests/day; not used for training. One live JSON call 2026-10-07: clean, 23 s. SambaNova\'s other models need a payment method.' },
   'google/gemma-4-31b-it:free': { name: 'Gemma 4 31B (OpenRouter, free)', maker: 'Google (open weights)', intelligence: 19 },
   'nvidia/nemotron-3.5-lightning-30b-a3b': { name: 'Nemotron 3.5 Lightning (via Requesty)', maker: 'NVIDIA', intelligence: 13, notes: 'Free on Requesty, and a "Training Permitted Model".' },
   'gpt-oss:120b': { name: 'gpt-oss-120b (Ollama Cloud)', maker: 'OpenAI (open weights)', intelligence: 12 },
