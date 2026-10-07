@@ -125,7 +125,7 @@ Two things cost real debugging time building this and are worth knowing up front
 
 ### Environment loading
 
-`server.ts` imports `dotenv/config` at the top. Before that existed, `process.env.GEMINI_API_KEY` was always undefined locally and every request silently produced `fallbackGenerators` output — canned XZ-backdoor content that looks plausible. **`.env` is read once at startup; restart after editing.**
+`server.ts` imports `./server/env` at the top (it loads `.env`, then the shared `~/.config/asitminz/llm.env`; it was `dotenv/config` until 2026-10-07). Before that existed, `process.env.GEMINI_API_KEY` was always undefined locally and every request silently produced `fallbackGenerators` output — canned XZ-backdoor content that looks plausible. **`.env` is read once at startup; restart after editing.**
 
 When output looks generic or off-topic, check `isQuotaFallback` before debugging prompts.
 
@@ -187,6 +187,13 @@ Text generation is no longer Gemini-only. `generateJson` / `generateText` (`serv
 - **Tests and e2e pin the chain to Gemini** (`LLM_PROVIDER_ORDER=gemini` **and an empty `LLM_MODEL_ORDER`** in `npm test` and in the e2e spawn env) so a real key in `.env` or the shell can never make a "no network" suite spend money. The second half matters: `LLM_MODEL_ORDER` replaces `LLM_PROVIDER_ORDER`, and the e2e server loads `.env`, so a ranked list there once silently un-pinned the suite (4 e2e failures, one 137 s, calls to real providers). dotenv does not override a variable that is already set, even to the empty string.
 - **Model ids drift and the defaults are best guesses** — `npm run llm:check` lists each provider's live `/models`, flags any configured id that isn't there, and makes one tiny JSON call per provider. Run it after adding a key and before trusting the chain.
 - **Privacy:** every prompt now goes to whichever provider answers. DeepSeek's API is hosted in China. Fine for public-news scripts; `JobPipe` is not on this chain: since 2026-09-27 it has its own Python one (`src/jobpipe/llm.py`, `generate_json_chain`) for tailoring and screening, restricted to providers that do not train on prompts (Groq, Ollama Cloud) plus its existing Gemini.
+
+## Shared catalog and keys (`LLM_CATALOG`, 2026-10-07)
+
+Owner's call: one provider list for every project, each project keeping its own chain code and ranking. `LLM_CATALOG` points at `providers.json` in the **LLM-Catalog** repo (`My Persona/LLM-Catalog/`), which JobPipe also reads. `providerSpecs()` (`server/llm/providers.ts`) overlays it on the built-in list: same id replaces, new ids are appended; `server/llm/catalog.ts` validates it and **throws on a set-but-broken path** (no quiet fallback to an older list). The built-in list stays as the fallback for CI and fresh clones and is not extended with new providers. Keys can live in `~/.config/asitminz/llm.env` (`server/env.ts`, imported first by `server.ts`, `llm-check.ts`, `add-clip-prompts.ts`): shell, then `.env`, then the shared file, never overriding. `npm test` and the e2e server set `LLM_CATALOG=` and `LLM_SHARED_ENV=off`.
+- **Added providers:** `sambanova` (free: 20 requests/day per model, 200k tokens/day; no training on Customer Content per its terms §5.2; DeepSeek-V3.2 has a 32k context, output capped at 7,168) and `zai` (GLM-4.7-Flash, GLM-4.5-Flash free; API content not stored per its DPA). Neither has a key yet, so neither is ranked: add the key, run `npm run llm:check`, then place their models in `LLM_MODEL_ORDER` by intelligence.
+- **OmniRoute** (`omniroute`, `http://127.0.0.1:20128/v1`, `OMNIROUTE_API_KEY`): started by hand; a refused connection is a transient failure, so a stopped gateway is cooled and skipped. Not in the default order and no default models: only `omniroute:<provider>/<model>` entries in `LLM_MODEL_ORDER` reach it. Owner rule: official free API tiers under our own keys only, never `auto/*` or `best-free` (they can reach keyless community pools). Its `/v1` answers keyless and its dashboard password is `CHANGEME` out of the box.
+- **Left out on purpose (2026-10-07):** NVIDIA NIM (free use is prototyping only), GitHub Models (8k in / 4k out per request), Cloudflare Workers AI text (shares the FLUX stills' 10k Neurons/day), Cohere trial keys (non-commercial). Reasons and sources: the catalog's README.
 
 ## Model availability and ranking snapshot (2026-09-27)
 

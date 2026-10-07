@@ -18,7 +18,7 @@
  * a fresh export in exports/ (Markdown + HTML page). It does not touch a ContentRender run that already copied the
  * brief: that run keeps the copy it started with.
  */
-import 'dotenv/config';
+import '../server/env';
 import fs from 'fs/promises';
 import path from 'path';
 import { getAIClient } from '../server/gemini';

@@ -15,7 +15,12 @@
  * requires opting into training on your prompts — fine for public-news scripts, which is why it sits
  * behind the providers that do not train on them. Requesty's strong free models train on prompts too (its
  * "Training Permitted Models"), so it sits beside Mistral.
+ *
+ * The shared catalog (`LLM_CATALOG`, see catalog.ts) is the source of truth when it is set: its entries replace the
+ * built-in ones with the same id and add new providers (SambaNova, Z.AI and a local OmniRoute since 2026-10-07). The
+ * list below is the fallback for a machine without the catalog and is not extended with new providers.
  */
+import { loadCatalog } from './catalog';
 
 export interface ProviderSpec {
   id: string;
@@ -169,8 +174,22 @@ export const OPENAI_COMPAT_PROVIDERS: ProviderSpec[] = [
   },
 ];
 
-/** Default order: strongest first, no-training free tiers before the training one, Gemini last. */
-export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'openrouter', 'ollama', 'huggingface', 'requesty', 'mistral', 'gemini'];
+/**
+ * Default order: strongest first, no-training free tiers before the training one, Gemini last. `sambanova` and `zai`
+ * exist only in the catalog; without it they are unknown ids and skipped. OmniRoute is deliberately absent: it is
+ * tried only where LLM_MODEL_ORDER names an `omniroute:` model.
+ */
+export const DEFAULT_PROVIDER_ORDER = ['deepseek', 'xai', 'groq', 'cerebras', 'sambanova', 'zai', 'openrouter', 'ollama', 'huggingface', 'requesty', 'mistral', 'gemini'];
+
+/** Every OpenAI-compatible provider ContentPipe knows: the built-in list, overlaid by the catalog when LLM_CATALOG is set. */
+export function providerSpecs(env: Env = process.env): ProviderSpec[] {
+  const file = env.LLM_CATALOG?.trim();
+  if (!file) return OPENAI_COMPAT_PROVIDERS;
+  const fromCatalog = new Map(loadCatalog(file).map((p) => [p.id, p]));
+  const merged = OPENAI_COMPAT_PROVIDERS.map((p) => fromCatalog.get(p.id) ?? p);
+  for (const p of fromCatalog.values()) if (!OPENAI_COMPAT_PROVIDERS.some((b) => b.id === p.id)) merged.push(p);
+  return merged;
+}
 
 export interface ResolvedProvider {
   spec: ProviderSpec;
@@ -258,7 +277,7 @@ export function modelAllowedFor(provider: string, model: string, purpose: string
 
 /** OpenAI-compatible providers that have a key, in configured order. Gemini is handled by the chain itself. */
 export function resolveProviders(env: Env = process.env): ResolvedProvider[] {
-  const byId = new Map(OPENAI_COMPAT_PROVIDERS.map((p) => [p.id, p]));
+  const byId = new Map(providerSpecs(env).map((p) => [p.id, p]));
   const resolved: ResolvedProvider[] = [];
   const ranked = modelOrder(env);
   // With an explicit model order, the providers (and their models) are exactly those it names, in order of first mention.

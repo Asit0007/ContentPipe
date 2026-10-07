@@ -6,9 +6,9 @@
  * tiny JSON request to the first model that exists so a bad key, no balance, or a rejected
  * parameter shows up here instead of mid-run. Costs a fraction of a cent. Gemini is probed too.
  */
-import 'dotenv/config';
+import { SHARED_ENV_PATH } from '../server/env';
 import { callChat, describeChain, listModelIds, classifyProviderError } from '../server/llm/chain';
-import { providerOrder, resolveProviders, OPENAI_COMPAT_PROVIDERS } from '../server/llm/providers';
+import { providerOrder, providerSpecs, resolveProviders } from '../server/llm/providers';
 
 const ok = (s: string) => `\x1b[32m${s}\x1b[0m`;
 const bad = (s: string) => `\x1b[31m${s}\x1b[0m`;
@@ -22,12 +22,14 @@ function hasOkTrue(v: unknown, depth = 0): boolean {
 }
 
 async function main() {
+  console.log(`catalog: ${process.env.LLM_CATALOG?.trim() || dim('not set (built-in provider list)')}`);
+  console.log(`shared keys: ${SHARED_ENV_PATH ?? dim('off')}`);
   console.log(`chain: ${describeChain()}\n`);
   const resolved = resolveProviders();
   const have = new Set(resolved.map((p) => p.spec.id));
   let failures = 0;
 
-  for (const spec of OPENAI_COMPAT_PROVIDERS) {
+  for (const spec of providerSpecs()) {
     if (have.has(spec.id)) continue;
     // With LLM_MODEL_ORDER set, a provider it does not name is skipped even when its key exists; say which it is.
     const keySet = spec.keyEnv.some((k) => process.env[k]?.trim());
