@@ -57,8 +57,9 @@ async function main() {
     if (usable.length === 0) {
       const hint = live.filter((m) => !/embed|whisper|tts|guard|moderation|image/i.test(m)).slice(0, 12);
       console.log(`  ${dim('some live text-model ids: ' + hint.join(', '))}`);
-      failures++;
-      continue;
+      // Some providers serve models their /models omits (Z.AI's free GLM Flash models, 2026-10-07), so the call decides.
+      console.log(`  ${dim('trying ' + p.models[0] + ' anyway: a provider may serve models its list omits')}`);
+      usable.push(p.models[0]);
     }
     try {
       const t0 = Date.now();
