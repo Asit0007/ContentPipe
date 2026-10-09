@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { resetModelCooldowns } from './gemini';
 import { QuotaExhaustedError } from './quota';
 import { analyzeScript } from './timeline';
-import { lintTitle, lintThumbnail, normalizeHashtags, fitTags, assembleDescription, buildPublishPackage } from './publishPackage';
+import { lintTitle, lintThumbnail, lintPairing, normalizeHashtags, fitTags, assembleDescription, buildPublishPackage } from './publishPackage';
 
 const RESEARCH = {
   topicTitle: 'Backdoor in upstream xz/liblzma',
@@ -252,4 +252,11 @@ test('NON-strict: the model being unavailable still yields the deterministic par
   assert.deepEqual(pkg.midrollTimestamps, ['2:30', '6:00']);
   assert.ok(pkg.chapters.length >= 3);
   assert.ok(pkg.todos[0].startsWith('AI generation was unavailable'));
+});
+
+test('thumbnail text that repeats its title is a warning on that title; plurals count as the same word', () => {
+  assert.deepEqual(rules(lintPairing('How a Zero-Permission App Could Control Your OnePlus', 'ZERO PERMISSIONS')), ['thumbnail-repeats-title']);
+  assert.match(lintPairing('How a Zero-Permission App Could Control Your OnePlus', 'ZERO PERMISSIONS')[0].message, /\(zero, permission\)/);
+  assert.deepEqual(lintPairing('How a Zero-Permission App Could Control Your OnePlus', 'NO TAP NEEDED'), []);
+  assert.deepEqual(lintPairing('Why Your Phone Trusts the Wrong App', 'YOUR CALLS, READ'), [], 'stopwords like "your" do not count');
 });

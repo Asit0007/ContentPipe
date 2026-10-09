@@ -23,6 +23,7 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Motion direction, and each scene cut into clips of at most 10 s with a detailed image-to-video prompt per clip (for a by-hand image-to-video tool: Google Flow/Veo since 2026-10-03, Kling before) | **Done** (clip pass, 2026-10-01) |
 | Sound & edit cue sheet (music, restrained SFX, silences, transitions) | **Done** (for a human editor) |
 | Titles, thumbnails, description, tags, chapters | **Done** |
+| Hook check on scene 1, title/thumbnail pairing, Shorts and post-publish workflow | **Done** (2026-10-08, from the MIT [youtube-agent-skill](https://github.com/Jakeschincariol/youtube-agent-skill)); first used on the next story, after OnePlus |
 | Scene stills generated in the app | **Done**: FLUX.2 klein 4B on Cloudflare Workers AI (`cloudflare:flux-2-klein-4b`, live-verified 2026-09-27; keeps the shared Hugging Face GPU quota free for video), or Hugging Face Spaces (Qwen-Image-2512, HiDream-O1-Image). Nano Banana Pro and FLUX prompts by hand via copy buttons, with the tool to use marked per scene |
 | Stills animated into clips in the app | **Done, one scene at a time**: MiniMax-H3 then Wan 2.2, live-verified. The free GPU allowance gives about 2 MiniMax clips a day; Wan 2.2 reserves ~54 s a 4 s clip at 6 steps (about 5-8 a day by the reservation maths; the account's real daily reset was never measured, see below) |
 | Narration | **Two voices via ContentRender**: narrator Kokoro `af_heart` (local), analyst Gemini TTS `Charon` through `/api/tts` with the engine pinned; the browser UI still reads one voice |
@@ -291,13 +292,17 @@ Placement is decided **in code, not by the model** (`shared/speakers.ts`): every
 
 ### Retention audit and mid-rolls
 
-The script also comes back with `timeline`, `chapters`, `midrollMarkers` (two, snapped to scene boundaries near 2:30 and 6:00 — and none, with a warning, under 8:00) and `qualityChecks`: hook, pattern-interrupt cadence, duration shortfall, evidence mix (a slideshow of AI stills is flagged), and any figure or CVE in the narration that is not in the research dossier. All of it is computed from the scenes — no model involved — and the exported brief carries it plus a manual pre-publish checklist.
+The script also comes back with `timeline`, `chapters`, `midrollMarkers` (two, snapped to scene boundaries near 2:30 and 6:00 — and none, with a warning, under 8:00) and `qualityChecks`: hook (scene 1 is scored on specificity, speaking to "you", stakes, curiosity and length by `server/hookScore.ts`; `hook-weak` warns with the fix), pattern-interrupt cadence, duration shortfall, evidence mix (a slideshow of AI stills is flagged), and any figure or CVE in the narration that is not in the research dossier. All of it is computed from the scenes — no model involved — and the exported brief carries it plus a manual pre-publish checklist.
 
 The shortfall error fires below **0.92** of the requested runtime, and the documentary preset and CyberPipe's default target are **585 s**: the old 540 s × 0.85 tolerance was 459 s, under the 480 s mid-roll minimum. Durations start as the model's `durationEst` guesses; `retimeFromAudio` (`server/timeline.ts`) replaces them with the rendered video's real scene durations and recomputes all of the above, so chapters and mid-rolls land on what actually plays. It refuses timings that don't match the scenes one-to-one by `id`, and drops any built publish package (its description embeds the old chapter times).
 
 ### Publish package
 
-`POST /api/publish-package` (or the button on the script screen) returns five linted titles, three thumbnail concepts, a description, tags and hashtags. The model writes the copy; code does the rest — title/thumbnail linting, chapters and mid-roll times, a sources list containing only URLs that were actually read, and `{{PLACEHOLDER}}`s (never invented links) for newsletter/social. The recommendation is the linter's, not the model's.
+`POST /api/publish-package` (or the button on the script screen) returns five linted titles, three thumbnail concepts, a description, tags and hashtags. The model writes the copy; code does the rest — title/thumbnail linting, chapters and mid-roll times, a sources list containing only URLs that were actually read, and `{{PLACEHOLDER}}`s (never invented links) for newsletter/social. The recommendation is the linter's, not the model's. A title whose paired thumbnail text repeats its words gets a `thumbnail-repeats-title` warning: viewers read the two together.
+
+### Hooks, Shorts and the channel after publishing (2026-10-08)
+
+The script prompt gives scene 1 three jobs (deliver on the title, say what it means for the viewer, leave one question open), and the audit scores the result. `npm run hook:score -- "<line>" | hooks.txt | .runs/story-<slug>/brief.json` scores candidates by hand. The score is a heuristic ported from the MIT [youtube-agent-skill](https://github.com/Jakeschincariol/youtube-agent-skill) (`server/hookScore.ts`, its 21 formulas in `server/hooks.json`): it catches weak hooks, it doesn't predict hits. The project skill `.claude/skills/blast-radius-youtube/` says when to use each piece: rewrite a weak hook before the media run, pair title and thumbnail, cut Shorts from the finished captions, rank a niche's outliers and read retention exports (both in `../SEO-Agent`: `make outliers`, `make retention`), triage comments, and audit the channel for one fix.
 
 ### Video assembly
 
@@ -481,7 +486,7 @@ curl -s "https://identitytoolkit.googleapis.com/v1/projects?key=$VITE_FIREBASE_A
 ## Scripts
 
 ```bash
-npm test         # 451 unit tests (2026-10-01) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
+npm test         # 482 unit tests (2026-10-08) — no network, no quota (pinned to LLM_PROVIDER_ORDER=gemini)
 npm run test:e2e # real server vs a stub Gemini + Pollinations + Hugging Face Spaces: 429, overload, crash-resume, SSRF, strict TTS/image/video, two-voice speakers (~1 min)
 npm run render:fixture # stub media through the real assembler -> renders/ (needs ffmpeg)
 npm run llm:check # live check of every configured provider: key, model ids, one JSON call
@@ -489,6 +494,7 @@ npm run story:start # start ONE story by hand: research -> plan -> script -> .ru
                     #   (story in stories/next-story.json; --dry-run spends nothing, --story <file>, --force ignores the cache)
 npm run brief:page  # a readable HTML page beside every exported brief, plus exports/index.html (open that in a browser)
 npm run story:check # the same flow against a local stub on :3199, zero quota (uses scripts/story-check-fixture.json)
+npm run hook:score -- "<line>" | hooks.txt | brief.json   # score hooks (scene 1) with the audit's panel; no network
 npx tsx scripts/video-burn.ts --status   # results of the retired daily video burn (see above)
 npm run dev      # tsx server.ts — Express + Vite middleware
 npm run build    # vite build + esbuild bundle -> dist/
@@ -553,7 +559,7 @@ exports/                      Generated briefs (gitignored)
 .runs/                        Script-run checkpoints and source archives (gitignored, pruned after 7 days);
                               story-<slug>/ holds a hand-started story's research, plan, script and brief.json
 e2e/                          End-to-end failure-contract test (npm run test:e2e)
-scripts/                      brief-page.ts (npm run brief:page), story-start.ts (npm run story:start), story-start.stub.mjs + story-check-fixture.json
+scripts/                      brief-page.ts (npm run brief:page), story-start.ts (npm run story:start), hook-score.ts (npm run hook:score), story-start.stub.mjs + story-check-fixture.json
                               (npm run story:check), render-fixture.ts, llm-check.ts, video-burn.ts (retired),
                               tts-bakeoff/ (TTS engine comparison + blind listening set — see its README)
 stories/next-story.json       The story `npm run story:start` runs (text, links, tone, target length, storySlug)

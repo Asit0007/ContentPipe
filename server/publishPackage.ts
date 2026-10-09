@@ -106,6 +106,24 @@ export function lintThumbnail(t: { textOverlay: string; imagePrompt: string }): 
   return issues;
 }
 
+const PAIRING_STOPWORDS = new Set([...TITLE_STOPWORDS, 'you', 'your', 'are', 'was', 'its', 'can', 'could', 'not']);
+const pairingWords = (t: string) =>
+  new Set((String(t || '').toLowerCase().match(/[a-z0-9']+/g) || [])
+    .map((w) => w.replace(/'s$/, '').replace(/(?<=\w{3})s$/, ''))
+    .filter((w) => w.length > 2 && !PAIRING_STOPWORDS.has(w)));
+
+/**
+ * Title and thumbnail are read together, so the overlay should add to the title, not repeat it
+ * (method from the MIT youtube-agent-skill's title linter). Plurals count as the same word.
+ */
+export function lintPairing(title: string, overlay: string): LintIssue[] {
+  const fromTitle = pairingWords(title);
+  const shared = [...pairingWords(overlay)].filter((w) => fromTitle.has(w));
+  return shared.length
+    ? [{ rule: 'thumbnail-repeats-title', severity: 'warn', message: `Its thumbnail text repeats the title (${shared.join(', ')}); the overlay should say what the title does not.` }]
+    : [];
+}
+
 /** Hashtags: lowercase alphanumerics only, no leading '#', deduped, at most 5. */
 export function normalizeHashtags(raw: string[]): string[] {
   const out: string[] = [];
@@ -216,7 +234,7 @@ ${profile.publishAudienceNote}
 Produce:
 1. "titles": exactly 5, one per structure, each at most 70 characters (45-60 ideal), keyword first, no ALL-CAPS words except acronyms and proper nouns, no emoji, no exclamation marks, no brackets, no "You won't believe" / "SHOCKING" / "GONE WRONG".
    Structures: "how_entity_verb_object" = "How [Entity] [Verb] [Object] — [Consequence]"; "truth_about" = "The [Adjective] Truth About [Topic]"; "inside_event" = "Inside [Entity]'s [Event]: [Technical Detail]"; "why_concept_is_stakes" = "Why [Technical Concept] Is [Stakes]"; "number_things_got_wrong" = "[Number] [Things] [Entity] Got Wrong About [Topic]" (only if the number is in <facts>; otherwise still use this structure without a specific number). For each: "angle" (one sentence on the CTR angle) and "bestThumbnail" (A, B or C).
-2. "thumbnails": exactly 3 concepts. ${profile.thumbnailTechnicalHint}, B = Consequence (what broke, who was affected), C = Curiosity gap (an unresolved tension or counter-intuitive fact). For each: "variant", "concept" (2-3 word name), "imagePrompt" (ready to paste into an image model; include the visual style above; a single subject; dark background with a rim light), "textOverlay" (2-4 words, all caps, readable at 320x180), "layout" (subject on one third, text on the opposite third), "rationale" (one sentence). Never use red arrows, shocked faces, skulls, hoodies, Matrix code rain, generic "HACKED" text, padlock clichés, or cluttered collages.
+2. "thumbnails": exactly 3 concepts. ${profile.thumbnailTechnicalHint}, B = Consequence (what broke, who was affected), C = Curiosity gap (an unresolved tension or counter-intuitive fact). For each: "variant", "concept" (2-3 word name), "imagePrompt" (ready to paste into an image model; include the visual style above; a single subject; dark background with a rim light), "textOverlay" (2-4 words, all caps, readable at 320x180; it adds to the titles that pick this variant as "bestThumbnail" and shares no word with them, because a viewer reads title and thumbnail together and a repeated word wastes half of what they read), "layout" (subject on one third, text on the opposite third), "rationale" (one sentence). Never use red arrows, shocked faces, skulls, hoodies, Matrix code rain, generic "HACKED" text, padlock clichés, or cluttered collages.
 3. "descriptionHook": the opening of the description — 3-4 sentences, about 60-90 words. The first two lines appear in search results, so they must state the concrete claim; no hype.
 4. "learnBullets": 4-5 bullets, each a full sentence of about 12-20 words, on what the viewer will understand by the end.
 5. "tags": 15-25 (broad, specific to this story, long-tail how-to-prevent phrases).
@@ -275,6 +293,10 @@ function lintAll(raw: any, input: PublishInput) {
     return { title: String(t.title || '').trim(), structure: t.structure, angle: t.angle, bestThumbnail: t.bestThumbnail, chars: String(t.title || '').trim().length, lint, passesLint: !lint.some((i) => i.severity === 'error') };
   });
   const thumbnails: ThumbnailConcept[] = (Array.isArray(raw?.thumbnails) ? raw.thumbnails : []).map((t: any) => ({ ...t, lint: lintThumbnail(t) }));
+  for (const t of titles) {
+    const paired = thumbnails.find((th) => th.variant === t.bestThumbnail);
+    if (paired) t.lint.push(...lintPairing(t.title, paired.textOverlay));
+  }
   return { titles, thumbnails };
 }
 

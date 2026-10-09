@@ -536,6 +536,15 @@ Blast Radius's audience is anyone curious about a hacking story, including peopl
 - **Still allowed:** the research dossier keeps CVE ids, because they are facts and the specifics matcher still uses them. Tags may carry the id too, since some people search for it.
 - The canned fallback's `CVSS 9.8` badge, metric and SVG text, which were invented numbers, are gone.
 
+## Hook score and title/thumbnail pairing (2026-10-08)
+
+Taken from the MIT-licensed [youtube-agent-skill](https://github.com/Jakeschincariol/youtube-agent-skill) (commit `a2feb21`), owner's call: use its useful parts from the next video on. How to use them across a video's life (hook rewrite, Shorts, niche outliers, retention, comments) is the project skill `.claude/skills/blast-radius-youtube/`.
+- **`server/hookScore.ts`** is a port of the pack's `hookscore.py` with `server/hooks.json` (its 21 formulas, copied unchanged); `server/hookScore.test.ts` pins it to the Python's numbers on 19 hooks. Five properties (specificity, address, stakes, curiosity, brevity), a verdict of 60 % mean + 40 % weakest, bands WEAK < 55 ≤ WORKABLE < 72 ≤ STRONG. **A heuristic:** its author found it separates bad hooks from real ones but barely separates a creator's hits from misses. JS regexes are ASCII where Python's are Unicode (noted in the file). It loads `hooks.json` by static import, because `npm run build` bundles to CommonJS, where `import.meta.url` is empty.
+- **The audit scores scene 1** (`auditScript`): `hook-weak` (warn, with the weakest property and its fix) or `hook-score` (info). Not scored when `weak-opening` already fired. The OnePlus opening scores 29, WEAK, weakest stakes.
+- **The script prompt's opening chunk** (`openingHookBrief` in `server/scriptPipeline.ts`) gives scene 1 three jobs: deliver on the title in the first sentence, tell the viewer as "you" what it means for someone like them (kept to what was possible or exposed, per CLAIMS THE DOSSIER CANNOT BACK), and leave one question open. It used to say only "write the hook first". Not live-verified yet: the next story is the first.
+- **`npm run hook:score -- "<line>" | hooks.txt | .runs/story-<slug>/brief.json`** scores candidates by hand.
+- **Publish package:** `lintPairing` warns `thumbnail-repeats-title` on a title whose `bestThumbnail` overlay shares a content word with it (plurals fold), and the prompt asks for overlays that add to their titles. A warning, so it only affects the linter's recommendation (fewer warnings win).
+
 ## Starting a story by hand (`scripts/story-start.ts`, 2026-09-29)
 
 The story cycle starts **only when the owner starts it**; nothing is scheduled (the 08:00 `com.asitminz.storycycle` LaunchAgent was removed before it ever fired).

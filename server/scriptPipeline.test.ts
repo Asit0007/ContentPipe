@@ -13,6 +13,7 @@ import {
   buildGenerationSummary,
   sceneTargetFor,
   normalizeForAnchorMatch,
+  openingHookBrief,
   type ScriptRunOptions,
 } from './scriptPipeline';
 
@@ -644,4 +645,13 @@ test("canonical anchor and background resolve by scene number, not the order sce
   const result = await applyVisualDirection(ai, script, RESEARCH, {});
   assert.equal(result.scenes[0].visual.styleAnchor, 'ANCHOR-1', "scene 1's own styleAnchor wins the canonical slot, since it is first by scene number");
   assert.equal(result.scenes[1].visual.styleAnchor, 'ANCHOR-1', 'scene 2 is force-overwritten to match');
+});
+
+test('the opening chunk names the hook\'s three jobs and the title it must deliver on', () => {
+  const brief = openingHookBrief({ title: 'How a Zero-Permission App Could Control Your OnePlus' });
+  assert.match(brief, /write the hook first/);
+  assert.match(brief, /delivers on the title \("How a Zero-Permission App Could Control Your OnePlus"\)/);
+  assert.match(brief, /what was possible or exposed/);
+  assert.match(brief, /one question open/);
+  assert.doesNotMatch(openingHookBrief({}), /\(""\)/, 'no empty title quote when the plan has no title');
 });

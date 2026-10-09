@@ -458,3 +458,19 @@ test('audit: a severity label — a "CRITICAL RISK" badge, "high severity", a sc
   assert.equal(find(c, 'severity-rating-shown'), undefined, 'no CVE id or CVSS score here, so the id check stays quiet');
   assert.equal(find(auditScript({ scenes: scenes(4) }), 'severity-label-shown'), undefined);
 });
+
+test('scene 1 is scored as a hook: WEAK is a warning naming the weakest property, otherwise one info line', () => {
+  const weak = auditScript({ scenes: [scene(1, { narration: 'We are taught that Android security is a fortress of isolation. Apps live in locked rooms, unable to touch the system\'s core. But for OnePlus and OPPO users, that wall had a hidden gap.' }), scene(2)] });
+  const w = weak.find((c) => c.id === 'hook-weak');
+  assert.equal(w?.severity, 'warn');
+  assert.deepEqual(w?.sceneNumbers, [1]);
+  assert.match(w!.message, /29\/100 \(WEAK;.*Weakest: stakes/);
+
+  const strong = auditScript({ scenes: [scene(1, { narration: 'Your phone could lose every private photo before you notice. Here is why one free app with zero permissions was enough.' }), scene(2)] });
+  assert.equal(strong.find((c) => c.id === 'hook-weak'), undefined);
+  assert.equal(strong.find((c) => c.id === 'hook-score')?.severity, 'info');
+
+  const empty = auditScript({ scenes: [scene(1, { narration: 'Hi.' }), scene(2)] });
+  assert.ok(empty.some((c) => c.id === 'weak-opening'));
+  assert.ok(!empty.some((c) => c.id === 'hook-weak' || c.id === 'hook-score'), 'no score on an opening that is already flagged empty');
+});

@@ -13,6 +13,8 @@
  * spec's targets, not measured truths.
  */
 
+import { scoreHook } from './hookScore';
+
 export type Severity = 'error' | 'warn' | 'info';
 
 export interface QualityCheck {
@@ -403,6 +405,14 @@ export function auditScript(script: any, opts: { requestedDurationSec?: number; 
   }
   if (wordsOf(scenes[0]) < 8) {
     checks.push({ id: 'weak-opening', severity: 'warn', message: 'The first scene has almost no narration; the first seconds must carry the hook.', sceneNumbers: [sn(0)] });
+  } else {
+    // A heuristic panel (see hookScore.ts): a WEAK band is a reason to rewrite scene 1 before the
+    // media run, never proof the hook works. Scored on scene 1 alone, which is the first 8-15 s.
+    const h = scoreHook(String(scenes[0].narration || ''));
+    const panel = Object.entries(h.properties).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(', ');
+    checks.push(h.band === 'WEAK'
+      ? { id: 'hook-weak', severity: 'warn', message: `Scene 1's hook scores ${h.verdict}/100 (WEAK; ${panel}). Weakest: ${h.weakest.toLowerCase()}: ${h.fix}.`, sceneNumbers: [sn(0)] }
+      : { id: 'hook-score', severity: 'info', message: `Scene 1's hook scores ${h.verdict}/100 (${h.band}; ${panel}; formula: ${h.formula}).`, sceneNumbers: [sn(0)] });
   }
 
   // Pattern interrupts: a scene "interrupts" if it changes visualType from the previous scene or carries an infographic.

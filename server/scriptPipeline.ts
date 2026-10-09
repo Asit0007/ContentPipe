@@ -101,6 +101,22 @@ export function buildGenerationSummary(
 }
 
 /**
+ * Scene 1 is the hook. The three jobs follow the YouTube hook rules in the MIT youtube-agent-skill
+ * (hooks.json): confirm the click, name the viewer's stake, leave one question open. The stake is
+ * phrased as what was possible, so it stays inside CLAIMS THE DOSSIER CANNOT BACK.
+ * timeline.ts scores the result (hookScore.ts) as a quality check.
+ */
+export function openingHookBrief(videoPlan: any): string {
+  const title = String(videoPlan?.title || '').trim();
+  return `(This is the opening chunk of the script, so write the hook first.)
+HOOK: scene 1 is the first 8-15 seconds, where most viewers decide whether to stay. Its narration does three jobs, in two or three short sentences (about 22-30 words):
+1. Its first sentence delivers on the title${title ? ` ("${title}")` : ''}, so the viewer knows at once they clicked on the right video.
+2. It tells the viewer, as "you", what this means for someone like them — their phone, account, money or privacy — in words a non-technical person uses. Keep the stake to what the dossier supports: what was possible or exposed, not harm nobody reported.
+3. It leaves one question open that a later scene answers, so the answer is not in scene 1.
+Begin inside the story, using the plan's "hookStrategy": the show name, a greeting or "in this video" spends those seconds on nothing.`;
+}
+
+/**
  * First pass: lock the cast and the look before a single scene is written.
  * Its own call with a small schema, because on the combined script schema both
  * fields were routinely omitted despite being required.
@@ -628,7 +644,7 @@ export async function generateSceneChunks(
 
     const priorScenesContext =
       allScenes.length === 0
-        ? '(This is the opening chunk of the script — write the hook first.)'
+        ? openingHookBrief(videoPlan)
         : 'SCENES ALREADY WRITTEN (the most recent ones — continue directly on from here, do not repeat or re-hook):\n' +
           allScenes
             .slice(-3)
