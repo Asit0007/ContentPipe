@@ -31,11 +31,11 @@ The goal: *feed in a news item and links to its sources, have the app research i
 | Batch generation of every scene's assets, checkpointed | **Not built** |
 | Burned-in captions / on-screen text | **Not built** (this ffmpeg lacks `drawtext`) |
 | Start one story by hand | **Done, run on a real story**: `npm run story:start` walks research → plan → script and leaves a ContentRender-ready brief. First real script 2026-09-30: *How a Zero-Permission App Could Control Your OnePlus*, 51 scenes, ~610 s |
-| Automated end to end via CyberPipe | **Built, never installed or run**: research → plan → script (this server) → images → narration → clips (pause and resume on the free quota) → Resolve bundle (ContentRender), with Telegram gates. The first story's media is being run by hand through ContentRender's command line instead |
-| A published Blast Radius video | **Not yet**: the first one's media run is in progress (`../ContentRender/output/runs/2026-09-30-how-a-zero-permission-app-could-control/`) |
+| Automated end to end via CyberPipe | **Installed and running (2026-10-03)**: scripts come from `npm run story:start`, then `CyberPipe/submit_job.py adopt` runs images → narration → clips (every scene, pause and resume on the free quota) → Resolve bundle (ContentRender) with Telegram gates. The first story is CyberPipe's job #1 |
+| A published Blast Radius video | **Not yet**: the first one (OnePlus, CyberPipe job #1) is at the narration gate while the owner redoes the stills whose lettering FLUX garbled, in Nano Banana Pro (2026-10-10) |
 
 **Next steps, in order:**
-1. Finish the OnePlus media run in ContentRender: images gate → narration → narration gate → clips → bundle → final gate.
+1. Finish the OnePlus run (CyberPipe job #1): redone stills → stills gate again → narration gate → clips, a few a day → bundle → final gate.
 2. Edit in DaVinci Resolve, generate the publish package, publish the first video.
 3. Phase 3 of `../plan-story-cycle.md`: a clip slot for every scene, 24 fps / 1080p conform, a `qc.md` report, plain per-video folders.
 4. Install CyberPipe (needs the owner's "Blast Radius" Telegram bot and LaunchAgent commands only the owner can run).
